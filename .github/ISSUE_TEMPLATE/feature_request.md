@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Propose an improvement or new capability for the multiomics monorepo
+about: Propose an improvement or new capability for the graph-monorepo repo
 title: "[Feature]: "
 labels: enhancement
 assignees: ""

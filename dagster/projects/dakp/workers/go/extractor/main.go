@@ -21,7 +21,7 @@ import (
 
 	dagsterpipes "github.com/hupe1980/dagster-pipes-go"
 
-	"github.com/glusman-team/multiomics/dagster/projects/dakp/workers/go/internal/pipesutil"
+	"github.com/glusman-team/graph-monorepo/dagster/projects/dakp/workers/go/internal/pipesutil"
 )
 
 const assetKey = "dakp_extraction"

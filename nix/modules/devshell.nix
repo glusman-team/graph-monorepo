@@ -46,7 +46,7 @@
       # two-stage prek hooks (fast pre-commit, heavy pre-push)
       prek install >/dev/null 2>&1 || echo "prek install skipped (run 'make hooks')"
 
-      echo "multiomics devshell ready: make help"
+      echo "graph-monorepo devshell ready: make help"
     '';
   };
 }

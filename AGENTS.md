@@ -1,4 +1,4 @@
-# multiomics agent guide
+# graph-monorepo agent guide
 
 Canonical agent context for this repo. pi STACKS this file with the global
 `~/.pi/agent/AGENTS.md` (both load; this one never replaces it). Claude Code

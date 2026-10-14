@@ -1,4 +1,4 @@
-# multiomics
+# graph-monorepo
 
 Monorepo for ISB multiomics knowledge-graph pipelines: a Dagster deployment
 hosting several independent DAG code locations (each builds its own knowledge

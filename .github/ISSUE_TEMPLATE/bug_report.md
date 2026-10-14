@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible problem in the multiomics pipelines
+about: Report a reproducible problem in the graph-monorepo pipelines
 title: "[Bug]: "
 labels: bug
 assignees: ""

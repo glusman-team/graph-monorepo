@@ -1,5 +1,5 @@
 {
-  description = "multiomics: Nx + Dagster multi-KG monorepo";
+  description = "graph-monorepo: Nx + Dagster multi-KG monorepo";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -37,7 +37,7 @@
             ];
             formatter = pkgs.nixfmt-tree;
             # cheap eval-time check so `nix flake check` has something to assert
-            checks.flake = pkgs.runCommand "multiomics-flake-check" { } "touch $out";
+            checks.flake = pkgs.runCommand "graph-monorepo-flake-check" { } "touch $out";
           };
       }
     );

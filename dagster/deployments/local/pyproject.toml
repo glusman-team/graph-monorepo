@@ -1,7 +1,7 @@
 # Local command environment for dg against the whole workspace.
 # `dg dev` / `dg list project` run from here (per-project venvs are separate).
 [project]
-name = "multiomics-workspace-local"
+name = "graph-monorepo-workspace-local"
 version = "0.0.0"
 requires-python = ">=3.10,<3.15"
 dependencies = [
