@@ -1,10 +1,18 @@
 # Classic code-location loader for dagster-webserver / dagster-daemon
-# (process-compose runtime in nix/modules/dagster.nix). Requires each project's
-# venv to be synced and the module importable (uv sync in the project dir).
+# (process-compose runtime in nix/modules/dagster.nix).
+#
+# Each project owns its venv, so a location names the interpreter that can
+# import it. dagster resolves `working_directory` and `executable_path`
+# relative to the *launcher cwd*, not this file: nix/modules/dagster.nix pins
+# both processes to run from dagster/deployments/local, so the paths below are
+# relative to that directory. Sync the project venv first (`uv sync` in
+# dagster/projects/<name>).
 #
 # `dg dev` does not use this file - it reads dg.toml and launches per-project
 # subprocesses itself.
 load_from:
   - python_module:
-      module_name: dakp_dag
+      module_name: dakp_dag.definitions
       location_name: dakp
+      working_directory: ../../projects/dakp
+      executable_path: ../../projects/dakp/.venv/bin/python
