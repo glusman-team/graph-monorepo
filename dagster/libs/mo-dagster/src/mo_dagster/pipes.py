@@ -30,9 +30,11 @@ def launch_worker(
     worker_bin: str,
     extras: dict | None = None,
 ):
-    """Run a Go worker binary as a pipes subprocess, returning the pipes result.
+    """Run a Go worker binary as a pipes subprocess, returning the completed invocation.
 
-    Caller returns `result.get_output()` from the asset body.
+    `run()` blocks until the child exits (non-zero exit raises
+    DagsterPipesExecutionError), so the caller finishes with
+    `.get_materialize_result()`, which carries whatever the worker reported.
     """
     return subprocess_client().run(
         context=context,
