@@ -6,6 +6,10 @@
 // records to extras["output"], and reports a materialization with BLAKE3
 // cache metadata (cache_key, cache_hit, rows).
 //
+// The worker never names the asset it materializes: it reports to whatever
+// asset key the pipes context carries, so the python asset owns the key and a
+// narrow single-output run lands its metadata on the right asset.
+//
 // Phase 1 body: passthrough with row counting - the extraction logic itself
 // migrates from ISB/DAKP in phase 2. The pipes/cache contract is final.
 package main
@@ -23,8 +27,6 @@ import (
 
 	"github.com/glusman-team/graph-monorepo/dagster/projects/dakp/workers/go/internal/pipesutil"
 )
-
-const assetKey = "dakp_extraction"
 
 func run(ctx *dagsterpipes.Context[map[string]any]) error {
 	input, ok := ctx.Extras()["input"].(string)
@@ -45,7 +47,7 @@ func run(ctx *dagsterpipes.Context[map[string]any]) error {
 	// content-addressed cache lookup: artifact exists -> replay it, no work
 	if out, err := os.ReadFile(output); err == nil && len(out) > 0 {
 		_ = ctx.LogInfo(fmt.Sprintf("cache hit: %s (%d bytes)", output, len(out)))
-		return pipesutil.ReportMaterialization(ctx, assetKey, cacheKey, pipesutil.CacheInfo{
+		return pipesutil.ReportMaterialization(ctx, cacheKey, pipesutil.CacheInfo{
 			Key:          cacheKey,
 			ArtifactPath: output,
 			Hit:          true,
@@ -97,7 +99,7 @@ func run(ctx *dagsterpipes.Context[map[string]any]) error {
 	}
 
 	_ = ctx.LogInfo(fmt.Sprintf("extracted %d rows -> %s", rows, output))
-	return pipesutil.ReportMaterialization(ctx, assetKey, cacheKey, pipesutil.CacheInfo{
+	return pipesutil.ReportMaterialization(ctx, cacheKey, pipesutil.CacheInfo{
 		Key:          cacheKey,
 		ArtifactPath: output,
 		Hit:          false,

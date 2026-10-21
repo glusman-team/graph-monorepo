@@ -17,6 +17,8 @@ import (
 
 // WorkerVersion participates in every cache key. Bump when extraction
 // behavior changes so content-addressed artifacts invalidate correctly.
+// It tracks the bytes written to the output artifact only: reporting or
+// logging changes do not invalidate anything, so they do not bump it.
 const WorkerVersion = "0.1.0"
 
 // CacheInfo describes a content-addressed artifact decision.
@@ -38,15 +40,18 @@ func HashInput(input []byte) string {
 
 // ReportMaterialization reports the worker's asset materialization with the
 // standard cache metadata trio: cache_key, cache_hit, rows.
+//
+// The asset key is intentionally not passed: dagster-pipes-go resolves it
+// from the pipes context, which keeps the reported key equal to the asset the
+// caller is materializing (a hardcoded key is silently rejected by the
+// protocol and the cache metadata never lands).
 func ReportMaterialization(
 	ctx *dagsterpipes.Context[map[string]any],
-	assetKey string,
 	dataVersion string,
 	cache CacheInfo,
 	rows int64,
 ) error {
 	return ctx.ReportAssetMaterialization(&dagsterpipes.AssetMaterialization{
-		AssetKey:    assetKey,
 		DataVersion: dataVersion,
 		Metadata: map[string]any{
 			"cache_key":      cache.Key,
