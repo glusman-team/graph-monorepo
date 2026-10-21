@@ -25,5 +25,9 @@ dagster/projects/*/workers/go/bin/
 
 # os
 .DS_Store
-/published/
 .nx/
+
+# published pipeline artifacts (per-DAG default under the project, or $MO_PUBLISHED_ROOT)
+/published/
+dagster/published/
+dagster/projects/*/published/

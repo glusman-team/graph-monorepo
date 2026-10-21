@@ -40,8 +40,29 @@ go get github.com/hupe1980/dagster-pipes-go github.com/zeebo/blake3
 go build -o bin/extractor ./extractor && go test ./...
 ```
 
-Then `make dev`, pick the `dakp` location, launch `dakp_build`, and find KGX
-output in `dagster/projects/dakp/published/dakp/`.
+Then `make dev`, pick the `dakp` location, launch `dakp_build` for the whole
+DAG (or a `dakp_build_<stage>` job for one output), and find the per-stage
+artifacts in `dagster/projects/dakp/published/dakp/`.
+
+## Build one output
+
+Each stage publishes its own artifact and each stage gets a narrow job, so a
+single output can be rebuilt without running any of the others. From
+`dagster/projects/dakp` (stages: acquisition, extraction, ner, assertions,
+kg_build):
+
+```sh
+uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions    # only kg_build
+uv run dagster asset materialize --select kg_build -m dakp_dag.definitions   # only kg_build
+uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  # kg_build + whole chain
+```
+
+In the UI it is Launch run on `dakp_build_<stage>`, or Materialize on a single
+asset node. Stages hand off through files under `$MO_PUBLISHED_ROOT` and
+declare lineage-only `deps` (no value inputs), so a narrow run reads upstream
+artifacts instead of rebuilding them and fails with `upstream artifact
+missing` when one has not been published yet. `dakp_build` still runs the
+whole DAG, and `tests/test_single_output.py` pins both properties.
 
 ## Commands
 

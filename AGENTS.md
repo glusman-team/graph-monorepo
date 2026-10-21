@@ -21,7 +21,7 @@ Monorepo for ISB multiomics knowledge-graph pipelines:
 | Path | What | Rule |
 |---|---|---|
 | `dagster/projects/<name>/` | one DAG = one code location = one self-contained workspace | never import across projects |
-| `dagster/projects/<name>/src/` | dagster defs + that DAG's pipeline code | assets named for DAKP-style stages |
+| `dagster/projects/<name>/src/` | dagster defs + that DAG's pipeline code | assets named for DAKP-style stages, one published artifact per stage |
 | `dagster/projects/<name>/workers/<lang>/` | non-python workers, one dir per language (`go/` today, `scala/` later), own go.mod | no repo-wide go.work; never mix languages in one dir |
 | `dagster/libs/mo-core` | pydantic domain models, canonical for Go codegen | imports no dagster |
 | `dagster/libs/mo-kg` | KGX ndjson writer + QC (only sink) | imports no dagster |
@@ -40,6 +40,13 @@ Monorepo for ISB multiomics knowledge-graph pipelines:
   Values live in untracked `dagster/.env` / machine config, never in git.
 - Every python package has a cached nx `test` target (`project.json`);
   run tests with `npx nx affected -t test`, never bare pytest loops.
+- Stage-to-stage handoff is the published artifact under `$MO_PUBLISHED_ROOT`,
+  never a dagster value input: assets declare `deps=[upstream]` (lineage only).
+  Value inputs force the producer into the same run, which makes it impossible
+  to build one output alone.
+- Every stage gets a narrow job `dakp_build_<stage>` (generated from
+  `all_assets` in `assets.py`) that builds exactly one output; `dakp_build`
+  builds all of them.
 
 ## Commands
 
@@ -51,13 +58,20 @@ make lint / fmt / hooks
 npx nx affected -t test          # fast loop: only what changed
 cd dagster && uvx dg list project
 go build -o bin/extractor ./extractor   # inside projects/dakp/workers/go (after `go get`)
+uv run dg check defs                    # inside dagster/deployments/local (loads every location)
+# one output only, no other stage runs (inside dagster/projects/dakp):
+uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions
+uv run dagster asset materialize --select kg_build -m dakp_dag.definitions
+uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions   # + whole chain
 ```
 
 ## Adding things
 
 - **New KG/DAG**: `uvx create-dagster project projects/<name>` inside `dagster/`,
   wire mo-core/mo-kg/mo-dagster as editable path deps, add `project.json`
-  (nx test), dg.toml gains the project automatically.
+  (nx test), dg.toml gains the project automatically. Mirror the dakp output
+  contract: published artifact per stage, lineage-only `deps`, one narrow
+  `<dag>_build_<stage>` job per output (see `projects/dakp/src/dakp_dag/assets.py`).
 - **Go worker**: new cmd under `workers/go/`, use `internal/pipesutil`
   (session + BLAKE3 cache reporting), bump `pipesutil.WorkerVersion` when
   behavior changes. gonx picks up targets automatically.

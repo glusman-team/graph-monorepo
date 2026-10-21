@@ -16,7 +16,7 @@ def test_all_five_stage_assets_exist():
 
 
 def test_definitions_load():
-    job_def = defs.get_job_def("dakp_build")
+    job_def = defs.resolve_job_def("dakp_build")
     node_names = {node.name for node in job_def.nodes}
     assert {"acquisition", "extraction", "ner", "assertions", "kg_build"} <= node_names
 

@@ -6,6 +6,6 @@ from dakp_dag import assets
 
 defs = dg.Definitions(
     assets=assets.all_assets,
-    jobs=[assets.dakp_build],
+    jobs=assets.all_jobs,
     resources=assets.resources,
 )
