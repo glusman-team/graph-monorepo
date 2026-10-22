@@ -1,0 +1,407 @@
+"""Persistent NER mention cache — Python client for the ``dakp-nercache`` Go server.
+
+GLiNER mining is the slowest pipeline step (~20+ min per full DAG run) and its results are
+pure functions of ``(model, backend config, text)``, so mined mentions are cached in a
+Pebble key/value store (``go/internal/nercache``) served by the ``dakp-nercache`` binary
+over localhost HTTP. The store lives at ``<workdir>/cache/ner/``; the server listens on
+127.0.0.1 with an ephemeral port and publishes ``<workdir>/cache/ner/server.json``
+(``{"pid", "port"}``) for discovery.
+
+Cache keys are 64-char lowercase hex BLAKE3 digests — the bare hex of the project's
+``b3:<hex>`` convention (see :func:`dakp_pipeline.io.content_hash.hash_bytes`), WITHOUT the
+``b3:`` prefix; the Go side treats keys as opaque hex strings. Values are JSON lists of
+``Mention.to_dict()`` payloads, stored verbatim so a hit round-trips byte-identically.
+
+Everything here degrades to a **no-op** when the server/binary is unavailable: offline
+tests and CPU-only runs need zero setup, and a missing cache must never fail a DAG run.
+The offline gazetteer backend is never cached (see :func:`ner_cache_material`).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import shutil
+import signal
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from dakp_pipeline.io.content_hash import digest_dirname, hash_bytes
+from dakp_pipeline.logging_setup import logger, stats
+from dakp_pipeline.ner.ner import DiseaseNER
+
+#: Environment variable overriding the server binary location (wins over all defaults).
+BINARY_ENV_VAR = "DAKP_NERCACHE_BIN"
+#: Cache directory (Pebble store + server.json), relative to the workdir.
+CACHE_DIRNAME = ("cache", "ner")
+#: Per-request HTTP timeout; the server is localhost so anything longer means trouble.
+_REQUEST_TIMEOUT_SECONDS = 30.0
+_HEALTH_TIMEOUT_SECONDS = 1.0
+#: Startup budget waiting for a spawned server to publish server.json and answer /health.
+#: How long to wait for a freshly spawned dakp-nercache to write server.json before giving up.
+#: Startup includes Pebble recovery of the mention store, which after an unclean server death
+#: can take far longer than the original fixed 5 s (observed: the whole build mined uncached
+#: because recovery exceeded the deadline). Override with DAKP_NERCACHE_STARTUP_TIMEOUT.
+_START_WAIT_SECONDS = float(os.environ.get("DAKP_NERCACHE_STARTUP_TIMEOUT", "30"))
+_START_POLL_SECONDS = 0.1
+#: How long close() waits for SIGTERM to stop a server this instance started.
+_STOP_WAIT_SECONDS = 3.0
+#: Maximum items per batch_put request. A shard can hold tens of thousands of freshly
+#: mined texts; one giant request would hold the whole serialized body in memory at once.
+#: Chunking bounds the per-request footprint; the server applies each chunk independently,
+#: and the cache is fail-soft, so a failed chunk only means the rest is re-mined later.
+_PUT_CHUNK_SIZE = 4000
+
+
+def normalize_key_text(text: str) -> str:
+    """Canonical text for cache keys: strip, then collapse internal whitespace runs to one space.
+
+    Only whitespace is folded — case and punctuation are significant, because the NER
+    backend itself is case/punctuation-sensitive (mention offsets index the raw text).
+    """
+    return " ".join(text.split())
+
+
+def mention_key(model_id: str, model_b3: str, config_fingerprint: str, text: str) -> str:
+    """The 64-char hex BLAKE3 cache key for one ``(model, config, text)`` triple.
+
+    ``model_b3`` may be given with or without the ``b3:`` prefix (normalized away). The
+    keyed string is ``"<model_id>|<model_b3>|<config_fingerprint>|<normalized text>|<len>"`` —
+    see :func:`normalize_key_text` for the text normalization. The trailing RAW-text length
+    disambiguates whitespace variants of one section, which fold to the same normalized text
+    but carry offsets into different strings (the fit-refusal see-saw that kept the stale
+    counter nonzero on every run). Keys written before the ``|<len>`` suffix become orphans;
+    they are inert (never requested again) and the refused-entry purge keeps fresh keys honest.
+    """
+    canonical = f"{model_id}|{digest_dirname(model_b3)}|{config_fingerprint}|{normalize_key_text(text)}|{len(text)}"
+    return digest_dirname(hash_bytes(canonical.encode("utf-8")))
+
+
+def _jsonable(value: Any) -> Any:
+    """Reduce a ``DiseaseNER._config()`` value to deterministic JSON-serializable form."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _jsonable(val)
+            for key, val in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if hasattr(value, "items") and callable(value.items):  # Gazetteer: sorted (term, type) pairs
+        items: Any = value.items()
+        return [[str(key), _jsonable(val)] for key, val in items]
+    return str(value)
+
+
+#: ``DiseaseNER._config`` keys that locate files but never change mentions (not key material).
+_LOCATION_CONFIG_KEYS = frozenset({"workdir", "cache_dir"})
+
+
+def config_fingerprint(ner: DiseaseNER) -> str:
+    """64-hex BLAKE3 fingerprint of the backend's serializable construction config.
+
+    Location fields (``workdir``, ``cache_dir``) are excluded: they say where files live, not
+    what the model emits, and keying on them orphaned the whole store whenever a build ran from
+    a different checkout or a migrated workdir (observed: a warm rebuild from a second checkout
+    re-mined all 62,512 treatment texts cold).
+
+    ``compute_dtype`` is omitted at ``fp32`` (the production default, and the value the store
+    shipped with, so default and explicit-fp32 backends keep matching keys written before the
+    field existed); every other value -- e.g. the opt-in ``fp16`` -- is keyed: a dtype change is
+    a re-mine, never a silent cache serve, so an fp16 run never serves or overwrites fp32
+    mentions.
+    """
+    config = {
+        key: value for key, value in ner._config().items() if key not in _LOCATION_CONFIG_KEYS
+    }
+    if config.get("compute_dtype") == "fp32":
+        del config["compute_dtype"]
+    canonical = json.dumps(_jsonable(config), sort_keys=True, separators=(",", ":"))
+    return digest_dirname(hash_bytes(canonical.encode("utf-8")))
+
+
+def ner_cache_material(ner: DiseaseNER) -> tuple[str, str, str] | None:
+    """The ``(model_id, model_b3, config_fingerprint)`` key material for a backend, or None.
+
+    The **offline gazetteer backend is deliberately not cached** (returns ``None``): it is
+    deterministic, CPU-cheap, and keyed by nothing heavier than its embedded/fixture
+    gazetteer, so a cache would add a server dependency for no measurable gain. For the
+    production backend the model content hash comes from the model-cache manifest
+    (:func:`~dakp_pipeline.ner.model_cache.lookup_model` — a manifest read, never a
+    re-hash, model load, or download); ``None`` when that cannot be resolved, in
+    which case callers mine without caching.
+    """
+    if ner._offline:
+        return None
+    from dakp_pipeline.ner.model_cache import lookup_model
+
+    try:
+        ref = lookup_model(ner._model_id, cache_dir=ner._cache_dir, workdir=ner._workdir)
+    except Exception as exc:  # never let cache key material break mining
+        logger.warning(
+            "mention_cache: model ref for {} unavailable ({}); mining without cache",
+            ner._model_id,
+            type(exc).__name__,
+        )
+        return None
+    if ref is None:
+        # Cold model cache: mining without caching, not a model download as a side effect
+        # of building a cache key.
+        return None
+    return ner._model_id, digest_dirname(ref.b3), config_fingerprint(ner)
+
+
+def span_fingerprint(ner: DiseaseNER) -> str:
+    """64-hex BLAKE3 fingerprint of the MODEL-SIDE span material (the Tier B key half).
+
+    Deliberately narrower than :func:`config_fingerprint`: only what can change the raw model
+    output (checkpoint vocabulary, generation floor, window budget). Gazetteer, acceptance and
+    extension floors, and batch size all live in :func:`config_fingerprint` instead - they shape
+    the merge, which is recomputed per run from cached spans, so touching them must not orphan
+    the span store (that is the two-tier design: merge-side iteration is CPU-cheap).
+    """
+    canonical = json.dumps(_jsonable(ner.span_material()), sort_keys=True, separators=(",", ":"))
+    return digest_dirname(hash_bytes(canonical.encode("utf-8")))
+
+
+def span_cache_material(ner: DiseaseNER) -> tuple[str, str, str, Path | None] | None:
+    """The ``(model_id, model_b3, span_fingerprint, model_content_dir)`` Tier B key material.
+
+    Mirrors :func:`ner_cache_material` (same manifest read, no model load, never downloads) and
+    returns ``None`` under the same conditions (offline backend, unreadable manifest, cold model
+    cache) plus the content dir, which :func:`spans_from_cache` needs to resolve the window
+    budget exactly like the worker's loaded model does.
+    """
+    if ner._offline:
+        return None
+    from dakp_pipeline.ner.model_cache import lookup_model
+
+    try:
+        ref = lookup_model(ner._model_id, cache_dir=ner._cache_dir, workdir=ner._workdir)
+    except Exception as exc:  # never let cache key material break mining
+        logger.warning(
+            "span_cache: model ref for {} unavailable ({}); span caching disabled",
+            ner._model_id,
+            type(exc).__name__,
+        )
+        return None
+    if ref is None:
+        return None
+    return ner._model_id, digest_dirname(ref.b3), span_fingerprint(ner), ref.path
+
+
+def span_key(model_id: str, model_b3: str, span_fingerprint_value: str, text: str) -> str:
+    """The 64-char hex BLAKE3 cache key for one ``(model, span-material, text)`` triple.
+
+    Same canonical shape as :func:`mention_key` (including the trailing raw-text length that
+    disambiguates whitespace variants) so both tiers share one key discipline; the fingerprints
+    differ, which is what keeps the two tiers' namespaces apart. Model identity enters via the
+    SAME content digest the mention key uses, so a re-downloaded checkpoint invalidates both
+    tiers together.
+    """
+    canonical = f"spans|{model_id}|{digest_dirname(model_b3)}|{span_fingerprint_value}|{normalize_key_text(text)}|{len(text)}"
+    return digest_dirname(hash_bytes(canonical.encode("utf-8")))
+
+
+class MentionCache:
+    """Lazy, fail-soft client for the ``dakp-nercache`` server.
+
+    The server is located/started on first use: a live server from an existing
+    ``server.json`` (pid alive + ``/health`` answering) is reused; otherwise the binary is
+    spawned (:data:`BINARY_ENV_VAR` override, else ``<workdir>/bin/dakp-nercache``, else
+    ``dakp-nercache`` on PATH) and given up to ~5s to come up. When no server can be
+    reached the instance logs one warning and becomes a no-op — :meth:`get_many` returns
+    ``{}`` and :meth:`put_many` does nothing. No method ever raises for cache reasons.
+    """
+
+    def __init__(self, workdir: Path | str, binary: Path | str | None = None) -> None:
+        self._workdir = Path(workdir)
+        self._binary = str(binary) if binary is not None else None
+        self._base_url: str | None = None
+        self._proc: subprocess.Popen[bytes] | None = None  # set only when WE started the server
+        self._resolved = False  # lazy resolution attempted (success or failure)
+        self._warned = False
+
+    # -- server location/startup -------------------------------------------------
+    def _server_file(self) -> Path:
+        return self._workdir.joinpath(*CACHE_DIRNAME, "server.json")
+
+    def _warn_once(self, message: str, *args: Any) -> None:
+        if not self._warned:
+            logger.warning("mention_cache: " + message, *args)
+            self._warned = True
+
+    def _healthy(self, port: int) -> bool:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/health", timeout=_HEALTH_TIMEOUT_SECONDS
+            ) as response:
+                return response.status == 200
+        except Exception:
+            return False
+
+    def _read_live_server(self) -> str | None:
+        """Base URL of an already-running server from server.json, else None."""
+        try:
+            data = json.loads(self._server_file().read_text("utf-8"))
+            pid, port = int(data["pid"]), int(data["port"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return None
+        return f"http://127.0.0.1:{port}" if self._healthy(port) else None
+
+    def _find_binary(self) -> str | None:
+        if self._binary:
+            return self._binary
+        env = os.environ.get(BINARY_ENV_VAR, "").strip()
+        if env:
+            return env
+        local = self._workdir / "bin" / "dakp-nercache"
+        if local.is_file():
+            return str(local)
+        return shutil.which("dakp-nercache")
+
+    def _ensure(self) -> str | None:
+        """The server's base URL, locating/starting it on first call; None = no-op mode."""
+        if self._resolved:
+            return self._base_url
+        self._resolved = True
+        existing = self._read_live_server()
+        if existing is not None:
+            self._base_url = existing
+            stats(logger, "mention_cache", reused=True, url=existing)
+            return self._base_url
+        binary = self._find_binary()
+        if binary is None:
+            self._warn_once(
+                "no dakp-nercache binary found ({} / <workdir>/bin / PATH); caching disabled",
+                BINARY_ENV_VAR,
+            )
+            return None
+        try:
+            self._proc = subprocess.Popen(
+                [binary, "--workdir", str(self._workdir)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self._warn_once("cannot start {} ({}); caching disabled", binary, exc)
+            return None
+        deadline = time.monotonic() + _START_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            server_url = self._read_live_server()
+            if server_url is not None:
+                self._base_url = server_url
+                stats(logger, "mention_cache", started=True, url=server_url)
+                return self._base_url
+            if self._proc.poll() is not None:
+                break  # exited already (e.g. DB locked by a stale server that lost its file)
+            time.sleep(_START_POLL_SECONDS)
+        self._warn_once(
+            "dakp-nercache did not come up within {}s; caching disabled", _START_WAIT_SECONDS
+        )
+        self._stop_owned()
+        return None
+
+    # -- HTTP boundary (monkeypatch-friendly) --------------------------------------
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """POST ``payload`` to the server, returning the decoded body; None on any failure."""
+        base = self._ensure()
+        if base is None:
+            return None
+        request = urllib.request.Request(
+            f"{base}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            self._warn_once("{} request failed ({}); caching disabled", path, type(exc).__name__)
+            return None
+        return body if isinstance(body, dict) else None
+
+    # -- public API -----------------------------------------------------------------
+    def get_many(self, keys: list[str]) -> dict[str, Any]:
+        """Raw decoded values for ``keys`` that hit; missing/failed keys are simply absent.
+
+        Values are returned VERBATIM (the server stores them losslessly): a Tier A entry is a
+        JSON list of mention dicts, a Tier B entry a JSON object of raw span material. Callers
+        decode their own tier - mention lists via ``Mention.from_dict``, spans via
+        :func:`dakp_pipeline.ner.ner.spans_from_cache` - because the server is tier-agnostic by
+        design.
+        """
+        if not keys:
+            return {}
+        body = self._post("/batch_get", {"keys": keys})
+        if body is None:
+            return {}
+        hits = body.get("hits")
+        if not isinstance(hits, dict):
+            return {}
+        return {str(key): value for key, value in hits.items() if isinstance(value, (list, dict))}
+
+    def put_many(self, items: dict[str, Any]) -> None:
+        """Store ``{key: value}`` verbatim in bounded chunks; a no-op when the cache is unavailable."""
+        if not items:
+            return
+        keys = sorted(items)
+        for start in range(0, len(keys), _PUT_CHUNK_SIZE):
+            chunk = keys[start : start + _PUT_CHUNK_SIZE]
+            payload = {key: items[key] for key in chunk}
+            if self._post("/batch_put", {"items": payload}) is None:
+                return  # fail-soft: stop on first failed chunk (warned once in _post)
+
+    def delete_many(self, keys: list[str]) -> None:
+        """Purge ``keys`` from the store (purge-on-refusal support); no-op when unavailable."""
+        if not keys:
+            return
+        self._post("/batch_delete", {"keys": list(keys)})
+
+    def _stop_owned(self) -> None:
+        """SIGTERM the server process, but only when THIS instance started it."""
+        proc, self._proc = self._proc, None
+        if proc is None or proc.poll() is not None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=_STOP_WAIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(proc.pid, signal.SIGKILL)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=1.0)
+
+    def close(self) -> None:
+        """Release the client; stops the server only if this instance spawned it."""
+        self._stop_owned()
+
+    def __enter__(self) -> MentionCache:
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.close()
+
+
+__all__ = [
+    "BINARY_ENV_VAR",
+    "CACHE_DIRNAME",
+    "MentionCache",
+    "config_fingerprint",
+    "mention_key",
+    "ner_cache_material",
+    "normalize_key_text",
+]

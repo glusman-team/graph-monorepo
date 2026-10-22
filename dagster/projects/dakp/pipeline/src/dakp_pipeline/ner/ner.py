@@ -1,0 +1,2238 @@
+"""The single composite disease/phenotype NER backend — ONE backend, ONE entry point.
+
+DAKP extracts **mentions only** (text spans + entity type). It never resolves terms to
+ontology CURIEs — that is exclusively Tablassert's job (fullmap/BABEL at ``tablassert
+build-kg``). There is no pluggable backend selector: this module is the one NER backend,
+settled after benchmarking (see ``ner/BENCHMARK.md``).
+
+Composite design (gazetteer-first, GLiNER-augmented)
+----------------------------------------------------
+* **Offline mode (default):** a curated disease/phenotype :class:`~dakp_pipeline.ner.dictionary.Gazetteer`
+  + deterministic :class:`~dakp_pipeline.ner.lexical.LexicalMatcher`. Precision 1.000 / F1
+  0.955 on the benchmark fixture, zero heavy dependencies, fully deterministic. Used by tests
+  and offline runs.
+* **Production mode (``offline=False``):** the same gazetteer anchors high-precision spans and
+  a GLiNER2 boundary checkpoint (``fastino/gliner2.5-base-v1``, loaded via ``gliner2.AutoExtractor``)
+  fills out-of-gazetteer gaps when invoked on DailyMed sections. The previous v1 domain fine-tune
+  (``SkyeAv/drug-approvals-gliner-small-v2.1``) is NOT loadable by gliner2 (its knowledgator config
+  schema and BiLSTM head layout predate the gliner2 architecture split); re-fine-tuning that
+  FAERS/DailyMed corpus for gliner2 is a recorded follow-up.
+  Non-overlapping GLiNER spans add recall; on overlap the **most specific span wins** — a model
+  span that strictly contains a gazetteer span supersedes it (``pulmonary hypertension`` beats
+  ``hypertension``), taking the model's boundary and the gazetteer's type. Equal spans, partial
+  overlaps and spans covering several gazetteer terms (a conjunction) all go to the gazetteer.
+  Model spans whose normalized surface is a population descriptor (``_POPULATION_PHRASES``, e.g.
+  "women of childbearing potential") are dropped, leading hedge tokens (``recent``, ``a history
+  of``) are trimmed, and spans a hard window split cuts across a phrase boundary are re-joined.
+  Candidates are generated at ``DEFAULT_THRESHOLD`` and accepted at ``DEFAULT_ACCEPT_THRESHOLD``
+  — the same 0.35 floor by default (the lowest score at which GLiNER is still accurate), so
+  nothing generated is abstained; raise ``accept_threshold`` to decide narrower than you
+  generate. Below the floor the backend **abstains** rather than asserting a low-confidence
+  mention or falling back to a less specific one. GLiNER2 is natively multi-entity and
+  schema-conditioned: one inference call carries the whole :data:`MODEL_LABELS` vocabulary
+  (Biolink category labels **with** per-label descriptions) and every returned span is routed to
+  one of two channels by its canonical type — the **object** channel (``Disease`` /
+  ``PhenotypicFeature``) runs the full gazetteer merge described above, while the **qualifier**
+  channel (anatomical site, sex, population, taxon, frequency, temporal) is emitted as
+  strip-aligned spans at :data:`QUALIFIER_ACCEPT_THRESHOLD` with ``notes="gliner:qualifier"`` and
+  no hedge trimming, gazetteer merge or population filter (those exist to sharpen object spans
+  and would delete exactly the surfaces the qualifier labels extract). The gazetteer
+  stays the type authority whenever an object span contests a gazetteer term. GLiNER2 silently truncates
+  inputs past ``config.max_len`` word tokens (4096 on the shipped checkpoint), so long sections
+  are predicted in exact-substring windows (:func:`_windows`) whose spans are remapped back into
+  full-text offsets before the merge. ``gliner2`` is a core
+  DAKP dependency but is imported lazily on first use (no torch at module load), raising
+  :class:`~dakp_pipeline.ner.model_cache.NERDependencyError` ("reinstall with `uv sync`") if it is
+  somehow not importable.
+
+The offline/production toggle is a mode on this ONE backend, not a backend-name enum.
+
+Entry points: :func:`extract_disease_mentions` (general) and :func:`extract_contraindication_diseases`
+(contraindication sections). All offsets are half-open: ``mention.text == text[mention.start:mention.end]``.
+Output is sorted deterministically by ``(start, end, type, text)``.
+"""
+
+from __future__ import annotations
+
+import bisect
+import contextlib
+import fcntl
+import itertools
+import json
+import os
+import re
+import signal
+import threading
+import time
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from dakp_pipeline.logging_setup import logger, stats
+from dakp_pipeline.ner._gliner25_compat import apply_boundary_attribute_device_fix
+from dakp_pipeline.ner.dictionary import (
+    MENTION_TYPES,
+    OBJECT_TYPES,
+    TYPE_BIOLOGICAL_SEX,
+    TYPE_DISEASE,
+    TYPE_FREQUENCY_QUALIFIER,
+    TYPE_PHENOTYPE,
+    TYPE_TEMPORAL_CONTEXT_QUALIFIER,
+    Gazetteer,
+    canonical_type,
+    normalize_text,
+)
+from dakp_pipeline.ner.lexical import LexicalMatcher, Mention
+from dakp_pipeline.ner.model_cache import NERDependencyError, default_model_cache_dir, ensure_model
+
+# GLiNER2.5 English boundary checkpoint: the boundary-prediction architecture replaces span
+# enumeration with sparse start/end pairing (no fixed span-width cap) and declares
+# ``config.max_len: 4096`` word tokens, which :func:`_token_budget` reads as the window budget
+# (the retired ``fastino/gliner2-large-v1`` shipped ``max_len: null`` and silently pinned
+# production to the 384-word :data:`_DEFAULT_WORD_BUDGET` fallback). There is no GLiNER2.5
+# "large": the family tops out at small (74M) / base (0.2B, this checkpoint) / multi (0.3B),
+# and base wins the English few-shot NER benchmark (FewNERD F1 55.14 vs multi 52.37 per
+# Fastino's comparison). The previous v1 domain fine-tune of ``urchade/gliner_small-v2.1`` is
+# NOT loadable by gliner2 — its knowledgator config schema and BiLSTM head layout predate the
+# gliner2 architecture split — so re-fine-tuning that FAERS/DailyMed corpus for gliner2 is a
+# recorded follow-up. Requires ``gliner2>=2.1`` (first release with ``BoundaryExtractor`` and
+# ``AutoExtractor`` architecture auto-selection). Override for another GLiNER2/2.5 checkpoint.
+DEFAULT_MODEL = "fastino/gliner2.5-base-v1"
+#: The prompt-engineered label vocabulary: label -> description, passed VERBATIM as gliner2's
+#: ``entity_types`` on every inference call. Both call paths DAKP uses funnel it straight into
+#: ``Schema.entities()`` (``inference/runtime.py:1293`` per-text, ``:1335`` batched), which
+#: accepts ``Dict[str, str]`` and stores each string as that label's description
+#: (``inference/schema.py:296,321,418``); ``processor._process_entities`` then renders it into
+#: the prompt as ``[DESCRIPTION] <label>: <description>`` (``processor.py:947,973-978,1116``)
+#: whenever a description is present. Entity labels support descriptions only — few-shot
+#: example pairs are a classification-task feature (``processor.py:948``), so descriptions are
+#: phrased as *what span to draw* with inline positive exemplars, never as an instruction and
+#: never as an input->output example.
+#:
+#: Descriptions are deterministic module constants on purpose: the mention cache folds the label
+#: material into its config fingerprint (``mention_cache.config_fingerprint``), so any
+#: non-determinism here would silently invalidate cached mentions.
+#:
+#: Labels are Biolink category IDs, not the bare words: measured on this host (cached
+#: checkpoint, CPU) plain ``["disease", "phenotype"]`` mistyped "pregnancy" as a disease at 0.82
+#: and emitted "childbearing potential" at 0.40, while the category labels plus descriptions gave
+#: ``biolink:PhenotypicFeature`` "pregnancy" 1.00, ``biolink:BiologicalSex`` "women" 1.00 and
+#: ``biolink:PopulationOfIndividualOrganisms`` "women of childbearing potential" 0.86.
+#:
+#: Exemplar choice is measured, not stylistic. On this host with the vocabulary below:
+#: ``hypersensitivity`` -> PhenotypicFeature 1.00 and ``asthma`` -> Disease 1.00 on the ibuprofen
+#: contraindication sentence; ``renal impairment`` -> PhenotypicFeature 1.00 and ``hypertension``
+#: -> Disease 0.94 on the renal/history sentence, with ``history of hypertension`` ->
+#: temporal_context_qualifier 0.65 (the qualifier the object channel's hedge trimmer would have
+#: destroyed). Listing ``pregnancy`` as a PhenotypicFeature exemplar is what recovers it (1.00 on
+#: both "Contraindicated in pregnancy." and "...during pregnancy and in women of childbearing
+#: potential."); WITHOUT that exemplar the checkpoint emits no pregnancy span at all, and with
+#: ``during`` listed as a temporal-context exemplar it mistypes "pregnancy" as
+#: temporal_context_qualifier 0.64. Both wording choices below are the measured-best pair.
+#:
+#: Order matters (it is the prompt order) and cross-label overlap is allowed — de-overlapping is
+#: per label — so a qualifier span may coexist with the maximal object span over the same words
+#: (observed: ``biolink:Disease`` "renal impairment" 0.41 next to PhenotypicFeature 1.00; the
+#: object channel's de-overlap keeps the higher-scoring one).
+#: ``disease_context_qualifier`` gets no label of its own: it shares ``biolink:Disease``.
+MODEL_LABELS: dict[str, str] = {
+    "biolink:Disease": (
+        "A named disorder, disease or syndrome, drawn as the maximal qualified term including its "
+        "anatomical, severity or course modifiers, e.g. asthma, pulmonary hypertension, severe heart "
+        "failure, active liver disease."
+    ),
+    "biolink:PhenotypicFeature": (
+        "A clinical finding, symptom, lab abnormality or condition-state, not a named disorder, drawn "
+        "as the maximal qualified term, e.g. hypersensitivity, pregnancy, renal impairment, QT "
+        "prolongation, bleeding."
+    ),
+    "biolink:AnatomicalEntity": (
+        "An organ, tissue or body site named as such, drawn on the site phrase alone and never "
+        "including the condition it localizes, e.g. liver, kidney, lung, gastrointestinal tract, "
+        "central nervous system."
+    ),
+    "biolink:BiologicalSex": (
+        "The patient's sex or gender: a word that itself denotes being male or female (a "
+        "biological attribute), drawn on that word alone and never on an age, life-stage or "
+        "species word, e.g. women, men, female, male."
+    ),
+    "biolink:PopulationOfIndividualOrganisms": (
+        "A described patient group or subpopulation the statement is about, drawn as the whole group "
+        "phrase including its modifiers, e.g. women of childbearing potential, pregnant women, "
+        "pediatric patients, elderly patients."
+    ),
+    "biolink:OrganismTaxon": "A species or taxon named as such, drawn on the species or taxon word alone, e.g. humans, rodents, rats.",
+    "frequency_qualifier": (
+        "How often or at what rate a drug is given, drawn on the timing or rate wording alone and "
+        "never including the drug name or a dose amount, e.g. once daily, every 8 hours, twice "
+        "weekly, as needed."
+    ),
+    "temporal_context_qualifier": (
+        "The temporal or evidential wording framing when or how a condition holds, drawn on that "
+        "wording alone and never on the condition or finding itself, e.g. history of, prior to, "
+        "currently, recently, known, suspected."
+    ),
+    "temporal_interval_qualifier": (
+        "A bounded time interval or duration, drawn as the whole interval including its endpoints and "
+        "units, e.g. within 24 hours, for 14 days, during the first trimester, up to 6 weeks."
+    ),
+}
+#: The same vocabulary as names only, for callers that need the label list without descriptions.
+MODEL_LABEL_NAMES: tuple[str, ...] = tuple(MODEL_LABELS)
+#: Provenance recorded on every qualifier-channel mention (``gliner`` / ``gliner:extends`` mark
+#: object-channel model spans).
+QUALIFIER_NOTES = "gliner:qualifier"
+#: Acceptance floor for the qualifier channel. Qualifiers are generated at the same
+#: :data:`GLINER_GENERATION_FLOOR` as objects but are asserted at a higher floor: they narrow an
+#: existing object assertion, so a wrong qualifier silently distorts a true edge, and 0.5 is the
+#: point at which the measured qualifier labels were reliable.
+QUALIFIER_ACCEPT_THRESHOLD = 0.5
+#: Deterministic backstop for qualifier surfaces the shipped checkpoint mining measured as junk
+#: (wenceslaus NER-export scan over 187,314 shipped training examples / 4.25M mentions): dose
+#: amount nouns tagged as ``frequency_qualifier`` (``dosage`` 4,601x, ``dose`` 2,531x, ...),
+#: age/species words tagged as ``BiologicalSex`` (``adults`` 4,154x, ``adult`` 3,677x,
+#: ``human`` 2,923x; biolink defines BiologicalSex as the organismal sex quality itself,
+#: PATO:0000047, not a life-stage or species attribute), and the condition noun ``pregnancy``
+#: tagged as ``temporal_context_qualifier`` (885x; the exact mistype the object-channel prompt
+#: already fights). The MODEL_LABELS descriptions carry the same rule as prompt guidance; this
+#: blocklist is the deterministic guarantee. Exact normalized surfaces per canonical type; the
+#: object channel is untouched. A blocked span is logged, never emitted.
+QUALIFIER_SURFACE_BLOCKLIST: dict[str, frozenset[str]] = {
+    TYPE_BIOLOGICAL_SEX: frozenset({"adult", "adults", "human", "humans"}),
+    TYPE_FREQUENCY_QUALIFIER: frozenset({"dose", "doses", "dosage", "dosages"}),
+    TYPE_TEMPORAL_CONTEXT_QUALIFIER: frozenset({"pregnancy"}),
+}
+CONTEXT_ATTRIBUTE_THRESHOLD = 0.5
+CONTEXT_ATTRIBUTE_GROUP = "assertion_context"
+#: Prompt descriptions for the assertion-context labels, keyed by the raw label (the schema
+#: qualifies them with the group name). Wording is grounded in the predicates the shapers emit
+#: through :func:`dakp_pipeline.assertions.contexts.context_predicate` — indication wording feeds
+#: ``biolink:treats`` (``biolink:applied_to_treat`` on spontaneous-report sources) and
+#: contraindication wording feeds ``biolink:contraindicated_in`` — so the model classifies with
+#: the same semantics the edges carry. ``prevention``/``observed_prevention`` were removed from
+#: the vocabulary: the pinned biolink-model has no ``prevents``/``applied_to_prevent`` predicate,
+#: so those contexts never had an emittable edge of their own.
+CONTEXT_ATTRIBUTE_PROMPTS: dict[str, str] = {
+    "indication": (
+        "the text asserts the drug treats the condition or that the condition is an indication "
+        "for it (a biolink:treats edge; biolink:applied_to_treat on spontaneous-report sources)"
+    ),
+    "contraindication": (
+        "the text asserts the drug must not be given because of the condition, or the condition "
+        "contraindicates the drug (a biolink:contraindicated_in edge)"
+    ),
+}
+#: Lowest model score retained for merge consideration. This is deliberately a generation
+#: floor, not a production operating point: the specificity merge needs to see low-scoring
+#: specific spans before a use-specific acceptance policy decides whether to assert them.
+GLINER_GENERATION_FLOOR = 0.35
+#: Precision-first DailyMed indication acceptance point, selected from the current-model sweep.
+#: At 0.95 the local 34-case fixture had no composite false positives (39/42 recall).
+INDICATION_ACCEPT_THRESHOLD = 0.95
+#: Contraindications use the model floor as their acceptance point: a missed contraindication is
+#: more harmful than a low-confidence candidate. This aliases the one generation-floor constant
+#: instead of repeating an unexplained second ``0.35`` literal.
+CONTRAINDICATION_ACCEPT_THRESHOLD = GLINER_GENERATION_FLOOR
+#: Strict gazetteer policy for production profiles: a model may replace an exact gazetteer anchor
+#: with a longer, more specific boundary only at this confidence. Lower-scoring extensions are
+#: discarded and the exact gazetteer anchor remains. This prevents extensions such as
+#: ``hypersensitivity to ibuprofen`` from weakening the high-precision lexical anchor.
+STRICT_GAZETTEER_EXTENSION_THRESHOLD = 0.95
+#: Backward-compatible generic generation alias. New production code should use one of the named
+#: use-specific constructors below.
+DEFAULT_THRESHOLD = GLINER_GENERATION_FLOOR
+#: Backward-compatible generic acceptance alias. It preserves the recall-first behavior of the
+#: historical constructor; production DAG tasks use explicit indication/contraindication profiles.
+DEFAULT_ACCEPT_THRESHOLD = CONTRAINDICATION_ACCEPT_THRESHOLD
+
+# GLiNER2 counts input in word tokens from its whitespace splitter and silently truncates anything
+# past ``config.max_len`` tokens (only a UserWarning). Mirror that exact token pattern (gliner2's
+# ``WhitespaceTokenSplitter``: URLs, emails and @handles stay single tokens; every other
+# punctuation glyph is its own token) so windows never exceed the model's budget.
+_GLINER_TOKEN = re.compile(
+    r"(?:https?://[^\s]+|www\.[^\s]+)"
+    r"|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"
+    r"|@[a-z0-9_]+"
+    r"|\w+(?:[-_]\w+)*"
+    r"|\S",
+    re.IGNORECASE,
+)
+
+# Sentence-ish piece for window packing: a run of non-terminal characters, trailing terminal
+# punctuation, trailing whitespace. Matches tile the text when the tiling check in
+# :func:`_sentence_piece_spans` holds; otherwise the whole text is one piece.
+_SENTENCE_PIECE = re.compile(r"[^.!?;]+[.!?;]*\s*")
+
+#: Window-budget fallback (GLiNER2 word tokens) when a model exposes no usable ``config.max_len``
+#: or a caller passes a checkpoint that declares nothing. The shipped GLiNER2.5 base checkpoint
+#: declares ``max_len: 4096``; the retired ``fastino/gliner2-large-v1`` shipped ``max_len: null``,
+#: which silently pinned production windows to this 384-word budget.
+_DEFAULT_WORD_BUDGET = 384
+
+#: Long windows are the memory constraint at fp32 on the 16 GB build-host P100s (measured peaks,
+#: batch 1): one ~4,096-word GLiNER2.5 window peaks at ~14.4 GiB, a 2,500-word window at ~6 GiB.
+#: Length-sorted submissions are additionally split so every batch's PADDED word total stays
+#: within this budget: the longest sections ride solo, mid-length windows pair up, and short
+#: windows keep the full requested inference batch. See :meth:`DiseaseNER._infer_chunk`.
+_BATCH_WORD_BUDGET = 5000
+
+
+def _word_budget_batches(
+    ordered: Sequence[str], requested_batch: int, budget: int = _BATCH_WORD_BUDGET
+) -> list[list[str]]:
+    """Split a length-sorted window list into consecutive batches within ``budget`` padded words.
+
+    A GLiNER2 batch pads every member to its longest window, so a batch's peak footprint scales
+    with ``len(batch) * longest``; a batch is cut the moment that product or the requested batch
+    size would be exceeded. Input order is preserved (callers pass length-sorted windows and
+    restore submission order afterwards), which keeps every batch nearly length-uniform.
+    """
+    batches: list[list[str]] = []
+    current: list[str] = []
+    longest = 0
+    for text in ordered:
+        words = len(text.split())
+        if current and (
+            len(current) >= requested_batch or max(longest, words) * (len(current) + 1) > budget
+        ):
+            batches.append(current)
+            current, longest = [], 0
+        current.append(text)
+        longest = max(longest, words)
+    if current:
+        batches.append(current)
+    return batches
+
+
+#: Windows submitted per batched gliner2 call. ONE failed call discards all of its own work, so
+#: the submission is chunked: run 11's cuda:1 worker hit ``torch.OutOfMemoryError`` 2h11m into a
+#: single 50,449-window call and lost every one of those windows. 2048 windows is a few minutes of
+#: P100 inference — the most a poisoned window or an OOM can now cost, and the retry below re-runs
+#: only the failing piece.
+_INFERENCE_CHUNK_WINDOWS = 2048
+#: Maximum batch-size halvings per chunk on a device OOM before the chunk (and shard) fails.
+#: Each halving re-runs the WHOLE chunk, so an unbounded spiral re-pays full-chunk cost for a
+#: doomed window set; two attempts is the recorded sweet spot (the 4x spiral above dropped 2048
+#: windows one-by-one and still lost them all).
+_MAX_OOM_HALVINGS = 2
+
+# Curated high-precision disease/phenotype gazetteer — the offline mode's embedded vocabulary
+# (the same terms benchmarked in ner/BENCHMARK.md). Not exhaustive by design: production mode
+# adds GLiNER recall for out-of-gazetteer mentions. term -> canonical type.
+EMBEDDED_GAZETTEER: dict[str, str] = {
+    # disease (named disorders / syndromes)
+    "asthma": TYPE_DISEASE,
+    "liver disease": TYPE_DISEASE,
+    "active liver disease": TYPE_DISEASE,
+    "heart failure": TYPE_DISEASE,
+    "severe heart failure": TYPE_DISEASE,
+    "myocardial infarction": TYPE_DISEASE,
+    "peptic ulcer": TYPE_DISEASE,
+    "peptic ulcer disease": TYPE_DISEASE,
+    "renal impairment": TYPE_DISEASE,
+    "severe renal impairment": TYPE_DISEASE,
+    "renal disease": TYPE_DISEASE,
+    "end stage renal disease": TYPE_DISEASE,
+    "hypertension": TYPE_DISEASE,
+    "uncontrolled hypertension": TYPE_DISEASE,
+    "arrhythmia": TYPE_DISEASE,
+    "ventricular arrhythmias": TYPE_DISEASE,
+    "stroke": TYPE_DISEASE,
+    "hemorrhagic stroke": TYPE_DISEASE,
+    "hepatic impairment": TYPE_DISEASE,
+    "severe hepatic impairment": TYPE_DISEASE,
+    "epilepsy": TYPE_DISEASE,
+    "glaucoma": TYPE_DISEASE,
+    "narrow angle glaucoma": TYPE_DISEASE,
+    "hypercholesterolemia": TYPE_DISEASE,
+    "diabetes mellitus": TYPE_DISEASE,
+    "type 2 diabetes mellitus": TYPE_DISEASE,
+    "chronic obstructive pulmonary disease": TYPE_DISEASE,
+    "atrial fibrillation": TYPE_DISEASE,
+    "arthritis": TYPE_DISEASE,
+    "rheumatoid arthritis": TYPE_DISEASE,
+    "depression": TYPE_DISEASE,
+    "migraine": TYPE_DISEASE,
+    # High-frequency contraindication diseases observed in hand-checked label/FAERS snippets
+    # (see ner/BENCHMARK.md "Small-example checks"): gazetteer growth keeps the maximal-span
+    # policy ("congestive heart failure", not just "heart failure") and speeds offline recall.
+    "congestive heart failure": TYPE_DISEASE,
+    "cirrhosis": TYPE_DISEASE,
+    "hepatic encephalopathy": TYPE_DISEASE,
+    "acute kidney injury": TYPE_DISEASE,
+    "hepatocellular carcinoma": TYPE_DISEASE,
+    # phenotype (clinical findings / symptoms / condition-states)
+    "hypersensitivity": TYPE_PHENOTYPE,
+    "transaminase elevations": TYPE_PHENOTYPE,
+    "bleeding": TYPE_PHENOTYPE,
+    "active bleeding": TYPE_PHENOTYPE,
+    "gastrointestinal bleeding": TYPE_PHENOTYPE,
+    "pregnancy": TYPE_PHENOTYPE,
+    "qt prolongation": TYPE_PHENOTYPE,
+    "seizure": TYPE_PHENOTYPE,
+    "seizures": TYPE_PHENOTYPE,
+    "headache": TYPE_PHENOTYPE,
+    "pain": TYPE_PHENOTYPE,
+    "back pain": TYPE_PHENOTYPE,
+    "nausea": TYPE_PHENOTYPE,
+    "vomiting": TYPE_PHENOTYPE,
+    "fatigue": TYPE_PHENOTYPE,
+}
+
+# Closed, deterministic qualifier vocabulary. Keep this separate from ``EMBEDDED_GAZETTEER``:
+# object and qualifier channels have different downstream contracts, and a qualifier must never
+# become an assertion object. These surfaces are unambiguous biological-sex terms; broader
+# demographic/population wording remains model-only until it has an equivalently reviewable
+# lexicon. The lexical matcher normalizes case, punctuation, and possessives before matching.
+QUALIFIER_GAZETTEER: dict[str, str] = {
+    "female": TYPE_BIOLOGICAL_SEX,
+    "females": TYPE_BIOLOGICAL_SEX,
+    "male": TYPE_BIOLOGICAL_SEX,
+    "males": TYPE_BIOLOGICAL_SEX,
+    "men": TYPE_BIOLOGICAL_SEX,
+    "woman": TYPE_BIOLOGICAL_SEX,
+    "women": TYPE_BIOLOGICAL_SEX,
+}
+#: Provenance recorded for an accepted deterministic qualifier mention.
+QUALIFIER_GAZETTEER_NOTES = "gazetteer:qualifier"
+
+# Population/demographic descriptors GLiNER likes to tag as phenotypes in contraindication text
+# ("Contraindicated in women of childbearing potential." — observed false positive, score ~0.5-0.6).
+# These are subject populations, not disease/phenotype mentions, so model spans whose normalized
+# surface equals one are dropped. The curated gazetteer never matches them, so offline mode is
+# unaffected. Normalized exact match only — deterministic and precision-safe.
+_POPULATION_PHRASES: frozenset[str] = frozenset(
+    (
+        "women",
+        "men",
+        "children",
+        "patients",
+        "individuals",
+        "subjects",
+        "women of childbearing potential",
+        "childbearing potential",
+        "women of childbearing age",
+        "pregnant women",
+    )
+)
+
+# Non-clinical tokens trimmed off the LEFT edge of a model span before the specificity merge.
+# This is what makes "the more specific span always wins" safe: it removes the modifier
+# over-extension (``recent myocardial infarction``, ``a history of peptic ulcer disease``) that
+# ``ner/BENCHMARK.md`` cites as the reason overlap-extension was originally skipped, while leaving
+# real qualifiers alone. The list is a CLOSED class (determiners, prepositions, temporal/
+# evidential hedges, population heads) and the polarity matters: anything NOT listed counts as a
+# clinical qualifier and is kept, so ``severe`` / ``active`` / ``congestive`` / ``pulmonary``
+# survive — the gazetteer itself ships ``severe heart failure`` and ``active liver disease``.
+# Left edge only: trimming the right edge would turn the population descriptor "pregnant women"
+# into the emittable "pregnant", defeating _POPULATION_PHRASES.
+_HEDGE_TOKENS: frozenset[str] = frozenset(
+    (
+        # determiners / quantifiers
+        "a",
+        "an",
+        "the",
+        "any",
+        "all",
+        "some",
+        "other",
+        "certain",
+        "this",
+        "these",
+        "those",
+        # prepositions / conjunctions
+        "of",
+        "with",
+        "in",
+        "to",
+        "and",
+        "or",
+        "for",
+        "on",
+        "at",
+        # temporal / evidential hedges
+        "recent",
+        "recently",
+        "prior",
+        "previous",
+        "previously",
+        "history",
+        "known",
+        "suspected",
+        "possible",
+        "potential",
+        "current",
+        "currently",
+        "ongoing",
+        "documented",
+        "existing",
+        "preexisting",
+        "underlying",
+        # population heads (the subject, not the condition)
+        "patient",
+        "patients",
+        "women",
+        "men",
+        "children",
+        "individuals",
+        "subjects",
+    )
+)
+
+
+def _install_message(module: str) -> str:
+    return f"NER production mode requires the '{module}' package (a core DAKP dependency) but it is not importable. Install all dependencies with: uv sync"
+
+
+def _strip_aligned(window: str, start: int, end: int) -> tuple[int, int]:
+    """Clamp ``start``/``end`` into ``window``, then walk them inward over whitespace.
+
+    gliner2 returns each span's surface ``.strip()``ed but the char offsets untrimmed
+    (``runtime._find_spans`` records the raw token-span bounds), so ``window[start:end]`` can
+    carry whitespace padding. This restores the half-open invariant
+    ``window[start:end] == span["text"]`` that the merge and the mention contract rely on.
+
+    The clamp is not cosmetic: gliner2's collator MUTATES every input that does not already end
+    with terminal punctuation — ``processor._collate_batch`` appends a synthetic ``"."`` and
+    builds the char offset maps from that longer string, so the appended period is a real word
+    token whose ``end_map`` entry is ``len(window) + 1``. ``runtime._find_spans`` bounds its
+    spans by TOKEN index only, so any span whose last token is that synthetic period arrives one
+    char past the end of the window DAKP actually handed over. Indexing the window with it raised
+    ``IndexError: string index out of range`` inside a GPU worker, which logs no traceback of its
+    own, and the exception travelled out through ``future.result()`` to discard an entire
+    multi-hour mining shard (DAG runs 8 and 9 both died this way, 37 min into the shape stage).
+    Clamped to the window, the very same span keeps its true surface: the phantom char is the
+    collator's period, which is not part of the source text anyway.
+    """
+    limit = len(window)
+    start = max(0, min(start, limit))
+    end = max(start, min(end, limit))
+    while start < end and window[start].isspace():
+        start += 1
+    while end > start and window[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _context_from_attributes(entry: Mapping[str, Any]) -> tuple[str, float]:
+    raw = entry.get(CONTEXT_ATTRIBUTE_GROUP, [])
+    if not isinstance(raw, list):
+        raw = [raw] if isinstance(raw, Mapping) else []
+    candidates = [
+        (str(item.get("label", "")), float(item.get("confidence", 0.0)))
+        for item in raw
+        if isinstance(item, Mapping) and item.get("label")
+    ]
+    return max(candidates, key=lambda item: (item[1], item[0]), default=("", 0.0))
+
+
+def _spans_from_result(result: Mapping[str, Any], window: str) -> list[_ModelSpan]:
+    """Flatten one gliner2 result dict into window-relative :class:`_ModelSpan` candidates.
+
+    gliner2 (``extract_entities`` / per-item ``batch_extract_entities`` entries) returns
+    ``{"entities": {label: [{"text", "confidence", "start", "end"}, ...]}}`` with window-relative
+    offsets. Labels whose canonical type is outside
+    :data:`~dakp_pipeline.ner.dictionary.MENTION_TYPES` are dropped here, so a checkpoint
+    emitting a qualifier DAKP does not model (a severity qualifier, say) or an unrelated category
+    (``CHEMICAL``) can never reach a channel, and offsets are clamped into the window and
+    strip-aligned (:func:`_strip_aligned`) against the window they were predicted on — gliner2's
+    collator appends a synthetic ``"."`` to inputs without terminal punctuation, so its offsets
+    can point one char past the window DAKP sent, and each affected window is reported once
+    (``ner_span_offsets``). Both channels are returned; callers route them with
+    :meth:`DiseaseNER._channel_spans`.
+    """
+    spans: list[_ModelSpan] = []
+    clamped = 0
+    for label, entries in result.get("entities", {}).items():
+        etype = canonical_type(str(label))
+        if etype not in MENTION_TYPES:
+            continue
+        for entry in entries:
+            raw_start, raw_end = int(entry["start"]), int(entry["end"])
+            if raw_start < 0 or raw_end > len(window):
+                clamped += 1  # collator-mutated offsets; see _strip_aligned
+            start, end = _strip_aligned(window, raw_start, raw_end)
+            if start >= end:
+                continue
+            context_model, context_score = _context_from_attributes(entry)
+            spans.append(
+                _ModelSpan(
+                    start=start,
+                    end=end,
+                    type=etype,
+                    score=float(entry["confidence"]),
+                    context_model=context_model,
+                    context_model_score=context_score,
+                )
+            )
+    if clamped:
+        # One line per affected window (not per span): a shard holds tens of thousands of them.
+        logger.warning(
+            "ner_span_offsets: clamped = {} window_len = {} preview = {!r}",
+            clamped,
+            len(window),
+            window[:120],
+        )
+    return spans
+
+
+def _release_cuda_cache() -> None:
+    """Best-effort ``torch.cuda.empty_cache()`` after a device OOM.
+
+    A failed allocation leaves its reserved blocks behind and a multi-hour shard fragments them,
+    so the next call OOMs at ANY batch size even though the model needs far less than the card
+    holds: run 12's cuda:1 worker sat at 16.0 GiB of a 15.9 GiB card, halved its batch four times,
+    then OOMed on each of 2048 single-window retries and dropped every one of them. Releasing the
+    cache hands those blocks back before the smaller retry. Never raises — no torch, no CUDA
+    device, or an allocator that refuses are all no-ops here.
+    """
+    try:
+        import torch  # lazy: no torch at module load
+
+        torch.cuda.empty_cache()
+    except Exception:
+        pass  # a cleanup helper must never fail a shard: no torch, no device, or a refusing allocator
+
+
+def _is_memory_error(exc: BaseException) -> bool:
+    """True for a device OOM — a BATCH-SIZE problem, not a poisoned-window problem.
+
+    Matched on class name and message so ``torch`` stays a lazy import:
+    ``torch.OutOfMemoryError`` ("CUDA out of memory. Tried to allocate 2.26 GiB") is what run 11's
+    cuda:1 worker raised on a 16 GB P100 at ``batch_size=16``. Halving the batch is the cure for
+    that; splitting the window list is not, and vice versa for a genuinely poisoned window.
+    """
+    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+
+
+def _sort_key(mention: Mention) -> tuple[int, int, str, str]:
+    return (mention.start, mention.end, mention.type, mention.text)
+
+
+def _overlaps(start: int, end: int, other: tuple[int, int]) -> bool:
+    return start < other[1] and other[0] < end
+
+
+def _overlaps_any(start: int, end: int, covered: Iterable[tuple[int, int]]) -> bool:
+    return any(_overlaps(start, end, span) for span in covered)
+
+
+def _contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
+    """True when ``outer`` covers ``inner`` (equal spans included — callers exclude equality)."""
+    return outer[0] <= inner[0] and inner[1] <= outer[1]
+
+
+@dataclass(frozen=True)
+class _ModelSpan:
+    """A GLiNER span candidate (full-text offsets) awaiting the gazetteer merge."""
+
+    start: int
+    end: int
+    type: str
+    score: float
+    context_model: str = ""
+    context_model_score: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-safe projection for the Tier B span cache (see ``mention_cache``).
+
+        Lossless by construction: :meth:`from_dict` restores every field, so a cached span
+        round-trips byte-identically - the property the cache's fit/merge contracts ride on.
+        """
+        return {
+            "start": self.start,
+            "end": self.end,
+            "type": self.type,
+            "score": self.score,
+            "context_model": self.context_model,
+            "context_model_score": self.context_model_score,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> _ModelSpan:
+        return cls(
+            start=int(data["start"]),
+            end=int(data["end"]),
+            type=str(data["type"]),
+            score=float(data["score"]),
+            context_model=str(data.get("context_model", "")),
+            context_model_score=float(data.get("context_model_score", 0.0)),
+        )
+
+
+@dataclass(frozen=True)
+class RawTextSpans:
+    """One text's raw model output, BEFORE the deterministic post-processing merge.
+
+    This is the unit the Tier B span cache stores: everything model-side (windows, per-window
+    object-channel spans in full-text coordinates, qualifier-channel spans) is here; everything
+    config-side (hedge trim, gazetteer contest, acceptance floors, qualifier merge) happens in
+    :meth:`DiseaseNER.merge_spans` and is recomputed per run. That split is what lets a
+    gazetteer edit or an accept-threshold sweep re-merge on CPU instead of re-mining on GPU.
+
+    ``windows`` carries the (start, text) pairs so :meth:`from_cache` can verify a cached entry
+    was windowed exactly the way the requesting text resolves (same budget -> same tiling); the
+    CACHE omits the window texts (recomputable from ``text + budget``) and stores the starts
+    only, validated on read.
+    """
+
+    windows: list[tuple[int, str]]
+    objects: list[list[_ModelSpan]]  # per-window, aligned with ``windows``
+    qualifiers: list[_ModelSpan]
+
+    def to_cache(self) -> dict[str, Any]:
+        """JSON-safe projection: window starts + spans, no window texts."""
+        return {
+            "starts": [start for start, _window in self.windows],
+            "objects": [[span.to_dict() for span in per_window] for per_window in self.objects],
+            "qualifiers": [span.to_dict() for span in self.qualifiers],
+        }
+
+
+def spans_from_cache(
+    text: str, model_dir: Path | None, chunk_words: int | None, data: Mapping[str, Any]
+) -> RawTextSpans | None:
+    """Rebuild :class:`RawTextSpans` from its :meth:`RawTextSpans.to_cache` form, or ``None``.
+
+    Windows are recomputed from ``(text, budget)`` and checked against the stored starts: a
+    mismatch means the entry was windowed under a different budget than the requesting text
+    resolves to (model swap, config edit), and the entry is treated as a MISS rather than merged
+    with the wrong tiling. The budget resolution mirrors :func:`_token_budget` exactly without a
+    loaded model: ``chunk_words`` override, else the checkpoint config's ``max_len``, else
+    :data:`_DEFAULT_WORD_BUDGET` - all three read from the same sources (the override kwarg and
+    the cached model's ``config.json``), so parent and worker always agree.
+    """
+    budget = _token_budget_offline(model_dir, chunk_words)
+    windows = _windows(text, budget)
+    starts = [start for start, _window in windows]
+    try:
+        stored_starts = [int(start) for start in data["starts"]]
+        objects = [
+            [_ModelSpan.from_dict(span) for span in per_window] for per_window in data["objects"]
+        ]
+        qualifiers = [_ModelSpan.from_dict(span) for span in data["qualifiers"]]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if stored_starts != starts or len(objects) != len(windows):
+        return None
+    return RawTextSpans(windows=windows, objects=objects, qualifiers=qualifiers)
+
+
+def _token_budget_offline(model_dir: Path | None, override: int | None) -> int:
+    """Parent-side twin of :func:`_token_budget`: no loaded model, read ``config.json`` instead.
+
+    The cached model's ``config.json`` is the exact file ``AutoExtractor.from_pretrained`` loads
+    into ``model.config``, so its ``max_len`` is the value the worker's ``_token_budget`` sees.
+    Absent/invalid entries fall through exactly like the runtime path (override wins, then the
+    config value, then :data:`_DEFAULT_WORD_BUDGET`). The shipped GLiNER2.5 base checkpoint
+    declares ``max_len: 4096``; the fallback covers override-less checkpoints that declare
+    nothing (the retired ``fastino/gliner2-large-v1`` shipped ``max_len: null`` and silently
+    ran production on this 384-word budget).
+    """
+    if isinstance(override, int) and override >= 1:
+        return override
+    if model_dir is not None:
+        try:
+            config = json.loads((Path(model_dir) / "config.json").read_text(encoding="utf-8"))
+            max_len = config.get("max_len")
+            if isinstance(max_len, int) and max_len >= 1:
+                return max_len
+        except (OSError, ValueError):  # unreadable/missing/corrupt config: use the fallback
+            pass
+    return _DEFAULT_WORD_BUDGET
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    """A trimmed model span that survived the gazetteer contest, plus what it supersedes.
+
+    ``anchor`` is the index of the single gazetteer mention this span strictly contains — the
+    more-specific-boundary case (``pulmonary hypertension`` ⊃ ``hypertension``) — or ``-1`` when
+    the span stands alone with no gazetteer interaction.
+    """
+
+    span: _ModelSpan
+    anchor: int
+
+
+def _trim_hedges(text: str, start: int, end: int) -> tuple[int, int] | None:
+    """Trim leading :data:`_HEDGE_TOKENS` off a model span; ``None`` if nothing survives.
+
+    Offsets move only to :data:`_GLINER_TOKEN` match boundaries, so the half-open invariant
+    ``mention.text == text[start:end]`` still holds. A span with no leading hedge is returned
+    untouched (leading whitespace/punctuation included), so spans the model already got right
+    are byte-identical to the pre-trim behavior.
+    """
+    tokens = list(_GLINER_TOKEN.finditer(text, start, end))
+    if not tokens:
+        return None
+    for position, token in enumerate(tokens):
+        if normalize_text(token.group()) not in _HEDGE_TOKENS:
+            return (token.start(), end) if position else (start, end)
+    return None  # every token was a hedge ("patients with") — not a mention
+
+
+def _candidates_vs_gazetteer(
+    model_spans: list[_ModelSpan], gazetteer_spans: list[tuple[int, int]]
+) -> list[_Candidate]:
+    """Resolve each model span against the gazetteer; drop the ones the gazetteer wins.
+
+    * strictly contains exactly one gazetteer span -> candidate that **supersedes** it (the model
+      found the more specific boundary);
+    * equal span, or partial overlap in either direction -> gazetteer wins (its span AND its type
+      are the high-precision anchor), model span dropped;
+    * contains **several** gazetteer spans -> a conjunction (``asthma or hypertension``), not a
+      qualifier: the gazetteer spans stand and the model span is dropped;
+    * no overlap at all -> free-standing candidate (``anchor=-1``), the OOV-recall case.
+
+    ``ordered`` iteration order does not change accept/drop decisions or the anchor: a span is
+    dropped when any overlap is a blocker OR more than one gazetteer span is strictly contained
+    (both order-independent), and a kept span's anchor is its single contained index.
+
+    Only gazetteer spans with ``start < span.end`` can overlap, so the spans are sorted once
+    and a bisect bounds the scan to just that prefix (the previous code examined every
+    gazetteer span for every model span: O(m x g) per text).
+    """
+    ordered = sorted(enumerate(gazetteer_spans), key=lambda item: (item[1][0], item[1][1]))
+    starts = [gazetteer_span[0] for _index, gazetteer_span in ordered]
+    candidates: list[_Candidate] = []
+    for span in model_spans:
+        bounds = (span.start, span.end)
+        contained: list[int] = []
+        blocked = False
+        for position in range(bisect.bisect_left(starts, span.end)):
+            index, gazetteer_span = ordered[position]
+            if gazetteer_span != bounds and _contains(bounds, gazetteer_span):
+                contained.append(index)
+            elif gazetteer_span == bounds or _overlaps(span.start, span.end, gazetteer_span):
+                blocked = True
+                break
+        if blocked or len(contained) > 1:
+            continue
+        candidates.append(_Candidate(span=span, anchor=contained[0] if contained else -1))
+    return candidates
+
+
+def _select_candidates(candidates: list[_Candidate]) -> list[_Candidate]:
+    """De-overlap model candidates, most specific first: longest span wins.
+
+    Ties break on score, then ``(start, end, type)`` so the result is deterministic regardless of
+    the order GLiNER returned its entities in.
+    """
+    ordered = sorted(
+        candidates,
+        key=lambda c: (
+            -(c.span.end - c.span.start),
+            -c.span.score,
+            c.span.start,
+            c.span.end,
+            c.span.type,
+        ),
+    )
+    kept: list[_Candidate] = []
+    for candidate in ordered:
+        if not _overlaps_any(
+            candidate.span.start, candidate.span.end, ((k.span.start, k.span.end) for k in kept)
+        ):
+            kept.append(candidate)
+    return kept
+
+
+def _merge_straddling_spans(
+    windows: list[tuple[int, str]], spans_by_window: list[list[_ModelSpan]]
+) -> None:
+    """Rejoin model spans a hard window split cut across a phrase boundary.
+
+    Sentence-piece windows tile the text exactly (gap-free), so a mention cannot straddle those
+    boundaries — only budget hard splits drop the whitespace between one window's last token and
+    the next window's first token, which can cut a multiword mention into two partial spans
+    (``myasthenia | gravis`` → ``myasthenia`` + ``gravis``, observed on a run-on sentence). When
+    one window's last span ends flush at its end and the next window's first span begins flush at
+    its start, the pair is re-unified into a single span; type and score come from the
+    higher-scoring side (ties go left, deterministically). A lone edge span is kept as-is. Merged
+    spans re-enter the next window pair, so a mention cut across two boundaries chains too.
+    """
+    for window_pair, span_pair in zip(
+        itertools.pairwise(windows), itertools.pairwise(spans_by_window), strict=True
+    ):
+        (prev_start, prev_window), (curr_start, _curr_window) = window_pair
+        prev_spans, curr_spans = span_pair
+        prev_end = prev_start + len(prev_window)
+        if curr_start == prev_end:
+            continue  # contiguous (sentence-piece) boundary: mentions cannot span punctuation
+        left = next((span for span in reversed(prev_spans) if span.end == prev_end), None)
+        right = next((span for span in curr_spans if span.start == curr_start), None)
+        if left is None or right is None:
+            continue
+        anchor = left if left.score >= right.score else right
+        prev_spans.remove(left)
+        curr_spans.remove(right)
+        curr_spans.append(
+            _ModelSpan(
+                start=left.start,
+                end=right.end,
+                type=anchor.type,
+                score=max(left.score, right.score),
+            )
+        )
+
+
+def _sentence_piece_spans(text: str) -> list[tuple[int, int]]:
+    """Char spans of sentence-ish pieces tiling ``text`` exactly (gap-free, in order).
+
+    Falls back to a single whole-text piece when the piece regex cannot tile the text (leading
+    punctuation, dangling terminals), so callers always get contiguous coverage.
+    """
+    spans = [(match.start(), match.end()) for match in _SENTENCE_PIECE.finditer(text)]
+    if (
+        not spans
+        or spans[0][0] != 0
+        or spans[-1][1] != len(text)
+        or any(
+            prev_end != next_start for (_, prev_end), (next_start, _) in itertools.pairwise(spans)
+        )
+    ):
+        return [(0, len(text))]
+    return spans
+
+
+def _hard_split_spans(text: str, start: int, end: int, budget: int) -> list[tuple[int, int, int]]:
+    """Split one over-budget ``text[start:end]`` slice into budget-sized ``(start, end, tokens)``
+    windows at GLiNER token-match boundaries (each window stays an exact substring)."""
+    matches = list(_GLINER_TOKEN.finditer(text, start, end))
+    return [
+        (window[0].start(), window[-1].end(), len(window))
+        for window in (matches[i : i + budget] for i in range(0, len(matches), budget))
+    ]
+
+
+def _windows(text: str, budget: int) -> list[tuple[int, str]]:
+    """Slice ``text`` into exact-substring windows of at most ``budget`` GLiNER word tokens.
+
+    Returns ``(start, window)`` pairs with ``window == text[start:start + len(window)]``; the
+    windows follow each other in text order, so entity char offsets predicted on a window remap to
+    full-text coordinates by adding ``start``. Sentence-ish pieces are packed greedily; a single
+    piece longer than the budget is hard-split at token boundaries. Blank text yields no windows.
+    """
+    if not text.strip():
+        return []
+    pieces: list[tuple[int, int, int]] = []
+    for piece_start, piece_end in _sentence_piece_spans(text):
+        tokens = len(_GLINER_TOKEN.findall(text[piece_start:piece_end]))
+        if tokens > budget:
+            pieces.extend(_hard_split_spans(text, piece_start, piece_end, budget))
+        else:
+            pieces.append((piece_start, piece_end, tokens))
+    windows: list[tuple[int, str]] = []
+    window_start = window_end = token_total = 0
+    open_window = False
+    for piece_start, piece_end, tokens in pieces:
+        if open_window and token_total + tokens > budget:
+            windows.append((window_start, text[window_start:window_end]))
+            open_window = False
+            token_total = 0
+        if not open_window:
+            window_start = piece_start
+            open_window = True
+        window_end = piece_end
+        token_total += tokens
+    if open_window:  # pragma: no cover - defensive: pieces is never empty (non-blank text
+        # always yields >=1 piece and the last iteration always opens a window)
+        windows.append((window_start, text[window_start:window_end]))
+    return windows
+
+
+def _token_budget(model: Any, override: int | None) -> int:
+    """Window budget in GLiNER word tokens: explicit ``override``, else the model's
+    ``config.max_len``, else :data:`_DEFAULT_WORD_BUDGET` — never below 1."""
+    if override is not None:
+        return max(1, int(override))
+    max_len = getattr(getattr(model, "config", None), "max_len", None)
+    if isinstance(max_len, int) and max_len >= 1:
+        return max_len
+    return _DEFAULT_WORD_BUDGET
+
+
+def _cuda_device_supported(torch_mod: Any, device_index: int) -> bool:
+    """True when the installed torch has kernels compiled for ``cuda:device_index``.
+
+    ``torch.cuda.is_available()`` only checks driver + runtime — it lies when torch was built
+    without kernels for the present GPU arch (torch >=2.8 cu128 wheels have no sm_60 code, so
+    the P100s pass ``is_available()`` but raise on first use). A device is usable iff its
+    compute capability appears in the arch list torch was compiled for.
+    """
+    try:
+        major, minor = torch_mod.cuda.get_device_capability(device_index)
+    except Exception:  # defensive: driver/runtime errors surface as unusable, not a crash
+        return False
+    return f"sm_{major}{minor}" in torch_mod.cuda.get_arch_list()
+
+
+def _model_device() -> str:
+    """Device the GLiNER model runs on: CUDA when available AND supported by the installed
+    torch build (orders of magnitude faster than the CPU fallback, which saturates every
+    core), else CPU.
+
+    The :func:`_cuda_device_supported` gate covers hosts whose GPUs predate the torch build's
+    compiled architectures (e.g. the P100/sm_60 build server against a cu128 wheel line):
+    there, ``is_available()`` is True but the first CUDA call raises, so mining silently
+    downgrades to CPU instead (see ``plans/fix-p100-torch-sm60.md``).
+    """
+    try:
+        import torch  # lazy: no torch at module load
+    except ImportError:
+        return "cpu"
+    if not torch.cuda.is_available():
+        return "cpu"
+    if not _cuda_device_supported(torch, 0):
+        logger.warning(
+            "ner_device_unsupported: cuda:0 arch not in torch build arch list = {}; falling back to CPU",
+            torch.cuda.get_arch_list(),
+        )
+        return "cpu"
+    return "cuda"
+
+
+# --- one GLiNER model per GPU -------------------------------------------------
+
+#: Env var overriding the GPU-lock directory (tests point it at a tmp dir).
+_GPU_LOCK_DIR_ENV = "DAKP_GPU_LOCK_DIR"
+
+
+def _cuda_index(device: str) -> int:
+    """Numeric index from a CUDA device string: ``"cuda"`` -> 0, ``"cuda:2"`` -> 2."""
+    return int(device.partition(":")[2] or 0)
+
+
+def _gpu_lock_dir(cache_dir: Path | str | None = None, workdir: Path | str | None = None) -> Path:
+    """Where per-device lock files live, resolved like the model cache dir.
+
+    ``$DAKP_GPU_LOCK_DIR`` wins (tests); then ``<workdir>/cache/gpu-locks``; then, with no
+    workdir, a sibling of the model cache root (``<cache>/../gpu-locks``, i.e.
+    ``~/.cache/dakp/gpu-locks`` for the default user cache).
+    """
+    override = os.environ.get(_GPU_LOCK_DIR_ENV, "").strip()
+    if override:
+        return Path(override)
+    if workdir is not None:
+        return Path(workdir) / "cache" / "gpu-locks"
+    cache = Path(cache_dir) if cache_dir is not None else default_model_cache_dir()
+    return cache.parent / "gpu-locks"
+
+
+#: Env var overriding the GPU-lock wait ceiling in seconds (``0`` = wait forever).
+_GPU_LOCK_TIMEOUT_ENV = "DAKP_GPU_LOCK_TIMEOUT_SECONDS"
+#: Default GPU-lock wait ceiling in seconds. Mining runs legitimately serialize on a GPU, so the
+#: ceiling stays generous; it exists to fail LOUDLY on orphaned lock holders (a crashed task's
+#: leaked workers keep the flock and the model resident) instead of deadlocking for days.
+_DEFAULT_GPU_LOCK_TIMEOUT_SECONDS = 3600.0
+#: Poll cadence for the timed lock wait (short enough that tests sub-second waits stay honest).
+_GPU_LOCK_POLL_SECONDS = 0.1
+
+
+class GpuLockTimeoutError(RuntimeError):
+    """Raised when a CUDA-device flock stays held past the configured wait ceiling."""
+
+
+def _gpu_lock_timeout_seconds(timeout: float | None) -> float:
+    """Resolve the lock-wait ceiling: explicit ``timeout``, else the env override, else the default."""
+    if timeout is not None:
+        return timeout
+    raw = os.environ.get(_GPU_LOCK_TIMEOUT_ENV, "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning(
+                "ner_gpu_lock: ignoring unparseable {} = {!r}; using default {}",
+                _GPU_LOCK_TIMEOUT_ENV,
+                raw,
+                _DEFAULT_GPU_LOCK_TIMEOUT_SECONDS,
+            )
+    return _DEFAULT_GPU_LOCK_TIMEOUT_SECONDS
+
+
+def _lock_competitor_pids(path: Path, *, include_waiters: bool = False) -> list[int]:
+    """PIDs holding an flock on ``path``, parsed from ``/proc/locks``; ``[]`` off-Linux or unreadable.
+
+    ``/proc/locks`` lines carry ``<major>:<minor>:<inode>`` (hex device ids) matching
+    ``os.stat(path)``'s device and inode; the PID is the field before it. Same-UID holders are
+    always visible, which is exactly the pipeline case (workers run as the Airflow user).
+    With ``include_waiters`` the PIDs blocked in a kernel wait for the same flock (lines whose
+    entry starts with ``->``) are returned too — a leaked waiter wins the lock the instant the
+    holder dies and wedges the GPU just as hard as a leaked holder.
+    """
+    try:
+        st = path.stat()
+        want_dev = f"{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}"
+        pids: list[int] = []
+        with open("/proc/locks") as locks:
+            for line in locks:
+                fields = line.split()
+                if len(fields) > 1 and fields[1] == "->":  # blocked waiter: drop the marker
+                    if not include_waiters:
+                        continue
+                    fields = fields[:1] + fields[2:]
+                if len(fields) < 6 or fields[1] != "FLOCK":
+                    continue
+                dev, _, inode = fields[5].rpartition(":")
+                if dev == want_dev and inode == str(st.st_ino):
+                    pids.append(int(fields[4]))
+        return pids
+    except (OSError, ValueError, IndexError):
+        return []
+
+
+def _lock_holder_pids(path: Path) -> list[int]:
+    """PIDs holding an flock on ``path`` (waiters excluded); ``[]`` off-Linux or unreadable."""
+    return _lock_competitor_pids(path)
+
+
+def _is_orphaned_spawn_worker(pid: int) -> bool:
+    """``True`` when ``pid`` is an orphaned (ppid 1, same UID) multiprocessing-spawn worker.
+
+    This is the exact signature of a GPU worker leaked by a crashed/killed task: its pool parent
+    is gone (reparented to PID 1) and it was started by ``multiprocessing.spawn`` (cmdline contains
+    ``multiprocessing.spawn`` + ``spawn_main``). Anything else — a live sibling task, another
+    user's process, a CLI run with a real parent — is NEVER a reap candidate. Off-Linux or on any
+    ``/proc`` read failure the answer is conservatively ``False``.
+    """
+    if pid <= 1 or pid == os.getpid():
+        return False
+    try:
+        if os.stat(f"/proc/{pid}").st_uid != os.getuid():
+            return False
+        with open(f"/proc/{pid}/stat", "rb") as fh:
+            ppid = int(fh.read().split()[3])  # field 4 (1-indexed): parent PID
+        if ppid != 1:
+            return False
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            cmdline = fh.read().decode("utf-8", errors="replace")
+        return "multiprocessing.spawn" in cmdline and "spawn_main" in cmdline
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def _reap_orphaned_lock_competitors(path: Path, grace: float = 10.0) -> list[int]:
+    """SIGKILL orphaned spawn workers holding or waiting on ``path``'s flock; return killed PIDs.
+
+    Recovery for the (observed twice) leak chain: a task dies with its GPU workers parked on the
+    device flock; the workers reparent to PID 1 and keep the flock (and the model + GPU memory)
+    forever, deadlocking every later run. Only candidates passing :func:`_is_orphaned_spawn_worker`
+    are killed — same UID, ppid 1, spawn-fork cmdline — and the caller re-checks the flock
+    afterwards. Waits up to ``grace`` seconds for each kill to land so the kernel has released
+    the flocks (and started tearing down CUDA contexts) before the caller retries.
+    """
+    candidates = [
+        pid
+        for pid in _lock_competitor_pids(path, include_waiters=True)
+        if _is_orphaned_spawn_worker(pid)
+    ]
+    for pid in candidates:
+        logger.warning("ner_gpu_lock: reaping orphaned worker pid = {} ({})", pid, path)
+        with contextlib.suppress(OSError):
+            os.kill(
+                pid, signal.SIGKILL
+            )  # already gone — a race is fine, the goal is the released flock
+    deadline = time.monotonic() + grace
+    for pid in candidates:
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break  # reaped: flock + GPU context released by the kernel
+            time.sleep(0.05)
+    return candidates
+
+
+_GPU_LOCK_HELD: dict[Path, int] = {}
+"""Fds this process already holds per lock path — flock is per-fd, so a second ``DiseaseNER``
+in the same process (model reload, a test constructing two backends) must reuse the held fd
+instead of blocking on the process's own lock forever (self-deadlock observed on GPU hosts:
+four remote-gate runs burned hours polling a lock their own process owned)."""
+
+_GPU_LOCK_HELD_GUARD = threading.Lock()
+
+
+def _acquire_gpu_lock(device: str, lock_dir: Path, timeout: float | None = None) -> int:
+    """Acquire the exclusive flock for a CUDA device, waiting at most the configured ceiling; return the open fd.
+
+    One GLiNER model per GPU is a hard cap (two models OOM a 16 GB P100), and the Airflow
+    ``ner_mining`` pool is only a scheduler hint — a second DAG run, a manual task trigger,
+    or a stray CLI invocation bypasses it. The kernel flock is the correctness guarantee:
+    every production CUDA load parks here until the previous holder's fd closes. The caller
+    keeps the returned fd open for the life of the loaded model; there is no explicit
+    release path — closing the fd (or process exit, which is the whole lifecycle of the
+    spawned per-GPU mining workers) releases the lock.
+
+    The wait is BOUNDED: a crashed task that leaked its workers leaves the flock held by
+    orphans forever, and an unbounded wait deadlocked retries silently (observed 20+ h with
+    zero GPU compute). Past the ceiling (``timeout``, else ``DAKP_GPU_LOCK_TIMEOUT_SECONDS``,
+    else one hour; ``0`` restores the unbounded wait) this first reaps orphaned spawn workers
+    holding or waiting on the flock (:func:`_reap_orphaned_lock_competitors` — the leaked-worker
+    failure mode, verified against ``/proc`` before any kill) and retries once; only if the lock
+    is STILL contended does it raise :class:`GpuLockTimeoutError` naming the remaining holder
+    PIDs from ``/proc/locks``.
+    """
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    path = lock_dir / f"cuda-{_cuda_index(device)}.lock"
+    with _GPU_LOCK_HELD_GUARD:
+        held = _GPU_LOCK_HELD.get(path)
+    if held is not None:
+        return held
+    ceiling = _gpu_lock_timeout_seconds(timeout)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            stats(
+                logger, "ner_gpu_lock", level="DEBUG", device=device, path=str(path), waited=False
+            )
+        except BlockingIOError:
+            stats(logger, "ner_gpu_lock", device=device, path=str(path), waited=True)
+            if ceiling <= 0:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            else:
+                deadline = time.monotonic() + ceiling
+                while True:
+                    time.sleep(_GPU_LOCK_POLL_SECONDS)
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            # Ceiling hit: the failure mode to check for is a leaked worker from a
+                            # crashed task (orphaned spawn fork still holding/waiting on the
+                            # flock). Reap exactly those, then retry once before giving up.
+                            reaped = _reap_orphaned_lock_competitors(path)
+                            if reaped:
+                                try:
+                                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                    stats(
+                                        logger,
+                                        "ner_gpu_lock",
+                                        level="DEBUG",
+                                        device=device,
+                                        path=str(path),
+                                        waited=True,
+                                        reaped_orphans=len(reaped),
+                                    )
+                                    break
+                                except BlockingIOError:
+                                    pass  # someone else (not an orphan) grabbed it — report and fail
+                            holders = _lock_holder_pids(path)
+                            holder_desc = (
+                                ",".join(str(pid) for pid in holders)
+                                if holders
+                                else "unknown (holder not visible in /proc/locks)"
+                            )
+                            raise GpuLockTimeoutError(
+                                f"cuda lock still held after {ceiling:.0f}s: device={device} path={path} holder_pids={holder_desc}. "
+                                f"Orphaned NER workers were reaped automatically (killed: {reaped or 'none'}); a live process is holding the lock."
+                            ) from None
+    except BaseException:
+        os.close(fd)
+        raise
+    with _GPU_LOCK_HELD_GUARD:
+        _GPU_LOCK_HELD[path] = fd
+    return fd
+
+
+class DiseaseNER:
+    """The single composite mention extractor (object + qualifier channels).
+
+    Constructing a ``DiseaseNER`` never imports heavy deps — even in production mode ``gliner2``
+    is imported only on the first :meth:`extract` (no torch at module load). ``gliner2`` is a core
+    DAKP dependency (installed by ``uv sync``); the lazy import keeps ``import dakp_pipeline.ner.ner``
+    — and the whole test suite — fast and light.
+
+    Args:
+        offline: ``True`` (default) = deterministic gazetteer only; ``False`` = gazetteer +
+            fine-tuned GLiNER recall.
+        gazetteer: a :class:`Gazetteer`, a ``{surface: type}`` mapping, or ``None`` to use the
+            curated :data:`EMBEDDED_GAZETTEER`.
+        model_id: GLiNER2 checkpoint (production mode).
+        model_labels: the ``label -> description`` vocabulary handed to GLiNER2 verbatim as
+            ``entity_types``. Defaults to :data:`MODEL_LABELS` (Biolink category labels with
+            descriptions); provide the vocabulary an explicitly overridden checkpoint expects.
+        inference_batch_size: number of windows per GLiNER inference batch.
+        threshold: GLiNER candidate-**generation** threshold (production mode). Generate wide:
+            this only decides what the merge gets to look at. Production profiles use
+            :data:`GLINER_GENERATION_FLOOR`.
+        accept_threshold: DAKP-side **acceptance** floor (production mode). A model span below it
+            is abstained on — emitted as nothing, never downgraded to the generic gazetteer term
+            it was competing with. Use :data:`INDICATION_ACCEPT_THRESHOLD` for DailyMed
+            indications; use :data:`CONTRAINDICATION_ACCEPT_THRESHOLD` for contraindications.
+            Keep ``threshold <= accept_threshold``; an ``accept_threshold`` below ``threshold`` is
+            simply a no-op (GLiNER already filtered).
+        chunk_words: window budget in GLiNER word tokens for long texts (production mode);
+            ``None`` = the loaded model's ``config.max_len``, fallback 384. GLiNER silently
+            truncates anything longer, so longer texts are predicted window by window.
+        cache_dir / workdir: model-cache location (see :func:`dakp_pipeline.ner.model_cache.ensure_model`).
+        device: explicit CUDA device for multi-GPU dispatch (e.g. ``"cuda:2"``). ``None``
+            (default) auto-detects via :func:`_model_device` (CUDA when available, else CPU).
+            Set by multi-GPU workers to pin the GLiNER model to a specific GPU.
+        strict_extension_threshold: minimum score for a model span that extends exactly one
+            gazetteer span. ``None`` preserves the historical merge; production profiles use
+            :data:`STRICT_GAZETTEER_EXTENSION_THRESHOLD`.
+        compute_dtype: ``"fp32"`` (default) runs full-precision inference. ``"fp16"`` (opt-in)
+            runs the GLiNER2 forward on CUDA devices under ``torch.autocast("cuda", float16)``;
+            CPU inference ignores it. The dtype is keyed in both cache tiers (see
+            :func:`dakp_pipeline.ner.mention_cache.config_fingerprint` and
+            :meth:`span_material`), so switching is a re-mine, never a silent cache serve: the
+            fp32 default is what keeps an existing fp32-mined store warm.
+    """
+
+    def __init__(
+        self,
+        *,
+        offline: bool = True,
+        gazetteer: Gazetteer | Mapping[str, str] | None = None,
+        model_id: str = DEFAULT_MODEL,
+        model_labels: Mapping[str, str] = MODEL_LABELS,
+        threshold: float = DEFAULT_THRESHOLD,
+        accept_threshold: float = DEFAULT_ACCEPT_THRESHOLD,
+        chunk_words: int | None = None,
+        inference_batch_size: int = 16,
+        cache_dir: Path | str | None = None,
+        workdir: Path | str | None = None,
+        device: str | None = None,
+        strict_extension_threshold: float | None = None,
+        compute_dtype: str = "fp32",
+    ) -> None:
+        if isinstance(gazetteer, Gazetteer):
+            resolved = gazetteer
+        elif gazetteer is None:
+            resolved = Gazetteer(EMBEDDED_GAZETTEER)
+        else:
+            resolved = Gazetteer(gazetteer)
+        self._gazetteer = resolved
+        self._matcher = LexicalMatcher(resolved)
+        self._qualifier_matcher = LexicalMatcher(Gazetteer(QUALIFIER_GAZETTEER))
+        self._offline = offline
+        if not model_labels:
+            raise ValueError("model_labels must contain at least one label")
+        self._model_id = model_id
+        # Copied, not aliased: a caller mutating its own mapping must not change what an already
+        # constructed backend requests (the mention-cache fingerprint is taken from this value).
+        self._model_labels: dict[str, str] = dict(model_labels)
+        self._threshold = threshold
+        self._accept = accept_threshold
+        self._chunk_words = chunk_words
+        self._inference_batch_size = max(1, int(inference_batch_size))
+        self._cache_dir = cache_dir
+        self._workdir = workdir
+        self._device = device
+        if compute_dtype not in ("fp32", "fp16"):
+            raise ValueError("compute_dtype must be 'fp32' or 'fp16'")
+        self._compute_dtype = compute_dtype
+        self._strict_extension_threshold = strict_extension_threshold
+        self._model: Any = None
+        self._gpu_lock_fd: int | None = None
+        self._schema: Any = None
+
+    @classmethod
+    def for_indications(cls, **kwargs: Any) -> DiseaseNER:
+        """Build the precision-first profile for DailyMed indication sections."""
+        return cls(
+            threshold=GLINER_GENERATION_FLOOR,
+            accept_threshold=INDICATION_ACCEPT_THRESHOLD,
+            strict_extension_threshold=STRICT_GAZETTEER_EXTENSION_THRESHOLD,
+            **kwargs,
+        )
+
+    @classmethod
+    def for_contraindications(cls, **kwargs: Any) -> DiseaseNER:
+        """Build the recall-first profile for contraindication mining."""
+        return cls(
+            threshold=GLINER_GENERATION_FLOOR,
+            accept_threshold=CONTRAINDICATION_ACCEPT_THRESHOLD,
+            strict_extension_threshold=STRICT_GAZETTEER_EXTENSION_THRESHOLD,
+            **kwargs,
+        )
+
+    # -- builders --------------------------------------------------------------
+    @classmethod
+    def from_tsv(
+        cls,
+        path: Path,
+        *,
+        offline: bool = True,
+        text_col: str = "text",
+        type_col: str = "type",
+        **kwargs: Any,
+    ) -> DiseaseNER:
+        """Build an offline backend from a term/type TSV (see :meth:`Gazetteer.from_tsv`)."""
+        return cls(
+            offline=offline,
+            gazetteer=Gazetteer.from_tsv(path, text_col=text_col, type_col=type_col),
+            **kwargs,
+        )
+
+    # -- extraction ------------------------------------------------------------
+    def extract(self, text: str) -> list[Mention]:
+        """Extract mentions, deterministically ordered.
+
+        Offline: gazetteer spans only (object channel — the gazetteer holds no qualifier terms).
+        Production: ONE inference call per window carrying the whole :data:`MODEL_LABELS`
+        vocabulary, whose spans are routed by canonical type — object spans merged with the
+        gazetteer (most specific span winning on containment, see :meth:`_merge_model_spans`)
+        and qualifier spans emitted as strip-aligned mentions with ``notes="gliner:qualifier"``.
+        The returned list is therefore MIXED-CHANNEL: consumers that build assertion objects must
+        filter to :data:`~dakp_pipeline.ner.dictionary.OBJECT_TYPES`.
+
+        Empty/blank text yields no mentions — as does text whose only candidates fall below the
+        acceptance floor, so callers must always handle an empty list.
+        """
+        if not text or not text.strip():
+            return []
+        object_mentions = list(self._matcher.match(text))
+        lexical_qualifiers = self._gazetteer_qualifier_mentions(text)
+        if self._offline:
+            return sorted(object_mentions + lexical_qualifiers, key=_sort_key)
+        emitted = self._merge_model_spans(text, object_mentions)
+        return sorted(self._merge_qualifier_mentions(lexical_qualifiers, emitted), key=_sort_key)
+
+    def extract_spans_batch(self, texts: Sequence[str]) -> list[RawTextSpans]:
+        """Run the model half of :meth:`extract_batch` and return RAW spans per text.
+
+        This is the Tier B span-cache hot path (:meth:`merge_spans` is its deterministic
+        complement): one windowed inference stream per shard, per-channel span routing, and
+        NOTHING else - no hedge trim, no gazetteer contest, no acceptance floors. A spawned GPU
+        worker returns these raw spans to the parent, which caches them keyed by model-side
+        material only and re-merges per run, so config/gazetteer iteration never re-mines.
+
+        Offline backends have no model output; they return empty span sets (their mentions are
+        pure gazetteer + lexical functions, recomputed by :meth:`merge_spans` - or by
+        :meth:`extract`, which offline callers use directly since the cache never engages).
+        """
+        values = list(texts)
+        if self._offline:
+            return [RawTextSpans(windows=[], objects=[], qualifiers=[]) for _ in values]
+        active = [(index, text) for index, text in enumerate(values) if text and text.strip()]
+        if not active:
+            return [RawTextSpans(windows=[], objects=[], qualifiers=[]) for _ in values]
+        model = self._load_model()
+        budget = _token_budget(model, self._chunk_words)
+        windows: list[tuple[int, int, str]] = []
+        windows_by_text: dict[int, list[tuple[int, str]]] = {}
+        for text_index, text in active:
+            text_windows = _windows(text, budget)
+            windows.extend((text_index, start, window) for start, window in text_windows)
+            # Grouped once here so the per-text post-processing loop below reads its own
+            # windows in O(own_windows) instead of re-filtering the flat shard-wide list
+            # (O(total_windows) per text, quadratic across a shard).
+            windows_by_text[text_index] = text_windows
+        texts = [window for _text_index, _start, window in windows]
+        raw_batches = self._infer_windows(model, texts)
+        degraded_windows = 0
+        object_spans: dict[int, list[list[_ModelSpan]]] = {index: [] for index, _text in active}
+        qualifier_spans: dict[int, list[_ModelSpan]] = {index: [] for index, _text in active}
+        for (text_index, window_start, window), raw in zip(windows, raw_batches, strict=True):
+            try:
+                window_spans = _spans_from_result(raw, window)
+            except Exception:
+                # One malformed result dict must not cost the shard its other windows (see the
+                # per-text guard below); the text keeps its lexical mentions and says so.
+                degraded_windows += 1
+                logger.exception(
+                    "ner_window_spans: unreadable model result; window kept no spans (text = {} preview = {!r})",
+                    text_index,
+                    window[:200],
+                )
+                window_spans = []
+            objects, qualifiers = self._channel_spans(
+                values[text_index], window_spans, window_start
+            )
+            object_spans[text_index].append(objects)
+            qualifier_spans[text_index].extend(qualifiers)
+        if degraded_windows:
+            logger.error(
+                "ner_span_pass: degraded_windows = {} of {}", degraded_windows, len(windows)
+            )
+        return [
+            RawTextSpans(
+                windows=windows_by_text.get(index, []),
+                objects=object_spans.get(index, []),
+                qualifiers=qualifier_spans.get(index, []),
+            )
+            for index, _text in enumerate(values)
+        ]
+
+    def extract_spans(self, text: str) -> RawTextSpans:
+        """:meth:`extract_spans_batch` for one text: the sequential production mining path."""
+        return self.extract_spans_batch([text])[0]
+
+    def merge_spans(self, text: str, spans: RawTextSpans) -> list[Mention]:
+        """Finish :meth:`extract_spans` output: the deterministic per-text merge, CPU-cheap.
+
+        The parent-side half of the Tier B split - runs per run, never cached, so gazetteer
+        growth, threshold sweeps, and merge-logic edits re-merge instead of re-mining. Byte
+        identity with :meth:`extract_batch` is by construction: this calls the same
+        :meth:`_mentions_for_text` with the same inputs the batch path assembles.
+        """
+        if not text or not text.strip() or self._offline:
+            return self.extract(text)
+        return self._mentions_for_text(
+            text,
+            spans.windows,
+            spans.objects,
+            spans.qualifiers,
+            list(self._matcher.match(text)),
+            self._gazetteer_qualifier_mentions(text),
+        )
+
+    def extract_batch(self, texts: Sequence[str]) -> list[list[Mention]]:
+        """Extract several texts with one padded GLiNER2 inference stream.
+
+        Each text retains its own sentence-aware windows and per-channel merge, while all windows
+        are submitted together to GLiNER2's batched ``batch_extract_entities`` API. This is the
+        hot path used by per-device workers; offline extraction remains a cheap deterministic
+        loop. Results are mixed-channel, exactly like :meth:`extract`.
+
+        Implemented as :meth:`extract_spans_batch` + :meth:`merge_spans` so the raw-span and
+        mention paths cannot drift: the span pass is shared verbatim, and the per-text merge is
+        the same call the parent-side Tier B re-merge makes.
+
+        Failure is contained to the smallest unit that can fail, because this runs tens of
+        minutes per shard inside a spawned worker whose exception reaches the parent as a bare
+        pickled object: a batch that raises falls back to per-window inference
+        (:meth:`_infer_windows`), an unreadable per-window result costs that window its model
+        spans, and a text whose post-processing raises keeps its deterministic lexical mentions.
+        Every degradation is logged with a text preview and tallied in one
+        ``ner_extract_batch`` ERROR line - degraded results are what the mention cache stores for
+        those texts, so the count is what tells an operator whether a re-mine is warranted.
+        """
+        values = list(texts)
+        if self._offline:
+            return [self.extract(text) for text in values]
+        gazetteer = [
+            list(self._matcher.match(text)) if text and text.strip() else [] for text in values
+        ]
+        lexical_qualifiers = [
+            self._gazetteer_qualifier_mentions(text) if text and text.strip() else []
+            for text in values
+        ]
+        spans = self.extract_spans_batch(values)
+        output: list[list[Mention]] = []
+        degraded = 0
+        for index, text in enumerate(values):
+            if not text or not text.strip():
+                output.append([])
+                continue
+            try:
+                output.append(
+                    self._mentions_for_text(
+                        text,
+                        spans[index].windows,
+                        spans[index].objects,
+                        spans[index].qualifiers,
+                        gazetteer[index],
+                        lexical_qualifiers[index],
+                    )
+                )
+            except Exception:
+                # Per-text isolation. A shard is tens of minutes of GPU inference and the parent
+                # only ever sees the pickled exception, so one pathological text used to discard
+                # ALL of it (and the whole DAG run with it). The affected text falls back to its
+                # deterministic lexical mentions - logged loudly, because that degraded result is
+                # what the mention cache will store for this text until it is re-mined.
+                degraded += 1
+                logger.exception(
+                    "ner_extract_text: post-processing failed; kept lexical mentions only (preview={!r})",
+                    text[:200],
+                )
+                output.append(
+                    sorted(
+                        self._merge_qualifier_mentions(
+                            lexical_qualifiers[index], list(gazetteer[index])
+                        ),
+                        key=_sort_key,
+                    )
+                )
+        if degraded:
+            logger.error("ner_extract_batch: degraded_texts = {} of {}", degraded, len(values))
+        return output
+
+    def _mentions_for_text(
+        self,
+        text: str,
+        text_windows: list[tuple[int, str]],
+        object_spans: list[list[_ModelSpan]],
+        qualifier_spans: list[_ModelSpan],
+        gazetteer_mentions: list[Mention],
+        lexical_qualifiers: list[Mention],
+    ) -> list[Mention]:
+        """Merge ONE text's per-window spans into its final sorted mixed-channel mention list.
+
+        The per-text half of :meth:`extract_batch`, split out so that half can be isolated: the
+        straddling-span merge, hedge trimming, gazetteer contest, acceptance floor and qualifier
+        channel all run here, over spans already remapped to full-text coordinates.
+        ``object_spans`` is one span list per window and is mutated in place by
+        :func:`_merge_straddling_spans`.
+        """
+        _merge_straddling_spans(text_windows, object_spans)
+        trimmed = self._trimmed_spans(text, [span for spans in object_spans for span in spans])
+        gazetteer_spans = [(mention.start, mention.end) for mention in gazetteer_mentions]
+        candidates = _select_candidates(_candidates_vs_gazetteer(trimmed, gazetteer_spans))
+        candidates = self._strict_gazetteer_candidates(candidates)
+        emitted = self._emit(text, gazetteer_mentions, candidates) + self._qualifier_mentions(
+            text, qualifier_spans
+        )
+        return sorted(self._merge_qualifier_mentions(lexical_qualifiers, emitted), key=_sort_key)
+
+    # -- production model (lazy) -----------------------------------------------
+    def _raw_batch_extract(self, model: Any, texts: list[str], batch_size: int) -> list[Any]:
+        """One batched GLiNER2 inference call over ``texts`` (whole vocabulary, both channels).
+
+        With ``compute_dtype='fp16'`` (opt-in; the default ``'fp32'`` never autocasts) the
+        forward on a CUDA device runs under ``torch.autocast('cuda', float16)``: the GPU executes
+        fp16 math at its fp16 rate,
+        and autocast keeps accumulation-sensitive ops (LayerNorm, softmax) in fp32. Raw output
+        bits differ from fp32 at the margin, which is exactly why ``compute_dtype`` is part of
+        the Tier B key material - a dtype change is a re-mine, never a silent cache serve.
+        """
+        call = lambda: (
+            model.batch_extract(
+                texts,
+                self._schema_for_model(model),
+                batch_size=batch_size,
+                threshold=self._threshold,
+                include_confidence=True,
+                include_spans=True,
+            )
+            if hasattr(model, "batch_extract")
+            else model.batch_extract_entities(
+                texts,
+                self._model_labels,
+                batch_size=batch_size,
+                threshold=self._threshold,
+                include_confidence=True,
+                include_spans=True,
+            )
+        )
+        if self._compute_dtype == "fp16" and str(self._device).startswith("cuda"):
+            import torch  # lazy: no torch at module load
+
+            with torch.autocast("cuda", dtype=torch.float16):
+                return call()
+        return call()
+
+    def _infer_windows(self, model: Any, texts: list[str]) -> list[Any]:
+        """Batched GLiNER2 inference over ``texts``, submitted in bounded chunks.
+
+        A shard is tens of thousands of windows and minutes-to-hours of P100 inference, and one
+        raised exception used to discard ALL of it: the batched call is all-or-nothing, and the
+        ``ProcessPoolExecutor`` parent sees only a pickled exception. Chunking
+        (:data:`_INFERENCE_CHUNK_WINDOWS`) bounds the loss, and :meth:`_infer_chunk` retries the
+        failing piece instead of failing the shard. Every chunk emits a progress heartbeat so a
+        live run shows mining throughput in the task log (and an operator can tell a healthy
+        shard from a wedged one without py-spy).
+        """
+        raw: list[Any] = []
+        started = time.monotonic()
+        for start in range(0, len(texts), _INFERENCE_CHUNK_WINDOWS):
+            chunk = texts[start : start + _INFERENCE_CHUNK_WINDOWS]
+            chunk_started = time.monotonic()
+            raw.extend(self._infer_chunk(model, chunk, self._inference_batch_size))
+            stats(
+                logger,
+                "ner_infer_progress",
+                windows_done=len(raw),
+                windows_total=len(texts),
+                chunk_s=round(time.monotonic() - chunk_started, 1),
+                elapsed_s=round(time.monotonic() - started, 1),
+            )
+        return raw
+
+    def _run_with_stall_watchdog(self, model: Any, texts: list[str], batch_size: int) -> list[Any]:
+        """Run one batched call under a stall watchdog (CUDA only, ``DAKP_NER_STALL_SECONDS``).
+
+        A hung CUDA call never raises and never returns - the shard would sit "running" until
+        the task-level timeout hours later, having produced nothing the retry could reuse. The
+        watchdog runs the call in a companion thread and, when no result arrives within the
+        budget, hard-exits the worker (``os._exit(70)``): the parent sees the worker die, the
+        shard fails, Airflow retries the task, and the two-tier cache resumes from completed
+        work instead of a wedged process. CPU inference (and therefore the whole test suite)
+        never arms the watchdog.
+        """
+        stall_seconds = float(os.environ.get("DAKP_NER_STALL_SECONDS", "1800") or 0)
+        cuda_active = False
+        try:
+            import torch  # lazy: no torch at module load
+
+            cuda_active = torch.cuda.is_available()
+        except Exception:
+            cuda_active = False
+        if stall_seconds <= 0 or not (cuda_active and str(self._device).startswith("cuda")):
+            return self._raw_batch_extract(model, texts, batch_size)
+        import threading
+
+        outcome: dict[str, Any] = {}
+        done = threading.Event()
+
+        def _call() -> None:
+            try:
+                outcome["raw"] = self._raw_batch_extract(model, texts, batch_size)
+            except BaseException as exc:
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=_call, daemon=True)
+        worker.start()
+        if not done.wait(timeout=stall_seconds):
+            logger.error(
+                "ner_infer_stall: a batch of {} windows produced no result in {:.0f}s; aborting the worker so the task retry can resume from cache",
+                len(texts),
+                stall_seconds,
+            )
+            os._exit(70)
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["raw"]
+
+    def _infer_chunk(
+        self, model: Any, texts: list[str], batch_size: int, _oom_attempts: int = 0
+    ) -> list[Any]:
+        """Infer ``texts`` in LENGTH-SORTED, WORD-BUDGETED batches, retrying failures at half the batch size or half the window list.
+
+        Batching sorts windows by length first and restores submission order on return: a shard
+        mixes 30-word and ~4k-word sections, and GLiNER2 pads every batch to its longest member,
+        so an unsorted batch sequence pads most batches to ~4096 tokens. Sorting makes each
+        batch nearly uniform - the same windows, the same per-window outputs, a fraction of the
+        pad tokens. Per-window results are independent of batch composition, so this is a pure
+        throughput change (asserted byte-identical in the unit tests). The sorted windows are
+        additionally split by :func:`_word_budget_batches` so a batch of the LONGEST windows
+        cannot exceed GPU memory at fp32 (one ~4,096-word window already peaks at ~14.4 GiB on a
+        16 GB P100, so the longest sections ride solo while short windows keep the full batch).
+
+        Two distinct failure modes, told apart by :func:`_is_memory_error`:
+
+        * a device OOM is a property of the BATCH (16 padded 384-token windows through
+          deberta-v3-large with the eager attention fallback exceeds a 16 GB P100) and of the
+          fragmented reserves the failed allocation leaves behind, so the cache is released and
+          the SAME windows are retried at half the batch size. The halving is CAPPED at two
+          attempts per piece: each retry re-runs every window in the piece, so an unbounded
+          spiral 16→8→4→2→1 re-pays the full chunk cost for a windows set that will OOM at any
+          size (recorded: four halvings, then 2048 single-window retries, all lost). Once the
+          cap is spent the OOM is presumed to have a poisoned-window component and the piece
+          falls through to bisection below — a half that infers cleanly proves the failure was
+          one oversized window, not the batch size; a lone window that still OOMs is dropped
+          (canonical empty result) instead of failing the shard. The task-level retry then
+          resumes from the two-tier cache for anything already completed.
+        * anything else is presumed one pathological window (weird SPL markup, hostile unicode),
+          so the LIST is bisected until the offender stands alone.
+
+        A single window that still raises is logged with its exception type, a preview and the
+        traceback, and yields the canonical empty result (no spans) rather than poisoning the
+        shard. Every retry reuses the SAME loaded model — no reload cost. The sort happens
+        inside the try: retries bisect the SORTED list, and results are unsorted once, at the end.
+        """
+        try:
+            order = sorted(range(len(texts)), key=lambda index: len(texts[index]))
+            # Retries shrink the budget with the batch: a poisoned batch of long windows retries
+            # at genuinely smaller padded totals, not just fewer of the same oversized slices.
+            budget = max(1024, _BATCH_WORD_BUDGET >> _oom_attempts)
+            raw_sorted: list[Any] = []
+            for batch_texts in _word_budget_batches(
+                [texts[index] for index in order], batch_size, budget
+            ):
+                raw_sorted.extend(
+                    self._run_with_stall_watchdog(model, batch_texts, len(batch_texts))
+                )
+            raw: list[Any] = [None] * len(texts)
+            for position, index in enumerate(order):
+                raw[index] = raw_sorted[position]
+            return raw
+        except Exception as exc:
+            kind = type(exc).__name__
+            if _is_memory_error(exc):
+                _release_cuda_cache()
+                if batch_size > 1 and _oom_attempts < _MAX_OOM_HALVINGS:
+                    logger.warning(
+                        "ner_batch_infer: {} on {} windows at batch_size = {}; retrying at half the batch (attempt {}/{})",
+                        kind,
+                        len(texts),
+                        batch_size,
+                        _oom_attempts + 1,
+                        _MAX_OOM_HALVINGS,
+                    )
+                    return self._infer_chunk(
+                        model, texts, max(1, batch_size // 2), _oom_attempts + 1
+                    )
+                # Cap spent (or the batch is already one window): fall through to bisection —
+                # a clean half exonerates the batch size and convicts the windows it lost.
+            if len(texts) > 1:
+                middle = len(texts) // 2
+                logger.warning(
+                    "ner_batch_infer: {} on {} windows; bisecting to isolate the failure",
+                    kind,
+                    len(texts),
+                )
+                return [
+                    *self._infer_chunk(model, texts[:middle], batch_size),
+                    *self._infer_chunk(model, texts[middle:], batch_size),
+                ]
+            logger.exception(
+                "ner_batch_infer: window dropped ({}; preview={!r})", kind, texts[0][:200]
+            )
+            return [{"entities": {}}]
+
+    def _schema_for_model(self, model: Any) -> Any:
+        if self._schema is None:
+            from gliner2.inference.schema import AttributeGroup  # type: ignore[import-not-found]
+
+            self._schema = (
+                model.create_schema()
+                .entities(self._model_labels)
+                .entity_attributes(
+                    {
+                        CONTEXT_ATTRIBUTE_GROUP: AttributeGroup(
+                            list(CONTEXT_ATTRIBUTE_PROMPTS),
+                            multi_label=True,
+                            threshold=CONTEXT_ATTRIBUTE_THRESHOLD,
+                            qualify_labels=True,
+                        )
+                    }
+                )
+            )
+        # gliner2 stores the (qualified) attribute labels as entity entries and renders any
+        # description they carry into the prompt; ground them in the KG predicates so the
+        # model classifies with the same semantics the shapers emit (see
+        # CONTEXT_ATTRIBUTE_PROMPTS). Schema.schema is the serialized wrapper ({"entities":
+        # {...}}); the fake schema mirrors only that surface.
+        schema_map = getattr(self._schema, "schema", None)
+        entities = schema_map.get("entities") if isinstance(schema_map, dict) else None
+        if isinstance(entities, dict):
+            for label, description in CONTEXT_ATTRIBUTE_PROMPTS.items():
+                key = f"{CONTEXT_ATTRIBUTE_GROUP}: {label}"
+                if key in entities:
+                    entities[key] = description
+        return self._schema
+
+    def _load_model(self) -> Any:
+        if self._model is None:
+            stats(logger, "ner_model_load", model_id=self._model_id)
+            try:
+                from gliner2 import (
+                    AutoExtractor,  # lazy: no torch at module load  # type: ignore[import-not-found]
+                )
+            except ImportError as exc:
+                raise NERDependencyError(_install_message("gliner2")) from exc
+            ref = ensure_model(self._model_id, cache_dir=self._cache_dir, workdir=self._workdir)
+            device = self._device or _model_device()
+            if device.startswith("cuda"):
+                # One GLiNER2 model per GPU is a hard cap (16 GB cards OOM with two models). The
+                # Airflow ``ner_mining`` pool serializes shape tasks at the scheduler level,
+                # but this per-device flock is the correctness guarantee for any concurrent
+                # loader (second DAG run, manual trigger, CLI). The fd is held on the instance
+                # for the life of the model; process exit releases it, which is the whole
+                # lifecycle of a spawned GPU worker. CPU and offline loads never lock.
+                self._gpu_lock_fd = _acquire_gpu_lock(
+                    device, _gpu_lock_dir(cache_dir=self._cache_dir, workdir=self._workdir)
+                )
+            started = time.monotonic()
+            self._model = AutoExtractor.from_pretrained(str(ref.path), map_location=device)
+            # gliner2 2.1.0's boundary decoder indexes CPU-resident attribute logits with CUDA
+            # indices (RuntimeError on every CUDA call); the shim swaps in the device-corrected
+            # method and no-ops once upstream fixes it. Idempotent per process; see the module.
+            apply_boundary_attribute_device_fix()
+            stats(
+                logger,
+                "ner_model_load",
+                model_id=self._model_id,
+                device=device,
+                b3=ref.b3,
+                elapsed_s=round(time.monotonic() - started, 3),
+            )
+        return self._model
+
+    def _config(self) -> dict[str, Any]:
+        """Serializable construction kwargs (for multi-process GPU worker reconstruction).
+
+        Returns the ``DiseaseNER`` init kwargs as plain JSON-picklable values so a
+        :class:`~concurrent.futures.ProcessPoolExecutor` worker can reconstruct an
+        equivalent backend pinned to a specific device via ``DiseaseNER(device=..., **config)``.
+        The ``device`` kwarg itself is deliberately excluded - the caller sets it per-worker.
+        """
+        return {
+            "offline": self._offline,
+            "gazetteer": self._gazetteer,
+            "model_id": self._model_id,
+            "model_labels": self._model_labels,
+            "threshold": self._threshold,
+            "accept_threshold": self._accept,
+            "chunk_words": self._chunk_words,
+            "inference_batch_size": self._inference_batch_size,
+            "cache_dir": self._cache_dir,
+            "workdir": self._workdir,
+            "strict_extension_threshold": self._strict_extension_threshold,
+            "compute_dtype": self._compute_dtype,
+        }
+
+    def span_material(self) -> dict[str, Any]:
+        """The MODEL-SIDE config that can change raw spans (the Tier B key material).
+
+        Deliberately narrower than :meth:`_config`: everything here is capable of changing what
+        the model emits (checkpoint, prompt vocabulary, generation floor, window tiling), while
+        the rest of ``_config`` (gazetteer, acceptance/extension floors, batch size) only changes
+        how raw spans are merged or batched. Merging is recomputed per run from cached spans, so
+        those belong OUTSIDE the key - that is the whole point of the two-tier cache: editing the
+        gazetteer or sweeping ``accept_threshold`` re-merges on CPU instead of re-mining on GPU.
+
+        ``chunk_words`` is included unresolved (``None`` = the checkpoint's own budget): the
+        resolved budget is a pure function of the model content + this kwarg, both of which the
+        key already pins.
+        """
+        return {
+            "model_id": self._model_id,
+            "model_labels": self._model_labels,
+            "threshold": self._threshold,
+            "chunk_words": self._chunk_words,
+            # fp16 changes raw output BITS (not just speed): two dtypes produce different span
+            # sets at the margin, so a dtype experiment must never serve the other dtype's
+            # cached spans.
+            "compute_dtype": self._compute_dtype,
+        }
+
+    def _merge_model_spans(self, text: str, gazetteer_mentions: list[Mention]) -> list[Mention]:
+        """Run ONE inference call per window and route its spans to both channels.
+
+        GLiNER silently truncates inputs past ``config.max_len`` word tokens, so long text is
+        predicted in exact-substring windows (:func:`_windows`) and each span's offsets are
+        shifted back into full-text coordinates first (:meth:`_channel_spans`), which also splits
+        the spans by canonical type.
+
+        The **object** channel (``Disease`` / ``PhenotypicFeature``) keeps the historical path
+        unchanged: population descriptors (:data:`_POPULATION_PHRASES`) are dropped, spans a hard
+        split cut across a phrase boundary are re-joined (:func:`_merge_straddling_spans`, run
+        before trimming so window-flush offsets still line up), then hedge-trimmed
+        (:func:`_trim_hedges`), contested against the gazetteer
+        (:func:`_candidates_vs_gazetteer`), de-overlapped longest-first
+        (:func:`_select_candidates`) and gated on :data:`DEFAULT_ACCEPT_THRESHOLD` — see
+        :meth:`_emit`.
+
+        The **qualifier** channel is emitted by :meth:`_qualifier_mentions` and deliberately
+        bypasses all of that.
+        """
+        model = self._load_model()
+        budget = _token_budget(model, self._chunk_words)
+        # Request the exact label vocabulary configured for this checkpoint: the label ->
+        # description mapping goes to gliner2 verbatim so its processor renders each description
+        # into the prompt (see :data:`MODEL_LABELS`). An explicit ``model_labels`` override
+        # supports checkpoints with a different vocabulary.
+        windows = _windows(text, budget)
+        object_spans_by_window: list[list[_ModelSpan]] = []
+        qualifier_spans: list[_ModelSpan] = []
+        for window_start, window in windows:
+            if hasattr(model, "extract"):
+                raw = model.extract(
+                    window,
+                    self._schema_for_model(model),
+                    threshold=self._threshold,
+                    include_confidence=True,
+                    include_spans=True,
+                )
+            else:
+                raw = model.extract_entities(
+                    window,
+                    self._model_labels,
+                    threshold=self._threshold,
+                    include_confidence=True,
+                    include_spans=True,
+                )
+            objects, qualifiers = self._channel_spans(
+                text, _spans_from_result(raw, window), window_start
+            )
+            object_spans_by_window.append(objects)
+            qualifier_spans.extend(qualifiers)
+        _merge_straddling_spans(windows, object_spans_by_window)
+        trimmed = self._trimmed_spans(
+            text, [span for spans in object_spans_by_window for span in spans]
+        )
+        gazetteer_spans = [(mention.start, mention.end) for mention in gazetteer_mentions]
+        candidates = _select_candidates(_candidates_vs_gazetteer(trimmed, gazetteer_spans))
+        candidates = self._strict_gazetteer_candidates(candidates)
+        return self._emit(text, gazetteer_mentions, candidates) + self._qualifier_mentions(
+            text, qualifier_spans
+        )
+
+    def _channel_spans(
+        self, text: str, spans: list[_ModelSpan], window_start: int
+    ) -> tuple[list[_ModelSpan], list[_ModelSpan]]:
+        """Remap one window's spans into full-text offsets and split them by channel.
+
+        Returns ``(object_spans, qualifier_spans)`` keyed on the span's canonical type
+        (:data:`~dakp_pipeline.ner.dictionary.OBJECT_TYPES` = object channel, everything else in
+        the vocabulary = qualifier channel). The population-descriptor filter applies to the
+        object channel ONLY: :data:`_POPULATION_PHRASES` holds exactly "women of childbearing
+        potential", "women" and "pregnant women" — the very surfaces the population and sex
+        qualifier labels exist to extract — so filtering them here would delete every population
+        qualifier before it could be routed.
+        """
+        objects: list[_ModelSpan] = []
+        qualifiers: list[_ModelSpan] = []
+        for span in spans:
+            start, end = window_start + span.start, window_start + span.end
+            if span.type not in OBJECT_TYPES:
+                qualifiers.append(
+                    _ModelSpan(
+                        start=start,
+                        end=end,
+                        type=span.type,
+                        score=span.score,
+                        context_model=span.context_model,
+                        context_model_score=span.context_model_score,
+                    )
+                )
+            elif normalize_text(text[start:end]) not in _POPULATION_PHRASES:
+                objects.append(
+                    _ModelSpan(
+                        start=start,
+                        end=end,
+                        type=span.type,
+                        score=span.score,
+                        context_model=span.context_model,
+                        context_model_score=span.context_model_score,
+                    )
+                )
+        return objects, qualifiers
+
+    def _gazetteer_qualifier_mentions(self, text: str) -> list[Mention]:
+        """Emit closed lexical qualifiers with explicit deterministic provenance.
+
+        This matcher is intentionally separate from the object gazetteer: the returned mentions
+        cannot become assertion objects, and only exact ``(start, end, type)`` collisions with
+        model qualifiers are resolved (in favor of this known lexical surface).
+        """
+        return [
+            Mention(
+                text=mention.text,
+                start=mention.start,
+                end=mention.end,
+                type=mention.type,
+                score=mention.score,
+                normalized=mention.normalized,
+                notes=QUALIFIER_GAZETTEER_NOTES,
+            )
+            for mention in self._qualifier_matcher.match(text)
+        ]
+
+    @staticmethod
+    def _merge_qualifier_mentions(lexical: list[Mention], emitted: list[Mention]) -> list[Mention]:
+        """Combine independent qualifier sources without crossing into object extraction.
+
+        A closed gazetteer hit wins only an exact same-type/same-span collision; otherwise model
+        and lexical qualifiers coexist, including overlaps, because qualifiers describe objects.
+        """
+        lexical_keys = {(mention.start, mention.end, mention.type) for mention in lexical}
+        return lexical + [
+            mention
+            for mention in emitted
+            if mention.type in OBJECT_TYPES
+            or (mention.start, mention.end, mention.type) not in lexical_keys
+        ]
+
+    def _qualifier_mentions(self, text: str, spans: list[_ModelSpan]) -> list[Mention]:
+        """Emit the qualifier channel: strip-aligned spans, no object-channel post-processing.
+
+        Qualifiers get NO hedge trimming, NO gazetteer merge and NO population filter, all three
+        measured as harmful to them: :func:`_trim_hedges` would strip the informative head off
+        ``history of hypertension`` (a temporal-context qualifier), and the gazetteer merge
+        de-overlaps per channel, so a qualifier over the same words as an object span must
+        survive rather than lose a contest it is not part of.
+
+        Spans below :data:`QUALIFIER_ACCEPT_THRESHOLD` are abstained on (logged, never emitted),
+        exact surfaces in :data:`QUALIFIER_SURFACE_BLOCKLIST` for their type are abstained on the
+        same way (measured junk the prompt alone did not fully prevent), duplicates on
+        ``(start, end, type)`` collapse to the highest-scoring one, and the sort
+        makes that choice independent of the order gliner2 returned its labels in.
+        """
+        seen: set[tuple[int, int, str]] = set()
+        mentions: list[Mention] = []
+        for span in sorted(spans, key=lambda item: (item.start, item.end, item.type, -item.score)):
+            surface = text[span.start : span.end]
+            if span.score < QUALIFIER_ACCEPT_THRESHOLD:
+                self._abstain(surface, span.score, "qualifier_below_accept_floor")
+                continue
+            blocked = QUALIFIER_SURFACE_BLOCKLIST.get(span.type)
+            if blocked is not None and normalize_text(surface) in blocked:
+                self._abstain(surface, span.score, "qualifier_blocked_surface")
+                continue
+            key = (span.start, span.end, span.type)
+            if key in seen:
+                continue
+            seen.add(key)
+            mentions.append(
+                Mention(
+                    text=surface,
+                    start=span.start,
+                    end=span.end,
+                    type=span.type,
+                    score=span.score,
+                    normalized=normalize_text(surface),
+                    notes=QUALIFIER_NOTES,
+                    context_model=span.context_model,
+                    context_model_score=span.context_model_score,
+                )
+            )
+        return mentions
+
+    def _strict_gazetteer_candidates(self, candidates: list[_Candidate]) -> list[_Candidate]:
+        """Keep only sufficiently confident model extensions of exact gazetteer anchors.
+
+        Free-standing OOV candidates are not affected. A rejected extension is omitted so
+        :meth:`_emit` retains the exact gazetteer mention instead of treating the model boundary
+        as authoritative at low confidence.
+        """
+        floor = self._strict_extension_threshold
+        if floor is None:
+            return candidates
+        return [
+            candidate
+            for candidate in candidates
+            if candidate.anchor < 0 or candidate.span.score >= floor
+        ]
+
+    def _trimmed_spans(self, text: str, spans: list[_ModelSpan]) -> list[_ModelSpan]:
+        """Hedge-trim every model span, re-applying the population filter to the trimmed surface.
+
+        The population re-check matters because trimming can *reveal* a descriptor: ``in pregnant
+        women`` trims to ``pregnant women``, which is a subject population, not a phenotype.
+        """
+        trimmed: list[_ModelSpan] = []
+        for span in spans:
+            bounds = _trim_hedges(text, span.start, span.end)
+            if bounds is None:
+                continue
+            start, end = bounds
+            if normalize_text(text[start:end]) in _POPULATION_PHRASES:
+                continue
+            trimmed.append(
+                _ModelSpan(
+                    start=start,
+                    end=end,
+                    type=span.type,
+                    score=span.score,
+                    context_model=span.context_model,
+                    context_model_score=span.context_model_score,
+                )
+            )
+        return trimmed
+
+    def _emit(
+        self, text: str, gazetteer_mentions: list[Mention], candidates: list[_Candidate]
+    ) -> list[Mention]:
+        """Apply the acceptance floor and build the final mention list.
+
+        A candidate that supersedes a gazetteer span takes the model's **boundary** but keeps the
+        **gazetteer's type**: ``ner/BENCHMARK.md`` records GLiNER mistyping exactly these terms
+        (``gastrointestinal bleeding``, ``QT prolongation``, ``seizures``), and type confusion is
+        orthogonal to boundary precision — the gazetteer is still the better authority on type.
+
+        Below the floor the backend **abstains**: a superseded gazetteer mention is not
+        resurrected, because emitting ``hypertension`` for text that reads ``pulmonary
+        hypertension`` asserts a broader contraindication than the label supports. Returning
+        nothing is the honest answer, and ``extract`` already contracts an empty list.
+        """
+        superseded: set[int] = set()
+        accepted: list[Mention] = []
+        for candidate in candidates:
+            span = candidate.span
+            surface = text[span.start : span.end]
+            supersedes = candidate.anchor >= 0
+            if supersedes:
+                superseded.add(candidate.anchor)
+            if span.score < self._accept:
+                self._abstain(
+                    surface,
+                    span.score,
+                    "superseded_unresolved" if supersedes else "below_accept_floor",
+                )
+                continue
+            etype = gazetteer_mentions[candidate.anchor].type if supersedes else span.type
+            accepted.append(
+                Mention(
+                    text=surface,
+                    start=span.start,
+                    end=span.end,
+                    type=etype,
+                    score=span.score,
+                    normalized=normalize_text(surface),
+                    notes="gliner:extends" if supersedes else "gliner",
+                    context_model=span.context_model,
+                    context_model_score=span.context_model_score,
+                )
+            )
+        kept = [
+            mention for index, mention in enumerate(gazetteer_mentions) if index not in superseded
+        ]
+        return kept + accepted
+
+    def _abstain(self, surface: str, score: float, reason: str) -> None:
+        """Record a mention the backend declined to assert.
+
+        DEBUG level on purpose: per-span detail is what you need to retune ``accept_threshold``,
+        but a production run mines tens of thousands of sections and this must not flood INFO.
+        """
+        stats(
+            logger,
+            "ner_abstain",
+            level="DEBUG",
+            reason=reason,
+            surface=surface,
+            score=round(score, 4),
+            accept_threshold=self._accept,
+        )
+
+
+# --- module-level entry points -------------------------------------------------
+
+
+def extract_disease_mentions(text: str, ner: DiseaseNER | None = None) -> list[Mention]:
+    """Extract disease/phenotype mentions from ``text`` (one unified entry point).
+
+    Uses ``ner`` or a default offline :class:`DiseaseNER` (deterministic embedded gazetteer).
+    """
+    return (ner or DiseaseNER()).extract(text)
+
+
+def extract_contraindication_diseases(text: str, ner: DiseaseNER | None = None) -> list[Mention]:
+    """Extract disease/phenotype mentions from a DailyMed contraindication section (LOINC 34070-3).
+
+    The backend is specialized to disease/phenotype mentions, so this is
+    :func:`extract_disease_mentions` under a contraindication-specific name; the assertion
+    builder feeds these mention spans (text + type) into contraindication rows.
+    """
+    return extract_disease_mentions(text, ner)
+
+
+__all__ = [
+    "CONTEXT_ATTRIBUTE_GROUP",
+    "CONTEXT_ATTRIBUTE_THRESHOLD",
+    "CONTRAINDICATION_ACCEPT_THRESHOLD",
+    "DEFAULT_ACCEPT_THRESHOLD",
+    "DEFAULT_MODEL",
+    "DEFAULT_THRESHOLD",
+    "EMBEDDED_GAZETTEER",
+    "GLINER_GENERATION_FLOOR",
+    "INDICATION_ACCEPT_THRESHOLD",
+    "MENTION_TYPES",
+    "MODEL_LABELS",
+    "MODEL_LABEL_NAMES",
+    "OBJECT_TYPES",
+    "QUALIFIER_ACCEPT_THRESHOLD",
+    "QUALIFIER_GAZETTEER",
+    "QUALIFIER_GAZETTEER_NOTES",
+    "QUALIFIER_NOTES",
+    "STRICT_GAZETTEER_EXTENSION_THRESHOLD",
+    "TYPE_DISEASE",
+    "TYPE_PHENOTYPE",
+    "DiseaseNER",
+    "Mention",
+    "NERDependencyError",
+    "extract_contraindication_diseases",
+    "extract_disease_mentions",
+]

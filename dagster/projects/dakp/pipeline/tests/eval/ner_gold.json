@@ -1,0 +1,304 @@
+{
+  "schema_version": "dakp.ner.gold.v1",
+  "annotation_policy": "Gold spans are the maximal disease/phenotype mention spans a contraindication or indication targets. type is 'Disease' (a diagnosed condition) or 'PhenotypicFeature' (a clinical finding/symptom/condition-state). Borderline condition-states (hypersensitivity, pregnancy, bleeding, seizures, elevations, pain, nausea, vomiting, fatigue) are labeled 'PhenotypicFeature'; named disorders/syndromes are 'Disease'. 'Maximal' covers qualifiers that change the concept -- anatomical/etiological ('pulmonary hypertension', 'portal hypertension'), severity ('severe heart failure'), and course ('active liver disease') -- because the qualified term denotes a different condition than its head. It does NOT cover temporal or evidential hedges ('recent', 'a history of', 'known', 'suspected'), which say something about the patient record rather than about the condition: gold for 'a recent myocardial infarction' is 'myocardial infarction'. Population descriptors (e.g. 'women of childbearing potential') are subject populations, NOT disease/phenotype mentions, and get no span. Each surface occurs exactly once in its text so offsets resolve unambiguously.",
+  "cases": [
+    {
+      "id": "dailymed-ibuprofen",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with asthma or known hypersensitivity to ibuprofen.",
+      "mentions": [
+        {"surface": "asthma", "type": "Disease"},
+        {"surface": "hypersensitivity", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "dailymed-examplestatin",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with active liver disease or unexplained persistent transaminase elevations.",
+      "mentions": [
+        {"surface": "active liver disease", "type": "Disease"},
+        {"surface": "transaminase elevations", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "dailymed-cardiac",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with severe heart failure or recent myocardial infarction.",
+      "mentions": [
+        {"surface": "severe heart failure", "type": "Disease"},
+        {"surface": "myocardial infarction", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-gi",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with a history of peptic ulcer disease or gastrointestinal bleeding.",
+      "mentions": [
+        {"surface": "peptic ulcer disease", "type": "Disease"},
+        {"surface": "gastrointestinal bleeding", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "dailymed-renal",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with severe renal impairment or end stage renal disease.",
+      "mentions": [
+        {"surface": "severe renal impairment", "type": "Disease"},
+        {"surface": "end stage renal disease", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-htn",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with uncontrolled hypertension.",
+      "mentions": [
+        {"surface": "uncontrolled hypertension", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-pregnancy",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated during pregnancy and in women of childbearing potential.",
+      "mentions": [
+        {"surface": "pregnancy", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "dailymed-qt",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with known QT prolongation or ventricular arrhythmias.",
+      "mentions": [
+        {"surface": "QT prolongation", "type": "PhenotypicFeature"},
+        {"surface": "ventricular arrhythmias", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-bleeding",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with active bleeding or a history of hemorrhagic stroke.",
+      "mentions": [
+        {"surface": "active bleeding", "type": "PhenotypicFeature"},
+        {"surface": "hemorrhagic stroke", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-hepatic",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with severe hepatic impairment.",
+      "mentions": [
+        {"surface": "severe hepatic impairment", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-seizure",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with a history of seizures or epilepsy.",
+      "mentions": [
+        {"surface": "seizures", "type": "PhenotypicFeature"},
+        {"surface": "epilepsy", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-glaucoma",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with narrow angle glaucoma.",
+      "mentions": [
+        {"surface": "narrow angle glaucoma", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-hyperchol",
+      "source": "faers",
+      "text": "hypercholesterolemia",
+      "mentions": [
+        {"surface": "hypercholesterolemia", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-headache",
+      "source": "faers",
+      "text": "headache",
+      "mentions": [
+        {"surface": "headache", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "faers-backpain",
+      "source": "faers",
+      "text": "back pain",
+      "mentions": [
+        {"surface": "back pain", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "faers-t2dm",
+      "source": "faers",
+      "text": "type 2 diabetes mellitus",
+      "mentions": [
+        {"surface": "type 2 diabetes mellitus", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-copd",
+      "source": "faers",
+      "text": "chronic obstructive pulmonary disease",
+      "mentions": [
+        {"surface": "chronic obstructive pulmonary disease", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-afib",
+      "source": "faers",
+      "text": "atrial fibrillation",
+      "mentions": [
+        {"surface": "atrial fibrillation", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-nausea",
+      "source": "faers",
+      "text": "nausea and vomiting",
+      "mentions": [
+        {"surface": "nausea", "type": "PhenotypicFeature"},
+        {"surface": "vomiting", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "faers-ra",
+      "source": "faers",
+      "text": "rheumatoid arthritis",
+      "mentions": [
+        {"surface": "rheumatoid arthritis", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-unknown",
+      "source": "faers",
+      "text": "product used for unknown indication",
+      "mentions": []
+    },
+    {
+      "id": "faers-depression",
+      "source": "faers",
+      "text": "depression",
+      "mentions": [
+        {"surface": "depression", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-migraine",
+      "source": "faers",
+      "text": "migraine",
+      "mentions": [
+        {"surface": "migraine", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-fatigue",
+      "source": "faers",
+      "text": "fatigue",
+      "mentions": [
+        {"surface": "fatigue", "type": "PhenotypicFeature"}
+      ]
+    },
+    {
+      "id": "dailymed-porphyria",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with a history of porphyria.",
+      "mentions": [
+        {"surface": "porphyria", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-myasthenia",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with myasthenia gravis.",
+      "mentions": [
+        {"surface": "myasthenia gravis", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-pheo",
+      "source": "faers",
+      "text": "pheochromocytoma",
+      "mentions": [
+        {"surface": "pheochromocytoma", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-childbearing",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in women of childbearing potential.",
+      "mentions": []
+    },
+    {
+      "id": "dailymed-chf",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with congestive heart failure.",
+      "mentions": [
+        {"surface": "congestive heart failure", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-cirrhosis",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Do not administer to patients with cirrhosis or hepatic encephalopathy.",
+      "mentions": [
+        {"surface": "cirrhosis", "type": "Disease"},
+        {"surface": "hepatic encephalopathy", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "faers-aki",
+      "source": "faers",
+      "text": "acute kidney injury",
+      "mentions": [
+        {"surface": "acute kidney injury", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-pulm-htn",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with pulmonary hypertension.",
+      "mentions": [
+        {"surface": "pulmonary hypertension", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-portal-htn",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Do not administer to patients with portal hypertension.",
+      "mentions": [
+        {"surface": "portal hypertension", "type": "Disease"}
+      ]
+    },
+    {
+      "id": "dailymed-recent-mi",
+      "source": "dailymed",
+      "loinc": "34070-3",
+      "text": "Contraindicated in patients with a recent myocardial infarction.",
+      "mentions": [
+        {"surface": "myocardial infarction", "type": "Disease"}
+      ]
+    }
+  ]
+}

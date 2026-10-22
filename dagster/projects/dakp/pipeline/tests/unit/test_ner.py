@@ -1,0 +1,209 @@
+"""Unit tests for the single composite NER backend (``dakp_pipeline.ner.ner``).
+
+ALL of these pass without importing the heavy NER deps: the offline gazetteer mode is
+deterministic and dep-free; the production (GLiNER2) mode is asserted to be *lazy* (importing
+``ner.ner`` imports no heavy deps) and is exercised with a fake ``gliner2`` module + a stubbed
+``ensure_model`` (no network) in ``test_ner_edge.py``.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from dakp_pipeline.ner.dictionary import (
+    MENTION_TYPES,
+    OBJECT_TYPES,
+    QUALIFIER_TYPES,
+    TYPE_DISEASE,
+    TYPE_PHENOTYPE,
+    Gazetteer,
+)
+from dakp_pipeline.ner.ner import (
+    CONTRAINDICATION_ACCEPT_THRESHOLD,
+    DEFAULT_ACCEPT_THRESHOLD,
+    DEFAULT_MODEL,
+    DEFAULT_THRESHOLD,
+    EMBEDDED_GAZETTEER,
+    GLINER_GENERATION_FLOOR,
+    INDICATION_ACCEPT_THRESHOLD,
+    MODEL_LABEL_NAMES,
+    MODEL_LABELS,
+    QUALIFIER_ACCEPT_THRESHOLD,
+    QUALIFIER_SURFACE_BLOCKLIST,
+    STRICT_GAZETTEER_EXTENSION_THRESHOLD,
+    DiseaseNER,
+    Mention,
+    extract_contraindication_diseases,
+    extract_disease_mentions,
+)
+
+_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "pipeline"
+_ONTOLOGY_TSV = _FIXTURE_ROOT / "ontology" / "disease_map.tsv"
+
+
+# --- constants + embedded gazetteer --------------------------------------------
+
+
+def test_defaults_and_mention_type_vocabulary() -> None:
+    # The GLiNER2.5 English base boundary checkpoint (first release in the 2.5 family; no
+    # "large" exists) replaces the retired span checkpoint; the benchmark records the comparison.
+    assert DEFAULT_MODEL == "fastino/gliner2.5-base-v1"
+    # The label vocabulary is a label -> description mapping covering BOTH channels in one call;
+    # the names-only view is the same vocabulary in the same (prompt) order.
+    assert isinstance(MODEL_LABELS, dict)
+    assert tuple(MODEL_LABELS) == MODEL_LABEL_NAMES
+    # The generation floor is distinct from the precision-first indication profile. The generic
+    # aliases retain the recall-first contraindication profile for compatibility.
+    assert GLINER_GENERATION_FLOOR == 0.35
+    assert DEFAULT_THRESHOLD == GLINER_GENERATION_FLOOR
+    assert INDICATION_ACCEPT_THRESHOLD == 0.95
+    assert CONTRAINDICATION_ACCEPT_THRESHOLD == GLINER_GENERATION_FLOOR
+    assert DEFAULT_ACCEPT_THRESHOLD == CONTRAINDICATION_ACCEPT_THRESHOLD
+    assert DEFAULT_THRESHOLD <= INDICATION_ACCEPT_THRESHOLD
+    assert DEFAULT_THRESHOLD <= CONTRAINDICATION_ACCEPT_THRESHOLD
+    # Qualifiers are asserted at their own, higher floor (they narrow a true object edge).
+    assert QUALIFIER_ACCEPT_THRESHOLD == 0.5
+    assert GLINER_GENERATION_FLOOR < QUALIFIER_ACCEPT_THRESHOLD
+    # Measured junk surfaces per canonical qualifier type (wenceslaus NER-export scan; the
+    # counts behind each entry are recorded on the QUALIFIER_SURFACE_BLOCKLIST constant).
+    assert "adult" in QUALIFIER_SURFACE_BLOCKLIST["BiologicalSex"]
+    assert "adults" in QUALIFIER_SURFACE_BLOCKLIST["BiologicalSex"]
+    assert "human" in QUALIFIER_SURFACE_BLOCKLIST["BiologicalSex"]
+    assert "humans" in QUALIFIER_SURFACE_BLOCKLIST["BiologicalSex"]
+    assert {"dose", "doses", "dosage", "dosages"} <= set(
+        QUALIFIER_SURFACE_BLOCKLIST["frequency_qualifier"]
+    )
+    assert "pregnancy" in QUALIFIER_SURFACE_BLOCKLIST["temporal_context_qualifier"]
+    assert not (set(QUALIFIER_SURFACE_BLOCKLIST) & set(OBJECT_TYPES))
+    # Object types are the exact tablassert.biolink.Categories values; the mention vocabulary is
+    # the two channels concatenated, object channel first.
+    assert OBJECT_TYPES == (TYPE_DISEASE, TYPE_PHENOTYPE) == ("Disease", "PhenotypicFeature")
+    assert len(QUALIFIER_TYPES) == 7
+    assert MENTION_TYPES == OBJECT_TYPES + QUALIFIER_TYPES
+    # The embedded gazetteer is non-empty and every term is an object-channel type.
+    assert EMBEDDED_GAZETTEER
+    assert set(EMBEDDED_GAZETTEER.values()) == {TYPE_DISEASE, TYPE_PHENOTYPE}
+
+
+# --- offline mode (deterministic embedded gazetteer) ---------------------------
+
+
+def test_offline_default_extracts_embedded_gazetteer_mentions() -> None:
+    ner = DiseaseNER()
+    text = "Contraindicated in patients with asthma and headache."
+    mentions = ner.extract(text)
+    by_text = {m.text: m for m in mentions}
+    assert set(by_text) == {"asthma", "headache"}
+    for mention in mentions:
+        assert text[mention.start : mention.end] == mention.text
+    assert by_text["asthma"].type == TYPE_DISEASE
+    assert by_text["headache"].type == TYPE_PHENOTYPE
+    assert all(m.score == 1.0 for m in mentions)
+
+
+def test_offline_is_deterministic_and_sorted() -> None:
+    ner = DiseaseNER()
+    text = "asthma and pain and asthma"
+    first = [(m.start, m.end, m.type, m.text) for m in ner.extract(text)]
+    for _ in range(5):
+        assert [(m.start, m.end, m.type, m.text) for m in ner.extract(text)] == first
+    assert first == sorted(first)
+
+
+def test_offline_empty_and_blank_text_yield_nothing() -> None:
+    ner = DiseaseNER()
+    assert ner.extract("") == []
+    assert ner.extract("   \t\n ") == []
+    assert ner.extract("nothing relevant here") == []
+
+
+def test_offline_gazetteer_covers_high_frequency_contraindications() -> None:
+    """Gazetteer growth (see ner/BENCHMARK.md): maximal-span matches for recurring diseases."""
+    ner = DiseaseNER()
+    for term in (
+        "congestive heart failure",
+        "cirrhosis",
+        "hepatic encephalopathy",
+        "acute kidney injury",
+        "hepatocellular carcinoma",
+    ):
+        mentions = ner.extract(f"Contraindicated in patients with {term}.")
+        assert [(m.text, m.type) for m in mentions] == [(term, TYPE_DISEASE)]
+
+
+def test_gazetteer_accepts_mapping_or_gazetteer_instance() -> None:
+    from_mapping = DiseaseNER(gazetteer={"fever": "phenotype"})
+    assert [m.text for m in from_mapping.extract("fever")] == ["fever"]
+    # A pre-built Gazetteer instance is used as-is.
+    from_instance = DiseaseNER(gazetteer=Gazetteer({"rash": "phenotype"}))
+    assert [m.text for m in from_instance.extract("rash")] == ["rash"]
+
+
+def test_from_tsv_builds_offline_backend(tmp_path: Path) -> None:
+    tsv = tmp_path / "terms.tsv"
+    tsv.write_text("text\ttype\npain\tdisease\nfever\tphenotype\n", encoding="utf-8")
+    ner = DiseaseNER.from_tsv(tsv)
+    assert sorted(m.text for m in ner.extract("pain and fever")) == ["fever", "pain"]
+
+
+def test_from_tsv_reads_fixture_ontology_as_term_to_type_only() -> None:
+    # The ontology fixture has text/curie/name/category; from_tsv reads text + category only.
+    ner = DiseaseNER.from_tsv(_ONTOLOGY_TSV, text_col="text", type_col="category")
+    mentions = {m.text: m.type for m in ner.extract("asthma and headache")}
+    assert mentions == {"asthma": TYPE_DISEASE, "headache": TYPE_PHENOTYPE}
+
+
+# --- module-level entry points -------------------------------------------------
+
+
+def test_extract_disease_mentions_defaults_to_offline_backend() -> None:
+    assert [m.text for m in extract_disease_mentions("asthma")] == ["asthma"]
+    assert extract_disease_mentions("") == []
+
+
+def test_extract_disease_mentions_uses_injected_backend() -> None:
+    ner = DiseaseNER(gazetteer={"custom term": "disease"})
+    assert [m.text for m in extract_disease_mentions("a custom term here", ner)] == ["custom term"]
+
+
+def test_extract_contraindication_diseases_delegates() -> None:
+    ner = DiseaseNER(gazetteer={"liver disease": "disease"})
+    text = "Contraindicated in liver disease."
+    assert extract_contraindication_diseases(text, ner) == extract_disease_mentions(text, ner)
+
+
+# --- laziness: importing ner.ner imports no heavy deps -------------------------
+
+
+def test_importing_ner_does_not_import_heavy_deps() -> None:
+    assert "dakp_pipeline.ner.ner" in sys.modules
+    for module in ("gliner2", "huggingface_hub"):
+        assert module not in sys.modules, f"importing ner.ner must not import {module}"
+
+
+def test_constructing_production_backend_does_not_import_gliner2() -> None:
+    DiseaseNER(offline=False)
+    assert "gliner2" not in sys.modules
+
+
+def test_use_specific_profiles_have_distinct_acceptance_roles() -> None:
+    indications = DiseaseNER.for_indications(offline=False)
+    contraindications = DiseaseNER.for_contraindications(offline=False)
+    assert indications._threshold == contraindications._threshold == GLINER_GENERATION_FLOOR
+    assert indications._accept == INDICATION_ACCEPT_THRESHOLD
+    assert contraindications._accept == CONTRAINDICATION_ACCEPT_THRESHOLD
+    assert indications._config()["accept_threshold"] == INDICATION_ACCEPT_THRESHOLD
+    assert contraindications._config()["accept_threshold"] == CONTRAINDICATION_ACCEPT_THRESHOLD
+    assert (
+        indications._config()["strict_extension_threshold"] == STRICT_GAZETTEER_EXTENSION_THRESHOLD
+    )
+    assert (
+        contraindications._config()["strict_extension_threshold"]
+        == STRICT_GAZETTEER_EXTENSION_THRESHOLD
+    )
+
+
+def test_mention_is_frozen() -> None:
+    mention = Mention(text="asthma", start=0, end=6, type=TYPE_DISEASE, score=1.0)
+    assert isinstance(hash(mention), int)
