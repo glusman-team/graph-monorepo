@@ -1,7 +1,7 @@
 """Logging: ``loguru`` is the primary structured logger, bridged into stdlib ``logging``
 (no orchestrator coupling).
 
-Three pieces:
+Three pieces plus the narration helpers:
 
 * :class:`InterceptHandler` installs on the stdlib root logger so third-party libraries that
   emit through ``logging`` flow into ``loguru`` (single sink of truth).

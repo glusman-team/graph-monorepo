@@ -1006,7 +1006,9 @@ def shape_config_fingerprint(ctx: TaskContext) -> str:
     whose OUTPUT ids are already among the keyed inputs. Shaping-only logic changes must
     increment SHAPE_IMPLEMENTATION_VERSION; otherwise a pre-fix TSV can survive every release.
     """
-    from dakp_pipeline.ner.mention_cache import ner_cache_material  # lazy: pulls in the NER stack
+    from dakp_pipeline.ner.mention_cache import (
+        ner_cache_material,  # lazy: avoids loading the NER stack at import time
+    )
     from dakp_pipeline.ner.ner import DiseaseNER
 
     material: dict[str, Any] = {

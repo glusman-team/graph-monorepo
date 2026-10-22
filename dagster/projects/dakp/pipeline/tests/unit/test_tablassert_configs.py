@@ -1,0 +1,2223 @@
+"""Unit tests for Tablassert config generation + runner (Milestone 7).
+
+Asserts the generated Graph + per-table configs are valid YAML matching the ACTUAL current
+Tablassert >= 11 schema (``template:``-wrapped ``Section``: ``source.kind=text``, column-encoded
+subject/object/predicate, column-encoded ``statement.qualifiers`` where a column backs them,
+``provenance.override`` ManualProvenance, column-encoded evidence annotations; the graph config
+carries the mandatory ``rig:`` section and no legacy top-level RIG keys), with column
+letters derived from the assertion-table contracts and provenance matching the DINGO
+translator-ingest conventions. Also covers the runner: the mock runner's
+handoff report and the real runner's monkeypatchable subprocess boundary.
+
+These tests require the INSTALLED ``tablassert`` package (a core DAKP dependency): config
+generation derives the hard category allow-lists from its Biolink ``Categories`` enum. The
+sibling ``../Tablassert`` checkout is never imported or required.
+"""
+
+from __future__ import annotations
+
+import copy
+import importlib
+import importlib.util
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+from dakp_pipeline import tablassert as tablassert_configs
+from dakp_pipeline.io import schemas
+from dakp_pipeline.io.artifact_store import ArtifactStore
+from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
+from dakp_pipeline.paths import Workdir
+from dakp_pipeline.tablassert import (
+    OBJECT_PRIORITIZE,
+    SUBJECT_PRIORITIZE,
+    TABLASERT_DIR_ENV,
+    DeferredTablassertRunner,
+    TablassertError,
+    TablassertRunner,
+    _resolve_tablassert_dir,
+    category_avoid_list,
+    qc_runtime_available,
+    tablassert_available,
+)
+from dakp_pipeline.tablassert import run as run_tablassert
+
+# Config generation computes its category guards from the installed package's Biolink enum.
+pytest.importorskip("tablassert", reason="tablassert is a core DAKP dependency; run `uv sync`")
+
+# The flat ``dakp_pipeline.tablassert`` module IS the runner module: patch the subprocess hook
+# and availability probes on the module object (import_module always returns the module) so the
+# runner resolves the patched callables from its module globals at call time.
+_RUN_MODULE = importlib.import_module("dakp_pipeline.tablassert")
+
+TABLES = (
+    "approved_treats_assertions",
+    "faers_applied_to_treat_assertions",
+    "contraindication_assertions",
+)
+
+INFORES_DAKP = "infores:drugapprovals-kp"
+AGENT_TYPE = "manual_validation_of_automated_agent"
+
+# assertion table -> (config basename, predicate, knowledge_level, agent_type). Every family
+# uses the legacy DAKP agent type (``manual_validation_of_automated_agent``), shipped on all
+# three predicates by the legacy DAKP KG.
+EXPECTED_PROVENANCE = {
+    "approved_treats_assertions": ("approved_treats", "treats", "knowledge_assertion", AGENT_TYPE),
+    "faers_applied_to_treat_assertions": (
+        "faers_applied_to_treat",
+        "applied_to_treat",
+        "observation",
+        AGENT_TYPE,
+    ),
+    "contraindication_assertions": (
+        "contraindications",
+        "contraindicated_in",
+        "knowledge_assertion",
+        AGENT_TYPE,
+    ),
+}
+
+# assertion table -> the explicit ``override.sources`` template (resource_id, role, upstream ids)
+# mirroring ``tablassert_configs._TABLE_SOURCES``. DAKP is primary for every family and carries
+# the edge-linkout ``{edge_id}`` record-URL template. The FAERS supporting entry on observed-use
+# edges also carries the static FDA AEMS page.
+EDGE_LINKOUT_URL_TEMPLATE = "https://linkouts.skyelanegoetz.com/edges/{edge_id}"
+FAERS_AEMS_URL = "https://www.fda.gov/safety/fda-adverse-event-monitoring-system-aems"
+EXPECTED_SOURCES = {
+    "approved_treats_assertions": [
+        {
+            "resource_id": INFORES_DAKP,
+            "resource_role": "primary_knowledge_source",
+            "upstream_resource_ids": [
+                "infores:dailymed",
+                "infores:faers",
+                "infores:ema",
+                "infores:epar",
+            ],
+            "source_record_urls": [EDGE_LINKOUT_URL_TEMPLATE],
+        },
+        {"resource_id": "infores:faers", "resource_role": "supporting_data_source"},
+        {"resource_id": "infores:dailymed", "resource_role": "supporting_data_source"},
+        # EMA/EPAR supporting entries carry NO source_record_urls (like DailyMed): the dataset URL
+        # lives on the section source.url + the RIG, and per-medicine EPAR URLs stay in the TSV.
+        {"resource_id": "infores:ema", "resource_role": "supporting_data_source"},
+        {"resource_id": "infores:epar", "resource_role": "supporting_data_source"},
+    ],
+    "faers_applied_to_treat_assertions": [
+        {
+            "resource_id": INFORES_DAKP,
+            "resource_role": "primary_knowledge_source",
+            "upstream_resource_ids": [
+                "infores:dailymed",
+                "infores:faers",
+                "infores:canada-vigilance",
+            ],
+            "source_record_urls": [EDGE_LINKOUT_URL_TEMPLATE],
+        },
+        {
+            "resource_id": "infores:faers",
+            "resource_role": "supporting_data_source",
+            "source_record_urls": [FAERS_AEMS_URL],
+        },
+        {"resource_id": "infores:dailymed", "resource_role": "supporting_data_source"},
+        # The Canada Vigilance supporting entry carries NO source_record_urls (like DailyMed):
+        # the dataset URL lives on the section source.url + the RIG, and per-report record ids
+        # stay in the TSV's supporting_faers_records debug column.
+        {"resource_id": "infores:canada-vigilance", "resource_role": "supporting_data_source"},
+    ],
+    "contraindication_assertions": [
+        {
+            "resource_id": INFORES_DAKP,
+            "resource_role": "primary_knowledge_source",
+            "upstream_resource_ids": ["infores:dailymed", "infores:epar"],
+            "source_record_urls": [EDGE_LINKOUT_URL_TEMPLATE],
+        },
+        {"resource_id": "infores:dailymed", "resource_role": "supporting_data_source"},
+        # The EU SmPC supporting entry carries NO source_record_urls (like DailyMed/EMA above):
+        # the dataset URL lives on the section source.url + the RIG, and per-medicine SmPC URLs
+        # stay in the TSV's supporting_spl_documents debug column.
+        {"resource_id": "infores:epar", "resource_role": "supporting_data_source"},
+    ],
+}
+
+# assertion table -> {qualifier slot: assertion column backing it}. Only tables whose writers
+# actually populate the backing columns get entries (see ``_TABLE_QUALIFIERS`` for the per-table
+# justification). How each slot reaches the edge on the classes ``OBJECT_CATEGORY_OVERRIDE`` pins
+# moves with the pinned model: biolink-model 4.4.5 (Tablassert >= 19.5.1) declares
+# ``disease_context_qualifier``, ``anatomical_context_qualifier``, and ``frequency_qualifier`` there
+# natively, where 15.1's ``CLASS_FIELD_OVERRIDES`` grant (SkyeAv/Tablassert#120) and 19.0's (#188)
+# had carried all six, and Tablassert still grants ``population_context_qualifier`` and
+# ``temporal_context_qualifier`` to both pinned classes plus ``sex_qualifier`` to
+# ``EntityToDiseaseAssociation``. Either path keeps the slot on the edge instead of nulling it into
+# the pruned column, which is what
+# ``test_qualifier_stack_survives_prune_to_class_on_the_pinned_classes`` asserts.
+EXPECTED_QUALIFIERS: dict[str, dict[str, str]] = {
+    "approved_treats_assertions": {
+        "disease_context_qualifier": "disease_context_text",
+        "anatomical_context_qualifier": "anatomical_context_text",
+        "sex_qualifier": "sex_text",
+        "population_context_qualifier": "population_context_text",
+        "frequency_qualifier": "frequency_text",
+        "temporal_context_qualifier": "temporal_context_text",
+        "species_context_qualifier": "species_context_text",
+    },
+    "faers_applied_to_treat_assertions": {"species_context_qualifier": "species_context_text"},
+    "contraindication_assertions": {
+        "disease_context_qualifier": "disease_context_text",
+        "anatomical_context_qualifier": "anatomical_context_text",
+        "sex_qualifier": "sex_text",
+        "population_context_qualifier": "population_context_text",
+        "frequency_qualifier": "frequency_text",
+        "temporal_context_qualifier": "temporal_context_text",
+        "species_context_qualifier": "species_context_text",
+    },
+}
+
+# assertion table -> {annotation name: (assertion column it encodes, multivalued separator)}.
+# Every name here must be a slot the association class DAKP's rows resolve to
+# (``EntityToDiseaseAssociation`` / ``EntityToPhenotypicFeatureAssociation``, pinned by
+# ``OBJECT_CATEGORY_OVERRIDE``) actually declares, or Tablassert
+# relocates the value off the edge into the inlined supporting study's StudyResult description --
+# a junk drawer no translator-ingests source models. So: the common ``edge_evidence`` column maps to
+# ``publications`` (ONE annotation, carrying the sorted ``dailymed:<spl_set_id>`` CURIEs, because
+# duplicate annotation names silently overwrite
+# each other), and the FAERS ``number_of_cases`` column maps onto the same-named literal Biolink
+# slot, reachable
+# since Tablassert 15.1's ``STUDY_SIZE_EXEMPT_PATTERN`` (#119) stopped the study-size classifier
+# from renaming it onto ``Study.study_size`` (DAKP used the ``evidence_count`` alias before that).
+# ``split_by: "|"``
+# makes the pipe-joined cells emit as real JSON arrays. ``regulatory_approvals`` is the CANONICAL
+# multivalued slot for FDA application numbers, declared natively on
+# ``EntityToDiseaseAssociation`` / ``EntityToPhenotypicFeatureAssociation`` by biolink-model 4.4.5
+# (Tablassert >= 19.5.1), which renamed the model's FDA-specific ``FDA_regulatory_approvals`` to it;
+# Tablassert 18 had granted the slot to those classes ahead of the model. The TSV column
+# keeps its FDA-prefixed name while the annotation renames it onto the canonical edge slot; DAKP
+# splits it with ``split_by`` so the edge carries the legacy ``approvals`` JSON-ARRAY shape;
+# ``ner_confidence_score`` still folds into ``supporting_text``. ``case_ids`` maps to
+# ``supporting_case_ids`` — a Tablassert edge EXTRA (>= 16.6), not a Biolink slot: the
+# build-internal carrier the ``uuid_on_collision: merge`` dedup unions to recompute
+# ``number_of_cases`` as the exact unique-case count, stripped before the final NDJSON.
+EXPECTED_ANNOTATIONS = {
+    "approved_treats_assertions": {
+        "regulatory_approvals": ("FDA_regulatory_approvals", "|"),
+        "publications": ("edge_evidence", "|"),
+        "clinical_approval_status": ("clinical_approval_status", None),
+    },
+    "faers_applied_to_treat_assertions": {
+        "number_of_cases": ("number_of_cases", None),
+        "supporting_case_ids": ("case_ids", "|"),
+        "publications": ("edge_evidence", "|"),
+        "clinical_approval_status": ("clinical_approval_status", None),
+    },
+    "contraindication_assertions": {
+        "regulatory_approvals": ("FDA_regulatory_approvals", "|"),
+        "publications": ("edge_evidence", "|"),
+        # ``evidence_text`` is deliberately NOT annotated onto ``supporting_text`` (full SPL
+        # sentences made the edges unreadable); the column stays TSV-only provenance.
+        "ner_confidence_score": ("ner_confidence_score", None),
+    },
+}
+
+# assertion table -> the REAL upstream dataset URL recorded as ``source.url`` (never a placeholder;
+# RIG/audit record only — edge provenance comes from the explicit ``override.sources`` template,
+# which carries no dataset-level URLs).
+EMA_MEDICINES_XLSX_URL = (
+    "https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx"
+)
+EMA_EPAR_DOCUMENTS_JSON_URL = "https://www.ema.europa.eu/en/documents/report/documents-output-epar_documents_json-report_en.json"
+CANADA_VIGILANCE_EXTRACTS_URL = (
+    "https://www.canada.ca/en/health-canada/services/drugs-health-products/medeffect-canada/"
+    "adverse-reaction-database/canada-vigilance-online-database-data-extract.html"
+)
+# Each table's ``source.url`` list: approved-treats aggregates THREE upstream datasets (the
+# DailyMed full-release index, the EMA medicines xlsx, and the EMA EPAR documents report that
+# manifests the SmPC crawl), contraindications two (the DailyMed index and the same SmPC
+# corpus); the rest one.
+EXPECTED_SOURCE_URLS = {
+    "approved_treats_assertions": [
+        "https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm",
+        EMA_MEDICINES_XLSX_URL,
+        EMA_EPAR_DOCUMENTS_JSON_URL,
+    ],
+    "faers_applied_to_treat_assertions": [
+        "https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html",
+        CANADA_VIGILANCE_EXTRACTS_URL,
+    ],
+    "contraindication_assertions": [
+        "https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm",
+        EMA_EPAR_DOCUMENTS_JSON_URL,
+    ],
+}
+
+
+# --- helpers ----------------------------------------------------------------------
+
+
+def _letter_to_index(letters: str) -> int:
+    """Inverse of configs.excel_column: Excel letters -> 0-based index (A->0, Z->25, AA->26)."""
+    index = 0
+    for ch in letters:
+        index = index * 26 + (ord(ch) - ord("A") + 1)
+    return index - 1
+
+
+def _column_at(table: str, letters: str) -> str:
+    """Assertion-table column name addressed by Excel ``letters``."""
+    return schemas.columns_for(table)[_letter_to_index(letters)]
+
+
+def _write_assertion_tsv(table: str, workdir: Workdir) -> Path:
+    path = workdir.tabular / f"{table}.tsv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\t".join(schemas.columns_for(table)) + "\n", encoding="utf-8")
+    return path
+
+
+def _assertion_refs(workdir: Workdir) -> list[ArtifactRef]:
+    store = ArtifactStore(workdir)
+    return [
+        store.register(
+            _write_assertion_tsv(table, workdir), media_type=schemas.TSV_MEDIA_TYPE, rows=1
+        )
+        for table in TABLES
+    ]
+
+
+def _ctx(workdir: Workdir, **params: object) -> TaskContext:
+    return TaskContext(workdir=workdir.root, fixture_root=None, params=params)
+
+
+def _read_report(workdir: Workdir) -> dict:
+    return json.loads((workdir.reports / "tablassert_handoff.json").read_text(encoding="utf-8"))
+
+
+# The contract-clean fixture pair the runner's post-build gate streams (mirror of what a
+# successful build-kg emits under <workdir>/kgx).
+_KGX_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "kgx"
+
+
+def _fake_build_kgx(workdir: Workdir) -> None:
+    """Emit the contract-clean fixture KGX pair as a successful ``build-kg`` would."""
+    __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION  # explicit default, not a tag
+
+    kgx_dir = workdir.kgx
+    kgx_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{tablassert_configs.GRAPH_NAME}_{__version__}"
+    for kind in ("nodes", "edges"):
+        shutil.copyfile(_KGX_FIXTURES / f"{kind}.jsonl", kgx_dir / f"{stem}.{kind}.ndjson")
+
+
+# --- Excel column-letter mapping --------------------------------------------------
+
+
+def test_excel_column_letters() -> None:
+    assert tablassert_configs.excel_column(0) == "A"
+    assert tablassert_configs.excel_column(5) == "F"
+    assert tablassert_configs.excel_column(25) == "Z"
+    assert tablassert_configs.excel_column(26) == "AA"
+    with pytest.raises(ValueError, match=">= 0"):
+        tablassert_configs.excel_column(-1)
+
+
+def test_column_letters_point_at_subject_and_object() -> None:
+    # subject_text is column A and object_text is column F in every assertion contract.
+    for table in TABLES:
+        assert (
+            _column_at(table, tablassert_configs.column_letter(table, "subject_text"))
+            == "subject_text"
+        )
+        assert (
+            _column_at(table, tablassert_configs.column_letter(table, "object_text"))
+            == "object_text"
+        )
+        assert tablassert_configs.column_letter(table, "subject_text") == "A"
+        assert tablassert_configs.column_letter(table, "object_text") == "F"
+
+
+def test_column_letter_unknown_column_raises() -> None:
+    with pytest.raises(KeyError, match="not_a_column"):
+        tablassert_configs.column_letter("approved_treats_assertions", "not_a_column")
+
+
+# --- table config structure -------------------------------------------------------
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_table_config_structure(table: str) -> None:
+    _basename, predicate, knowledge_level, agent_type = EXPECTED_PROVENANCE[table]
+    config = tablassert_configs.table_config(table)
+
+    # text source over the uncompressed assertion TSV (tab delimiter; url required by the model).
+    source = config["source"]
+    assert source["kind"] == "text"
+    assert source["local"] == f"tabular/{table}.tsv"
+    assert source["delimiter"] == "\t"
+    # The real upstream dataset URL (a list since Tablassert 8.2.1) — never the example.invalid placeholder.
+    assert source["url"] == EXPECTED_SOURCE_URLS[table]
+    assert all("example.invalid" not in url for url in source["url"])
+
+    # column-encoded subject/object with drug / disease prioritization + hard allow-list guards.
+    statement = config["statement"]
+    assert statement["predicate"] == predicate
+    assert statement["subject"]["method"] == "column"
+    assert statement["subject"]["encoding"] == tablassert_configs.column_letter(
+        table, "subject_text"
+    )
+    assert statement["subject"]["prioritize"] == ["Drug", "SmallMolecule", "ChemicalEntity"]
+    assert statement["subject"]["avoid"] == category_avoid_list(SUBJECT_PRIORITIZE)
+    # Subject-side CURIE exclusions are the HCPCS admin-code guards (UMLS:C1314429, the
+    # v1.13.0 audit's 197-edge "INJECTION, OXALIPLATIN, 0.5 MG ADMINISTERED" leak; UMLS:C0812740,
+    # the v1.13.1 PIPERACILLIN/TAZOBACTAM leak): wording filters cannot express "drop this
+    # CURIE, keep that one" for the shared drug name.
+    assert statement["subject"]["exclude_regex"] == list(tablassert_configs._SUBJECT_EXCLUDE_REGEX)
+    assert statement["object"]["method"] == "column"
+    assert statement["object"]["encoding"] == tablassert_configs.column_letter(table, "object_text")
+    assert statement["object"]["prioritize"] == ["Disease", "PhenotypicFeature"]
+    assert statement["object"]["avoid"] == category_avoid_list(OBJECT_PRIORITIZE)
+    # Object-side exclusions are only the non-disease phrase-concept guard; wording filters
+    # cannot express "drop this CURIE, keep that one" for the shared depression term.
+    assert statement["object"]["exclude_regex"] == list(tablassert_configs._OBJECT_EXCLUDE_REGEX)
+
+    # ManualProvenance override carrying DAKP as the primary source (no publication alongside
+    # override).
+    override = config["provenance"]["override"]
+    assert (
+        "infores" not in override
+    )  # the DAKP infores is graph-level only (Tablassert >= 8.0.1 forbids it here)
+    # The explicit sources template (Tablassert >= 14.0, SkyeAv/Tablassert#116) puts DAKP
+    # first as the primary knowledge source, including the edge-linkout {edge_id} record-URL template;
+    # the FAERS supporting entry on observed-use edges retains the static AEMS page.
+    assert override["sources"] == EXPECTED_SOURCES[table]
+    assert override["knowledge_level"] == knowledge_level
+    assert override["agent_type"] == agent_type
+    assert "publication" not in config["provenance"]
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_table_config_qualifiers(table: str) -> None:
+    statement = tablassert_configs.table_config(table)["statement"]
+    expected = EXPECTED_QUALIFIERS[table]
+    if not expected:
+        # Nothing backs a qualifier on this table => no ``qualifiers`` key at all (never an empty list).
+        assert "qualifiers" not in statement
+        return
+    qualifiers = statement["qualifiers"]
+    assert [entry["qualifier"] for entry in qualifiers] == list(expected)
+    for entry in qualifiers:
+        backing = expected[entry["qualifier"]]
+        assert entry["method"] == "column"
+        # The encoding letter must address the backing assertion column.
+        assert _column_at(table, entry["encoding"]) == backing
+        assert entry["encoding"] == tablassert_configs.column_letter(table, backing)
+        # Sparse by construction: a blank or unresolved cell keeps the edge, omitting the
+        # qualifier -- except the slots the shapers populate on EVERY row (species), which stay
+        # non-nullable so a blank cell drops the row loudly instead of minting a species-less
+        # edge that could fold onto another species' edge.
+        assert entry["nullable"] is (
+            entry["qualifier"] not in tablassert_configs._NON_NULLABLE_QUALIFIERS
+        )
+        if entry["qualifier"] == tablassert_configs.SPECIES_QUALIFIER:
+            # The species slot names an organism, so the 9606 human default is lifted explicitly:
+            # the slot must resolve every species CURIE the shapers can write, not just human.
+            assert entry["taxon"] is None
+        else:
+            assert "taxon" not in entry
+        # Every slot carries the hard category allow-list guard (the avoid complement names
+        # every off-allow-list category since Tablassert 18.1.0, GenomicEntity included) — the
+        # type-ranged frequency/temporal slots too, per the v1.13.0 junk-CURIE audit.
+        guard = tablassert_configs._QUALIFIER_GUARD[entry["qualifier"]]
+        assert entry["prioritize"] == list(guard)
+        assert entry["avoid"] == category_avoid_list(guard)
+        # CURIE denylists match the module dicts exactly: anchored junk-candidate regexes plus
+        # the EMAPA (Mouse Anatomy) namespace prefix on anatomical context.
+        assert entry.get("exclude_prefixes", []) == list(
+            tablassert_configs._QUALIFIER_EXCLUDE_PREFIXES.get(entry["qualifier"], ())
+        )
+        assert entry.get("exclude_regex", []) == list(
+            tablassert_configs._QUALIFIER_EXCLUDE_REGEX.get(entry["qualifier"], ())
+        )
+
+
+def test_declared_qualifier_emits_a_column_encoding() -> None:
+    # Exercise the emission path independently of the production backing-column choice.
+    table = "contraindication_assertions"
+    declared = dict(
+        tablassert_configs._TABLE_QUALIFIERS,
+        **{table: (("disease_context_qualifier", "object_text"),)},
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tablassert_configs, "_TABLE_QUALIFIERS", declared)
+        statement = tablassert_configs.table_config(table)["statement"]
+    assert statement["qualifiers"] == [
+        {
+            "qualifier": "disease_context_qualifier",
+            "method": "column",
+            "encoding": tablassert_configs.column_letter(table, "object_text"),
+            "nullable": True,
+            "prioritize": ["Disease"],
+            "avoid": category_avoid_list(["Disease"]),
+        }
+    ]
+
+
+def test_qualifier_slots_are_valid_biolink_qualifiers() -> None:
+    # Every emitted qualifier slot must be a real member of the installed Tablassert's Biolink
+    # ``Qualifiers`` enum. ``species_context_qualifier`` is declared deliberately: Tablassert
+    # 22.1.0 re-enabled it as a declarable CURIE-ranged slot on the root association class
+    # (Biolink 4.4.6), and no auto-derivation exists to fill it, so DAKP must declare it.
+    from tablassert.biolink import Qualifiers
+
+    valid = {qualifier.value for qualifier in Qualifiers}
+    for table in TABLES:
+        for qualifier, _column in tablassert_configs._TABLE_QUALIFIERS[table]:
+            assert qualifier in valid
+    assert "species_context_qualifier" in valid
+    for table in TABLES:  # every table carries the species slot: it is in the graph uuid_fields
+        assert tablassert_configs.SPECIES_QUALIFIER in {
+            slot for slot, _column in tablassert_configs._TABLE_QUALIFIERS[table]
+        }
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_no_encoding_declares_taxon_from(table: str) -> None:
+    """No DAKP statement scopes entity resolution by row taxon, on any table.
+
+    Tablassert >= 22.1.0 offers ``NodeEncoding.taxon_from`` and a species column looks like the
+    natural scope, but two production-fullmap probes rule it out (rationale recorded beside
+    :data:`_NON_NULLABLE_QUALIFIERS` in the generator): ``OrganismTaxon`` rows carry ``TAXON_ID
+    0``, whose resolved taxon metadata Tablassert nulls, so a species source column raises
+    ``taxon-from-not-ncbitaxon`` instead of scoping anything; and disease and phenotype concepts
+    carry the human taxon, so scoping the non-nullable object would delete every animal-label edge
+    rather than partition it. Species reaches identity through the qualifier slot and
+    :data:`UUID_FIELDS` instead.
+    """
+    statement = tablassert_configs.table_config(table)["statement"]
+    for node in ("subject", "object"):
+        assert "taxon_from" not in statement[node], f"{table}.{node} must not declare taxon_from"
+    for entry in statement.get("qualifiers", []):
+        assert "taxon_from" not in entry, (
+            f"{table}.{entry['qualifier']} must not declare taxon_from"
+        )
+
+
+#: One plausible resolved value per DAKP qualifier slot. Every slot here is CURIE-ranged (the
+#: ``test_dakp_qualifiers_are_not_enum_ranged`` tripwire below pins that), so ``prune_to_class``
+#: passes the value through without a vocabulary check; the exact CURIE is irrelevant to the
+#: contract, only its survival on the edge is.
+_QUALIFIER_PROBES: dict[str, str] = {
+    "anatomical_context_qualifier": "UBERON:0001557",
+    "disease_context_qualifier": "MONDO:0005148",
+    "frequency_qualifier": "HP:0040283",
+    "population_context_qualifier": "NCIT:C25667",
+    "sex_qualifier": "PATO:0000383",
+    "species_context_qualifier": "NCBITaxon:9615",
+    "temporal_context_qualifier": "UBERON:0000000",
+}
+
+
+def test_dakp_qualifier_stack_is_the_expected_slot_set() -> None:
+    """The qualifier slots DAKP emits are exactly the six sparse slots plus species context.
+
+    Why: every other qualifier contract in this file iterates the emitted config, so a slot added
+    to (or dropped from) ``_TABLE_QUALIFIERS`` would otherwise change what those contracts cover
+    without any test saying so. Pinning the set makes the change deliberate.
+    """
+    emitted = {slot for table in TABLES for slot in EXPECTED_QUALIFIERS[table]}
+    assert emitted == set(_QUALIFIER_PROBES), (
+        f"DAKP's qualifier stack changed: {sorted(emitted ^ set(_QUALIFIER_PROBES))}"
+    )
+    for table in TABLES:
+        configured = {slot for slot, _column in tablassert_configs._TABLE_QUALIFIERS[table]}
+        assert configured == set(EXPECTED_QUALIFIERS[table]), f"{table} emits {sorted(configured)}"
+
+
+def test_dakp_qualifiers_are_not_enum_ranged() -> None:
+    """No DAKP qualifier is ranged over a closed Biolink vocabulary.
+
+    Why: DAKP encodes each qualifier from a mined TEXT column and lets Tablassert entity-resolve it
+    through the fullmap, so the value reaching the edge is a CURIE. Tablassert >= 19.4 audits every
+    enum-ranged qualifier column against its closed vocabulary and FAILS the build with
+    ``qualifier-vocabulary-violation``, and ``prune_to_class`` nulls a value outside that vocabulary
+    even on a class that declares the slot. A Biolink release that turned any of these slots
+    enum-ranged would therefore break the production build, not just this test, so the tripwire
+    names the slot and the two options (emit vocabulary tokens, or stop emitting the slot).
+    """
+    from tablassert.biolink import ENUM_RANGED_QUALIFIERS
+
+    enum_ranged = sorted(slot for slot in _QUALIFIER_PROBES if slot in ENUM_RANGED_QUALIFIERS)
+    assert not enum_ranged, (
+        f"{enum_ranged} became enum-ranged: DAKP resolves these through the fullmap into CURIEs, which "
+        "tablassert>=19.4 rejects with qualifier-vocabulary-violation. Emit permitted vocabulary tokens "
+        "for the slot or drop it from _TABLE_QUALIFIERS."
+    )
+
+
+def test_qualifier_stack_survives_prune_to_class_on_the_pinned_classes() -> None:
+    """Tablassert's real pruner keeps every DAKP qualifier on both pinned association classes.
+
+    Why behavioral rather than a grant-list check: the slots DAKP emits are attached to OTHER
+    association classes by Biolink, so they used to reach the edge only through Tablassert's
+    ``CLASS_FIELD_OVERRIDES`` grants (``disease_context_qualifier`` via 15.1 / SkyeAv/Tablassert#120,
+    the five sparse slots via 19.0 / #188). biolink-model 4.4.5 (Tablassert 19.5.1) then attached
+    ``disease_context_qualifier``, ``anatomical_context_qualifier``, and ``frequency_qualifier`` to
+    the whole disease/phenotype family natively, and Tablassert's own tripwire dropped those grants
+    the day the release landed. What DAKP depends on never changed: ``prune_to_class`` must KEEP the
+    value on the edge instead of nulling it into ``_pruned_by_class``, where it would be rescued as
+    free text onto the inlined supporting study. Running the real pruner holds whether a slot is
+    native or granted, and still fails loudly on a downgrade (tablassert < 15.1 / < 19.0) that loses
+    coverage, which a grant-set assertion no longer distinguishes from an upstream improvement.
+    """
+    import polars as pl
+    from tablassert.lib import PRUNED_COLUMN, prune_to_class
+
+    pinned = {cls.__name__ for table in TABLES for cls in _dakp_association_classes(table)}
+    assert pinned == set(tablassert_configs.OBJECT_CATEGORY_OVERRIDE.values()), (
+        f"pinned classes drifted: {sorted(pinned)}"
+    )
+    for name in sorted(pinned):
+        frame = pl.LazyFrame(
+            {
+                "category": [[f"biolink:{name}"]],
+                **{slot: [value] for slot, value in _QUALIFIER_PROBES.items()},
+            }
+        )
+        row = prune_to_class(frame).collect().row(0, named=True)
+        rescued = row.get(PRUNED_COLUMN) or []
+        for slot, value in _QUALIFIER_PROBES.items():
+            kept = row[slot]
+            # A slot multivalued on every class that declares it comes back wrapped in a list.
+            kept_values = list(kept) if isinstance(kept, list) else [kept]
+            assert kept is not None, (
+                f"{name} nulled {slot}: prune_to_class returned {kept!r} (rescued: {rescued}); the qualifier stack "
+                "requires tablassert>=19.0.0 (sparse stack) / >=15.1 (disease_context_qualifier) or a Biolink model that declares it"
+            )
+            assert value in kept_values, f"{name} rewrote {slot}: expected {value!r} in {kept!r}"
+            assert not any(str(entry).startswith(f"{slot}=") for entry in rescued), (
+                f"{name} rescued {slot} into {PRUNED_COLUMN}: {rescued}"
+            )
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_table_config_annotations_encode_expected_columns(table: str) -> None:
+    annotations = tablassert_configs.table_config(table)["annotations"]
+    by_name = {a["annotation"]: a for a in annotations}
+    assert set(by_name) == set(EXPECTED_ANNOTATIONS[table])
+    for annotation, (column, split_by) in EXPECTED_ANNOTATIONS[table].items():
+        entry = by_name[annotation]
+        assert entry["method"] == "column"
+        # The encoding letter must address the expected assertion column.
+        assert _column_at(table, entry["encoding"]) == column
+        assert entry["encoding"] == tablassert_configs.column_letter(table, column)
+        # Multivalued Biolink slots split the pipe-joined cell into a real JSON array.
+        # ``delimiter`` was the Tablassert <= 8.2.0 spelling and is REJECTED from 8.2.1 on
+        # (extra="forbid"), so assert its absence too -- a regression would fail the build.
+        assert "delimiter" not in entry
+        if split_by is None:
+            assert "split_by" not in entry
+        else:
+            assert entry["split_by"] == split_by
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_table_config_annotation_names_are_unique(table: str) -> None:
+    """No two annotations in a section may share a name -- Tablassert would silently drop one.
+
+    Annotations are applied in declaration order as ``with_columns(pl.col(src).alias(name))``
+    with no duplicate check, so a second entry named ``publications`` OVERWRITES the first and
+    that column's values vanish without a warning. This is why the SPL set and section URLs are
+    unioned into one ``supporting_spl_evidence`` column upstream instead of being declared as
+    two ``publications`` annotations.
+    """
+    names = [entry["annotation"] for entry in tablassert_configs.table_config(table)["annotations"]]
+    assert len(names) == len(set(names)), f"duplicate annotation names in {table}: {names}"
+
+
+def _dakp_association_classes(table: str) -> set[type]:
+    """The association classes Tablassert resolves for every category pair this table allows.
+
+    Derived, not hardcoded, and read from the EMITTED config so it tracks what the build does:
+    an object category pinned by ``statement.category_override`` takes that class, any other
+    falls back to the (subject role, object role) pair lookup, and both are then reconciled
+    against the section predicate, exactly as ``Tcode._ops`` does at build time.
+    """
+    from tablassert.biolink import resolve_association_class
+    from tablassert.lib import derived_edge_category
+
+    predicate = f"biolink:{tablassert_configs._TABLE_SPECS[table][1]}"
+    override = tablassert_configs.table_config(table)["statement"].get("category_override") or {}
+    return {
+        resolve_association_class(
+            f"biolink:{override[obj]}" if obj in override else derived_edge_category(subject, obj),
+            predicate,
+        )
+        for subject in tablassert_configs.SUBJECT_PRIORITIZE
+        for obj in tablassert_configs.OBJECT_PRIORITIZE
+    }
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_annotation_slots_survive_dakp_association_class(table: str) -> None:
+    """Every annotated Biolink slot is one DAKP's association class can actually hold.
+
+    A name that is a slot of SOME association class but not of the one DAKP's edges resolve to
+    passes Tablassert's edge-field allow-list, then gets nulled by ``prune_to_class`` and
+    stringified into the inlined supporting study's StudyResult ``description`` -- exactly the
+    junk drawer this contract exists to keep DAKP out of. ``supporting_documents`` used to land
+    there, and ``number_of_cases`` did until ``category_override`` pinned the classes that
+    declare it; this fails loudly if either (or a newly added annotation) comes back.
+    ``regulatory_approvals`` is declared natively on both pinned classes by biolink-model 4.4.5
+    (Tablassert >= 19.5.1 retired the class-scoped ``CLASS_FIELD_OVERRIDES`` grant Tablassert 18 used
+    to carry it ahead of the model), so this contract now walks the declared-slot path for it. The
+    grant branch stays because Tablassert still grants the two context qualifiers, and a release that
+    dropped either path would prune the field off every edge at build time instead of failing here.
+    """
+    from tablassert.biolink import (
+        ALLOWED_EDGE_FIELDS,
+        CLASS_FIELD_OVERRIDES,
+        KNOWN_PENDING_EDGE_FIELDS,
+        class_fields,
+    )
+
+    for cls in _dakp_association_classes(table):
+        slots = class_fields(cls)
+        granted = CLASS_FIELD_OVERRIDES.get(cls.__name__, frozenset())
+        for name in EXPECTED_ANNOTATIONS[table]:
+            if name not in ALLOWED_EDGE_FIELDS:
+                continue  # deliberately folded into ``supporting_text`` (e.g. ``ner_confidence_score``)
+            if name in KNOWN_PENDING_EDGE_FIELDS:
+                continue  # curated Tablassert pass-through; no association class declares it
+            if name in granted:
+                # class-scoped Tablassert grant (the context qualifiers), ahead of the pinned
+                # model: ``prune_to_class`` keeps granted fields on the class, so assert the grant
+                # itself rather than a declared slot.
+                assert name in CLASS_FIELD_OVERRIDES.get(cls.__name__, frozenset()), (
+                    f"{cls.__name__} lost the {name} grant; prune_to_class would null it off every DAKP edge"
+                )
+                continue
+            assert name in slots, (
+                f"{name} is not a slot of {cls.__name__}; it would be relocated onto the supporting study"
+            )
+
+
+def test_category_override_pins_every_allowed_object_category() -> None:
+    """Every object category DAKP allows is pinned, and pinned to a class that holds its slots.
+
+    A category absent from ``category_override`` falls back to the derived (subject role, object
+    role) pair, ``ChemicalEntityToDiseaseOrPhenotypicFeatureAssociation``, which declares neither
+    ``number_of_cases`` nor ``regulatory_approvals`` and receives no ``CLASS_FIELD_OVERRIDES``
+    grant, so a widened
+    :data:`OBJECT_PRIORITIZE` must widen the override with it or those rows silently lose both
+    slots to ``prune_to_class``.
+    """
+    from tablassert.biolink import (
+        ALLOWED_EDGE_FIELDS,
+        CLASS_FIELD_OVERRIDES,
+        KNOWN_PENDING_EDGE_FIELDS,
+        class_fields,
+        resolve_association_class,
+    )
+
+    assert set(tablassert_configs.OBJECT_CATEGORY_OVERRIDE) == set(OBJECT_PRIORITIZE)
+    for table in TABLES:
+        statement = tablassert_configs.table_config(table)["statement"]
+        assert statement["category_override"] == tablassert_configs.OBJECT_CATEGORY_OVERRIDE
+        predicate = f"biolink:{tablassert_configs._TABLE_SPECS[table][1]}"
+        for pinned in statement["category_override"].values():
+            # The pin only holds if the class also accepts the section predicate: Tablassert
+            # reconciles the two and silently walks up the hierarchy when it does not.
+            cls = resolve_association_class(f"biolink:{pinned}", predicate)
+            assert cls.__name__ == pinned, (
+                f"{pinned} does not accept {predicate}; rows demote to {cls.__name__}"
+            )
+            for name in EXPECTED_ANNOTATIONS[table]:
+                if name not in ALLOWED_EDGE_FIELDS:
+                    continue  # deliberately folded into ``supporting_text`` (e.g. ``ner_confidence_score``)
+                if name in KNOWN_PENDING_EDGE_FIELDS:
+                    continue  # curated Tablassert pass-through (``supporting_case_ids``); no class declares it
+                if name in CLASS_FIELD_OVERRIDES.get(pinned, frozenset()):
+                    continue  # class-scoped Tablassert grant (the context qualifiers); ahead of the pinned model
+                assert name in class_fields(cls), f"{name} is not a slot of {pinned}"
+
+
+# --- category guard (hard allow-lists via Tablassert ``avoid``) -------------------
+
+# Canonical wacky categories present in the production fullmap that must never resolve into a
+# drug↔disease graph. None is in either side's allow-list, so all must be on every avoid list.
+WACKY_CATEGORIES = (
+    "OrganismTaxon",
+    "Publication",
+    "Gene",
+    "Protein",
+    "CellLine",
+    "GeographicLocation",
+    "NamedThing",
+)
+
+
+def test_category_avoid_list_is_sorted_complement_of_allowed() -> None:
+    from tablassert.biolink import Categories
+
+    universe = {category.value for category in Categories}
+    for allowed in (SUBJECT_PRIORITIZE, OBJECT_PRIORITIZE):
+        avoid = category_avoid_list(allowed)
+        assert avoid == sorted(avoid)  # deterministic YAML emission
+        assert set(avoid).isdisjoint(allowed)
+        # Exact partition of the ENUM universe. Since Tablassert 18.1.0 the enum names every
+        # category the production fullmap emits (biolink mixins like ``GenomicEntity`` are
+        # first-class via ``CATEGORY_OVERRIDES``), so the partition IS the allow-list guarantee.
+        assert set(avoid) | set(allowed) == universe
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_table_config_category_guards(table: str) -> None:
+    statement = tablassert_configs.table_config(table)["statement"]
+    for node, allowed in (
+        (statement["subject"], SUBJECT_PRIORITIZE),
+        (statement["object"], OBJECT_PRIORITIZE),
+    ):
+        assert node["avoid"] == category_avoid_list(allowed)
+        for wacky in WACKY_CATEGORIES:
+            assert wacky in node["avoid"]
+    # Cross-side exclusion: drug-side categories are avoided on the disease side and vice versa.
+    for drug in SUBJECT_PRIORITIZE:
+        assert drug in statement["object"]["avoid"]
+    for disease in OBJECT_PRIORITIZE:
+        assert disease in statement["subject"]["avoid"]
+
+
+def test_category_avoid_list_unknown_allowed_category_raises() -> None:
+    with pytest.raises(ValueError, match="not in the installed Tablassert Biolink model"):
+        category_avoid_list(["Drug", "DefinitelyNotACategory"])
+
+
+def test_genomic_entity_object_candidates_never_survive_resolution() -> None:
+    # Resolver-level regression test for the reported bug, using the two candidates the production
+    # fullmap (2026jul22) actually holds for the FAERS indication wording behind the 17 v1.11.2
+    # ``applied_to_treat`` edges that shipped WITHOUT ``number_of_cases``. Both are off the object
+    # allow-list; since Tablassert 18.1.0 the ``Categories`` enum names ``GenomicEntity`` (a Biolink
+    # mixin admitted via ``CATEGORY_OVERRIDES``), so the generated ``avoid`` complement denies BOTH
+    # candidates and the mention resolves to nothing -- no edge, no bare ``biolink:Association``
+    # fallback, no ``prune_to_class`` relocation of ``number_of_cases`` into a study description.
+    # Runs Tablassert's own ``filter_and_rank``, the candidate filter ``build-kg`` applies before
+    # ranking.
+    import polars as pl
+    from tablassert.biolink import Categories
+    from tablassert.fullmap import filter_and_rank
+
+    raw = pl.DataFrame(
+        {
+            "term": ["gene mutation", "gene mutation", "headache"],
+            "CURIE": ["UMLS:C0596611", "UMLS:C0678941", "HP:0002315"],
+            "PREFERRED_NAME": ["Gene Mutation", "Gene Mutant", "headache"],
+            "CATEGORY_NAME": ["BiologicalProcess", "GenomicEntity", "PhenotypicFeature"],
+            "TAXON_ID": [0, 0, 0],
+            "SOURCE_NAME": ["biologicalprocess.txt", "umls.txt", "umls.txt"],
+            "SOURCE_VERSION": ["2026jul22", "2026jul22", "2026jul22"],
+        }
+    )
+    terms = pl.DataFrame({"term": ["gene mutation", "headache"], "nlp_level": [1, 1]})
+    # ``filter_and_rank`` normalizes either spelling (``_category_values``): production hands it
+    # the plain strings the YAML config deserializes to, a direct caller the enum members.
+    avoid = [Categories(name) for name in category_avoid_list(OBJECT_PRIORITIZE)]
+    prioritize = [Categories(name) for name in OBJECT_PRIORITIZE]
+    assert Categories("GenomicEntity") in avoid  # the structural fix: the mixin is nameable
+
+    filtered = filter_and_rank(raw, terms, None, prioritize, avoid, False)
+    assert filtered.filter(pl.col("term") == "gene mutation").height == 0
+    assert filtered.filter(pl.col("term") == "headache")["CURIE"].to_list() == ["HP:0002315"]
+
+
+def test_genomic_entity_is_inside_the_categories_enum() -> None:
+    # Inverse of the retired 18.0.0-era tripwire: Tablassert 18.1.0's ``Categories`` enum admits the
+    # Biolink mixins the production fullmap emits (``GenomicEntity`` via ``CATEGORY_OVERRIDES``), so
+    # the generated ``avoid`` complements deny it structurally and no CURIE-level stopgap is needed.
+    # If a future Tablassert release drops mixin coverage this fails ON PURPOSE: the allow-list
+    # guarantee :func:`category_avoid_list` documents would have a hole again.
+    categories = tablassert_configs._biolink_categories()
+    assert "GenomicEntity" in categories
+    assert "GenomicEntity" in category_avoid_list(OBJECT_PRIORITIZE)
+    assert "GenomicEntity" in category_avoid_list(SUBJECT_PRIORITIZE)
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_table_yaml_validates_against_tablassert_section_model(table: str) -> None:
+    # The emitted config must load cleanly into Tablassert's own Section model — this proves every
+    # avoid entry is a real Categories member and every qualifier a real Qualifiers member of the
+    # INSTALLED tablassert (unknown names would raise a TablassertValidationError here).
+    from tablassert.models import Section
+
+    section = Section.model_validate(
+        yaml.safe_load(tablassert_configs.table_yaml(table))["template"]
+    )
+    # Qualifier entries survive model validation as Qualifier objects, in emission order.
+    model_qualifiers = section.statement.qualifiers or []
+    assert [str(qualifier.qualifier) for qualifier in model_qualifiers] == list(
+        EXPECTED_QUALIFIERS[table]
+    )
+
+
+def test_committed_table_configs_match_generator_output() -> None:
+    # The committed ``tables/*.yaml`` must byte-equal the generator output (regenerate, never
+    # hand-diverge). The generator emits the explicit ``override.sources`` template
+    # unconditionally (the #116 slot is guaranteed by the >= 14.0.0 floor) and derives the
+    # ``avoid`` lists from the
+    # installed Tablassert's Biolink enum, so any Biolink churn (e.g. 13.0's
+    # ``AffinityMeasurement`` -> ``ProteinLigandAssayResult`` rename) requires a regeneration.
+    repo_tables = Path(__file__).resolve().parents[2] / "tables"
+    for table in TABLES:
+        basename = tablassert_configs._TABLE_SPECS[table][0]
+        assert (repo_tables / f"{basename}.yaml").read_text(
+            encoding="utf-8"
+        ) == tablassert_configs.table_yaml(table)
+    assert (repo_tables / "graph.yaml").read_text(
+        encoding="utf-8"
+    ) == tablassert_configs.graph_yaml()
+
+
+def test_off_label_subject_denylist_reindex() -> None:
+    # Methanol poison-exposure reports (FAERS ingredients "METHANOL" and FAERS's own misspelling
+    # "METHYL ALCHOL") must never become applied_to_treat edges — the chemical is the exposure,
+    # not a treatment. "GENERIC DRUG"/"GENERIC DRUGS" are FAERS verbatim placeholders naming no
+    # real substance, and "PLACEBO" is the control arm, which by definition treats nothing.
+    # Emitted as ANDed ``source.reindex`` ``ne`` filters on the subject_text column (A) so
+    # Tablassert drops the rows at load time, before entity resolution. Tablassert's ``ne`` is an
+    # exact case-SENSITIVE compare, so every entry ships one filter per casing rendering (upper /
+    # lower / title / sentence, deduplicated) — the denylist is case-insensitive in effect. Also
+    # exercises the Reindex model through Section validation (comparator must be a str for ne).
+    from tablassert.models import Section
+
+    table = "faers_applied_to_treat_assertions"
+    section = Section.model_validate(
+        yaml.safe_load(tablassert_configs.table_yaml(table))["template"]
+    )
+    filters = [
+        (entry.column, str(entry.comparison), str(entry.comparator))
+        for entry in section.source.reindex or []
+        if entry.column == "A"
+    ]
+    # No stray columns: the FAERS table filters exactly subject (A) and object (F).
+    assert {entry.column for entry in section.source.reindex or []} == {"A", "F"}
+    expected = [
+        "METHYL ALCHOL",
+        "methyl alchol",
+        "Methyl Alchol",
+        "Methyl alchol",
+        "METHANOL",
+        "methanol",
+        "Methanol",  # single word: title == sentence case, deduplicated to one filter
+        "GENERIC DRUG",
+        "generic drug",
+        "Generic Drug",
+        "Generic drug",
+        "GENERIC DRUGS",
+        "generic drugs",
+        "Generic Drugs",
+        "Generic drugs",
+        "PLACEBO",
+        "placebo",
+        "Placebo",
+        "*PLACEBO",
+        "*placebo",  # leading '*': capitalize == lower (first char is the '*'), so lower dedups it
+        "*Placebo",
+    ]
+    assert filters == [("A", "ne", comparator) for comparator in expected]
+
+    # Every denylisted name is covered in all four renderings a FAERS reporter may have typed:
+    # casefolded, the emitted comparators are exactly the denylist (no entry left case-sensitive).
+    subject_filters = [comparator for _column, _comparison, comparator in filters]
+    denylisted = tablassert_configs._TABLE_SUBJECT_DENYLIST[table]
+    assert {comparator.casefold() for comparator in subject_filters} == {
+        name.casefold() for name in denylisted
+    }
+    for name in denylisted:
+        renderings = {
+            comparator for comparator in subject_filters if comparator.casefold() == name.casefold()
+        }
+        assert renderings == {name.upper(), name.lower(), name.title(), name.capitalize()}
+
+    # The subject denylist is off-label-only: the on-label and contraindication tables carry no
+    # subject_text filters (the object denylist below covers their object_text column instead).
+    for other in TABLES:
+        if other == table:
+            continue
+        other_section = Section.model_validate(
+            yaml.safe_load(tablassert_configs.table_yaml(other))["template"]
+        )
+        assert all(entry.column != "A" for entry in other_section.source.reindex or [])
+
+
+def test_object_denylist_reindex() -> None:
+    # Two derivation groups, both enumerated against the deployed 1.11.2 KG and denied on the
+    # object_text column of ALL THREE tables:
+    # (1) "Hypersensitivity" is DailyMed contraindication-section boilerplate (the #1 entry on
+    #     nearly every label — a reaction the drug CAUSES, not a condition it treats) and an
+    #     adverse-event word in FAERS indications, so every wording resolving into the generic
+    #     allergy/hypersensitivity CURIE family is denied.
+    # (2) Non-disease measurement/procedure/outcome meta-terms ("blood pressure" -> NCIT:C54707
+    #     Blood Pressure Finding, "adverse event"/"adverse reaction"/"side effect(s)" -> the
+    #     UMLS:C0877248/C0879626/C0559546 reporting meta-terms, "disease progression" ->
+    #     UMLS:C0242656) are not conditions at all; "heart rate", "laboratory test(s)",
+    #     "treatment failure" and "condition aggravated" are denied preventively.
+    # ``ne`` is an exact whole-cell compare, so disease-naming relatives survive: specific
+    # drug-allergy findings ("allergy to benzocaine" -> UMLS:C0570648 etc.) resolve outside the
+    # family, "LEUKOCYTOCLASTIC VASCULITIS" also resolves to its own distinct CURIE MONDO:0001290,
+    # and qualified findings ("high blood pressure" -> MONDO:0005044, "heart rate increased" ->
+    # HP:0001649) are real diseases. Exercises the Reindex model through Section validation like
+    # the subject-denylist test above.
+    from tablassert.models import Section
+
+    for table in TABLES:
+        section = Section.model_validate(
+            yaml.safe_load(tablassert_configs.table_yaml(table))["template"]
+        )
+        # No stray columns: every table filters its object column (F); only the FAERS table
+        # additionally filters the subject column (A) via _TABLE_SUBJECT_DENYLIST.
+        expected_columns = {"A", "F"} if table == "faers_applied_to_treat_assertions" else {"F"}
+        assert {entry.column for entry in section.source.reindex or []} == expected_columns
+        object_filters = [
+            str(entry.comparator) for entry in section.source.reindex or [] if entry.column == "F"
+        ]
+        expected = [
+            variant
+            for name in tablassert_configs._TABLE_OBJECT_DENYLIST
+            for variant in tablassert_configs._casing_variants(name)
+        ]
+        assert object_filters == expected
+        # Every denylisted mention is covered in all its emitted renderings — casefolded, the
+        # emitted comparators are exactly the denylist (no entry left case-sensitive).
+        assert {comparator.casefold() for comparator in object_filters} == {
+            name.casefold() for name in tablassert_configs._TABLE_OBJECT_DENYLIST
+        }
+        for name in tablassert_configs._TABLE_OBJECT_DENYLIST:
+            renderings = {
+                comparator
+                for comparator in object_filters
+                if comparator.casefold() == name.casefold()
+            }
+            assert renderings == {name.upper(), name.lower(), name.title(), name.capitalize()}
+
+    # Group (1): the known GENERIC family wordings are all present (spot-check the boundary entries).
+    denied = {name.casefold() for name in tablassert_configs._TABLE_OBJECT_DENYLIST}
+    for wording in (
+        "hypersensitivity",
+        "drug hypersensitivity",
+        "allergic reaction",
+        "allergy",
+        "sensitivity",
+    ):
+        assert wording in denied
+    # Group (2): the non-disease meta-terms the user reported, plus their morphological relatives
+    # (singular/plural, the canonical "adverse drug reaction" parent) and the reporter misspelling.
+    for wording in (
+        "blood pressure",
+        "heart rate",
+        "laboratory test",
+        "laboratory tests",
+        "adverse event",
+        "adverse events",
+        "adverse effect",
+        "adverse effects",
+        "adverse reaction",
+        "adverse reactions",
+        "adverse drug reaction",
+        "adverse drug reactions",
+        "side effect",
+        "side effects",
+        "disease progression",
+        "treatment failure",
+        "condition aggravated",
+        "condition aggrivated",
+    ):
+        assert wording in denied
+    # Group (3): the outcome/exposure/event placeholders and mapping artifacts from the 1.11.2
+    # audit — procedure wordings, exposure events, generic outcome placeholders, a lab-test
+    # result, a trial-outcome meta-term, a behavior, and a test procedure.
+    for wording in (
+        "anaesthesia",
+        "anesthesia",
+        "overdose",
+        "drug overdose",
+        "drug overdoses",
+        "intentional overdose",
+        "poisoning",
+        "injury",
+        "traumatic injury",
+        "death",
+        "sudden death",
+        "hiv test positive",
+        "unevaluable event",
+        "substance use",
+        "glucose tolerance test",
+    ):
+        assert wording in denied
+    # THE critical guard: "depression" must NEVER be wording-denied — fullmap ties it to BOTH
+    # UMLS:C0812393 (junk phrase concept) and MONDO:0002050 (depressive disorder, a real disease
+    # with 622 edges); the junk CURIE is dropped via _OBJECT_EXCLUDE_REGEX instead.
+    assert "depression" not in denied
+    # Drug-specific findings are deliberately kept: "hypersensitivity to <drug>" names a specific
+    # pharmacogenomic phenotype (UMLS:C5768819 etc.), and "leukocytoclastic vasculitis" also
+    # resolves to its own distinct CURIE MONDO:0001290.
+    assert "hypersensitivity to abacavir" not in denied
+    assert "leukocytoclastic vasculitis" not in denied
+    # Group (2) kept relatives: qualified findings that name REAL diseases/phenotypes must survive
+    # the exact whole-cell compare — only the bare meta-terms are denied. These are all present in
+    # the 1.11.2 KG resolving to real concepts (MONDO:0005044 hypertensive disorder, HP:0001649
+    # tachycardia, HP:0001662 bradycardia, MONDO:0007263 cardiac rhythm disease, HP:0002910
+    # elevated hepatic transaminases, UMLS:C2721654 AEFI, UMLS:C4087225 immune-mediated adverse
+    # reaction). ("hiv test positive" and "glucose tolerance test" were kept at group (2) time
+    # but are denied as group (3) per the 1.11.2 audit.)
+    for wording in (
+        "high blood pressure",
+        "elevated blood pressure",
+        "blood pressure increased",
+        "blood pressure decreased",
+        "heart rate increased",
+        "heart rate decreased",
+        "heart rate abnormal",
+        "rapid heart rate",
+        "fetal heart rate",
+        "abnormal liver function tests",
+        "adverse event following immunisation",
+        "immune-mediated adverse reaction",
+    ):
+        assert wording not in denied
+    # Group (3) kept relatives — REAL conditions and qualified forms the exact compare preserves:
+    # "sensory loss" is the real phenotype NCIT:C182234 also (wrongly) carries; "substance abuse"
+    # is a DSM disorder (only the behavior wording "substance use" is denied); "wound" a
+    # treatable traumatic condition; and the qualified poisonings/injuries are specific diseases.
+    for wording in (
+        "sensory loss",
+        "substance abuse",
+        "substance use disorder",
+        "wound",
+        "wounds and injuries",
+        "methanol poisoning",
+        "lead poisoning",
+        "spinal cord injury",
+        "brain injury",
+        "sudden cardiac death",
+        "accidental overdose",
+    ):
+        assert wording not in denied
+
+
+def test_object_exclude_regex_on_all_tables() -> None:
+    # CURIE-level object exclusions: UMLS:C0812393 ("Cancer patients and suicide and depression")
+    # is reachable almost only via "depression", which fullmap ties to the REAL MONDO:0002050 —
+    # a wording deny would kill the disease's 622 edges, so the junk CURIE is dropped at
+    # resolution via the object NodeEncoding's exclude_regex (Tablassert >= 16). Exercises the
+    # Section model's polars-compatibility validator on each pattern.
+    from tablassert.models import Section
+
+    expected = [r"^UMLS:C0812393$"]
+    assert list(tablassert_configs._OBJECT_EXCLUDE_REGEX) == expected
+    for table in TABLES:
+        section = Section.model_validate(
+            yaml.safe_load(tablassert_configs.table_yaml(table))["template"]
+        )
+        assert list(section.statement.object.exclude_regex or []) == expected
+        # The subject encoding carries only the HCPCS admin-code guard (US-002, v1.13.0 audit:
+        # UMLS:C1314429 tied to the same "OXALIPLATIN" wording as the real drug, categorized
+        # biolink:Drug so the allow-list passed it, 197 leaked subject edges).
+        assert list(section.statement.subject.exclude_regex or []) == list(
+            tablassert_configs._SUBJECT_EXCLUDE_REGEX
+        )
+
+
+def test_subject_exclude_regex_on_all_tables() -> None:
+    # CURIE-level subject exclusions: HCPCS administration billing concepts categorized
+    # biolink:Drug -- the subject category allow-list cannot drop them, and the fullmap ties
+    # each to the SAME wording as the real drug, so the junk CURIE is dropped at resolution
+    # via the subject NodeEncoding's exclude_regex (Tablassert >= 16). UMLS:C1314429
+    # ("INJECTION, OXALIPLATIN, 0.5 MG ADMINISTERED", 197 v1.13.0 subject edges); UMLS:C0812740
+    # ("INJECTION, PIPERACILLIN SODIUM/TAZOBACTAM SODIUM, ... ADMINISTERED", one unbacked
+    # approved_for_condition edge in the v1.13.1 build). Exercises the Section model's
+    # polars-compatibility validator on each pattern.
+    from tablassert.models import Section
+
+    expected = [r"^UMLS:C1314429$", r"^UMLS:C0812740$"]
+    assert list(tablassert_configs._SUBJECT_EXCLUDE_REGEX) == expected
+    for table in TABLES:
+        section = Section.model_validate(
+            yaml.safe_load(tablassert_configs.table_yaml(table))["template"]
+        )
+        assert list(section.statement.subject.exclude_regex or []) == expected
+
+
+# --- graph config structure -------------------------------------------------------
+
+
+def test_graph_config_structure() -> None:
+    graph = tablassert_configs.graph_config()
+    assert graph["name"] == "DRUG_APPROVALS_KP"
+    assert isinstance(graph["version"], str)
+    assert graph["version"]
+    assert (
+        graph["fullmap"] == ".fullmap"
+    )  # default placeholder; generate() writes the real ctx fullmap path
+    assert graph["tables"] == [
+        "tables/approved_treats.yaml",
+        "tables/faers_applied_to_treat.yaml",
+        "tables/contraindications.yaml",
+    ]
+    # Tablassert >= 11 rejects the legacy top-level RIG keys; every RIG fact lives under `rig:`.
+    for legacy_key in ("description", "infores", "contributions", "ui_explanation"):
+        assert legacy_key not in graph
+    # Tablassert >= 16.0 `uuid_fields` (#122): edge identity is the semantic statement only —
+    # the resolved triple plus the nullable `disease_context_qualifier` (unique qualifier values
+    # are distinct statements and must never merge). The pre-resolution mentions
+    # (original_subject/original_object) are NOT identity: distinct source mentions resolving to
+    # one canonical CURIE are ONE edge, merged downstream by `uuid_on_collision: merge`
+    # (Tablassert >= 16.2) instead of aborting the build with `uuid-fields-not-a-key`. Evidence
+    # fields (publications, regulatory_approvals, number_of_cases) are NOT identity either:
+    # rows agreeing on the identity fields are merged upstream by the assertion shapers into one
+    # edge whose evidence is the sorted, deduplicated union.
+    # A declared field absent from an edge record contributes nothing to the hash, so the
+    # qualifier (only some contraindication edges carry one) is safe to declare graph-wide.
+    assert graph["uuid_fields"] == tablassert_configs.UUID_FIELDS
+    # The identity contract itself, pinned literally so a silent edit of the constant fails here.
+    assert graph["uuid_fields"] == [
+        "subject",
+        "predicate",
+        "object",
+        "disease_context_qualifier",
+        "anatomical_context_qualifier",
+        "sex_qualifier",
+        "population_context_qualifier",
+        "frequency_qualifier",
+        "temporal_context_qualifier",
+        "species_context_qualifier",
+    ]
+    # The id namespace is pinned explicitly so a future infores rename can never re-mint every
+    # edge id, and collisions merge instead of aborting.
+    assert graph["uuid_domain"] == tablassert_configs.UUID_DOMAIN == INFORES_DAKP
+    assert graph["uuid_on_collision"] == "merge"
+    rig = graph["rig"]
+    assert rig["source_info"]["infores_id"] == INFORES_DAKP
+    assert (
+        rig["source_info"]["name"] == "Drug Approvals Knowledge Provider (DAKP)"
+    )  # full title, not the bare acronym
+    assert rig["source_info"]["description"]  # the former top-level graph description moved here
+    assert any(
+        "https://pmc.ncbi.nlm.nih.gov/articles/PMC11601480/" in citation
+        for citation in rig["source_info"]["citations"]
+    )
+    assert rig["source_info"]["data_versioning_and_releases"]
+    assert rig["source_info"]["terms_of_use_info"]
+    assert all("https://" in location for location in rig["source_info"]["data_access_locations"])
+    # Supporting data sources: exactly the two edge-backed upstreams (no infores:medi — this
+    # rebuild text-mines contraindications from DailyMed SPL; no Drugs@FDA — it backs no edge).
+    supporting = rig["supporting_data_source_info"]
+    assert [entry["infores_id"] for entry in supporting] == [
+        "infores:dailymed",
+        "infores:faers",
+        "infores:ema",
+        "infores:canada-vigilance",
+    ]
+    # Each entry's file location is the URL constant the acquisition layer actually downloads.
+    assert (
+        supporting[0]["relevant_files"][0]["location"]
+        == tablassert_configs.dailymed_source.FULL_RELEASE_INDEX_URL
+    )
+    assert (
+        supporting[1]["relevant_files"][0]["location"]
+        == tablassert_configs.faers_source.FDA_FAERS_INDEX_URL
+    )
+    assert all(entry["terms_of_use_info"]["terms_of_use_description"] for entry in supporting)
+    assert rig["ingest_info"]["utility"]
+    assert rig["ingest_info"]["scope"]
+    assert rig["provenance_info"]["contributions"]
+    # The generated-artifact location is the Hugging Face dataset release for THIS version:
+    # pinned literally so a silent edit of the deployment pattern (dataset or layout) fails here.
+    assert rig["artifact_base_url"] == tablassert_configs.RIG_ARTIFACT_BASE_URL
+    __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION  # explicit default, not a tag
+
+    assert (
+        rig["artifact_base_url"]
+        == f"https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/main/{__version__}"
+    )
+    assert rig["artifact_base_path"] == tablassert_configs.RIG_ARTIFACT_BASE_PATH
+
+
+def test_graph_config_validates_against_installed_tablassert() -> None:
+    """The generated graph.yaml passes the INSTALLED Tablassert's ``Graph`` model (rig included)."""
+    from tablassert.models import Graph
+
+    graph = Graph.model_validate(yaml.safe_load(tablassert_configs.graph_yaml()))
+    assert graph.rig.source_info.infores_id == INFORES_DAKP
+    # uuid_fields canonicalize onto their allow-listed spellings and, being declared, move the
+    # UUID namespace off the historic TABLASSERT constant onto the pinned uuid_domain (the DAKP
+    # infores).
+    assert graph.uuid_fields == tablassert_configs.UUID_FIELDS
+    assert graph.uuid_namespace == INFORES_DAKP
+    assert graph.uuid_domain == INFORES_DAKP
+    assert graph.uuid_on_collision == "merge"
+
+
+def test_rig_section_validates_directly_against_tablassert_rig_config() -> None:
+    """The ``rig:`` section passes the installed Tablassert's ``RIGConfig`` on its own.
+
+    Guards against Tablassert schema drift: the Graph-level ``model_validate`` test validates the
+    rig only as one nested field, so a RIG-schema change that renames or drops a source-info field
+    (citations, versioning) could hide behind ``Graph`` defaults. Validating the section DIRECTLY
+    pins the exact boundary Tablassert enforces when composing the RIG, and the content asserts
+    below pin the enriched human-authored facts — a schema rename must fail loudly here, not
+    silently shrink the generated RIG.
+    """
+    from tablassert.models import RIGConfig
+
+    rig = RIGConfig.model_validate(tablassert_configs.graph_config()["rig"])
+    source = rig.source_info
+    # Supporting upstreams validate as real RIGSupportingDataSourceInfo entries (infores CURIE +
+    # relevant-file URL checks included) and stay exactly the two edge-backed sources.
+    assert rig.supporting_data_source_info is not None
+    assert [entry.infores_id for entry in rig.supporting_data_source_info] == [
+        "infores:dailymed",
+        "infores:faers",
+        "infores:ema",
+        "infores:canada-vigilance",
+    ]
+    assert source.name == "Drug Approvals Knowledge Provider (DAKP)"
+    assert source.citations is not None
+    assert any(
+        "https://pmc.ncbi.nlm.nih.gov/articles/PMC11601480/" in citation
+        for citation in source.citations
+    )
+    assert source.data_versioning_and_releases
+    # Kept fields must stay untouched: terms of use, access locations, mechanisms, formats, status.
+    assert source.terms_of_use_info.terms_of_use_url == "https://www.nlm.nih.gov/terms.html"
+    assert source.data_provision_mechanisms == ["file_download"]
+    assert source.data_formats == ["kgx"]
+    assert source.source_status == "maintained_regular_updates"
+
+
+def test_tablassert_rig_config_rejects_unknown_keys_and_bad_source_status() -> None:
+    """The installed ``RIGConfig`` schema really BITES: unknown keys and bad enums are rejected.
+
+    Guards the fail-loudly contract: every positive test above only proves the rig section is
+    ACCEPTED. If a future Tablassert relaxed to permissive extras (or a free-form source
+    status), those tests would keep passing while DINGO's RIG expectations silently stopped
+    being enforced. Mutating DEEP COPIES of the generated rig section (never ``_rig_config``
+    itself) must therefore raise: an unknown ``source_info`` key AND an out-of-enum
+    ``source_status`` each fail validation with an error naming the offending field.
+    """
+    from pydantic import ValidationError
+    from tablassert.models import RIGConfig
+
+    rig = tablassert_configs.graph_config()["rig"]
+
+    with_unknown_key = copy.deepcopy(rig)
+    with_unknown_key["source_info"]["not_a_rig_field"] = "surprise"
+    with pytest.raises(ValidationError) as extra_exc:
+        RIGConfig.model_validate(with_unknown_key)
+    assert "source_info.not_a_rig_field" in str(extra_exc.value)
+    assert "Extra inputs are not permitted" in str(extra_exc.value)
+
+    with_bad_status = copy.deepcopy(rig)
+    with_bad_status["source_info"]["source_status"] = "maintained_never"
+    with pytest.raises(ValidationError) as status_exc:
+        RIGConfig.model_validate(with_bad_status)
+    assert "source_info.source_status" in str(status_exc.value)
+
+    # The generator itself is untouched: the pristine section still validates.
+    assert RIGConfig.model_validate(rig).source_info.source_status == "maintained_regular_updates"
+
+
+def test_rig_supporting_data_source_info_lists_only_edge_backed_upstreams() -> None:
+    """``supporting_data_source_info`` carries exactly the two edge-backed upstreams — never MEDI.
+
+    The legacy pipeline's translator-ingests RIG also listed ``infores:medi``, but this rebuild
+    has no MEDI source module (contraindications are text-mined from DailyMed SPL), so a MEDI
+    entry would be fabricated provenance while a dropped entry would under-attribute the edges.
+    Pinning the exact id set through BOTH the raw config and the installed ``Graph`` model (i.e.
+    the committed YAML shape) makes either drift fail loudly.
+    """
+    from tablassert.models import Graph
+
+    ids = [
+        entry["infores_id"]
+        for entry in tablassert_configs.graph_config()["rig"]["supporting_data_source_info"]
+    ]
+    assert ids == ["infores:dailymed", "infores:faers", "infores:ema", "infores:canada-vigilance"]
+    assert (
+        "infores:medi" not in ids
+    )  # legacy-pipeline source; no MEDI module backs it in this rebuild
+
+    graph = Graph.model_validate(yaml.safe_load(tablassert_configs.graph_yaml()))
+    supporting = graph.rig.supporting_data_source_info
+    assert supporting is not None
+    assert [entry.infores_id for entry in supporting] == ids
+
+
+def test_rig_ingest_info_enrichment() -> None:
+    """``ingest_info`` pins the explicit category, included/filtered content, and considerations.
+
+    DAKP CREATES knowledge (it builds assertion tables) rather than passing a source through, so
+    ``translator_knowledge_creator`` must be EXPLICIT, not merely the model default. The included
+    content pins ALL FOUR mined section kinds; the filtered content pins the approved-treats-only
+    approval gate and the section-kind filter; the future considerations pin the disease-only
+    qualifier policy and the approval-status coercion. The upstream RIG's legacy KGX output files must stay rejected — no
+    table section sources them, so Tablassert's RIG audit would fail the build. Asserting through
+    BOTH the raw config and the installed ``RIGConfig`` model makes any drift fail loudly.
+    """
+    from tablassert.models import RIGConfig
+
+    ingest = tablassert_configs.graph_config()["rig"]["ingest_info"]
+    assert ingest["ingest_categories"] == ["translator_knowledge_creator"]
+    # Kept grounded fields stay untouched, and the upstream RIG's legacy KGX-file relevant_files
+    # never appear (pipeline OUTPUT artifacts, not inputs).
+    assert ingest["utility"]
+    assert ingest["scope"]
+    assert all(
+        not entry["file_name"].startswith("drug_approvals_kg") for entry in ingest["relevant_files"]
+    )
+    # Included content keeps the DailyMed entry (all FOUR mined section kinds), the FAERS
+    # entry, the EMA medicines entry, and one entry per remaining edge-backed upstream.
+    included = ingest["included_content"]
+    assert [entry["file_name"] for entry in included] == [
+        "DailyMed SPL sections",
+        "FAERS quarterly ASCII zips",
+        "EMA medicines report (xlsx)",
+        "EMA documents report (json)",
+        "Canada Vigilance data extract (zip)",
+    ]
+    assert included[0]["included_records"] == (
+        "indications_and_usage (LOINC 34067-9), contraindications (LOINC 34070-3), boxed warnings (LOINC 34066-1), and "
+        "warnings/precautions (LOINC 43685-7, legacy 34071-1/42232-9) sections; FDA application numbers are carried "
+        "as provenance where available"
+    )
+    assert included[0]["fields_used"] == (
+        "indications_and_usage, contraindications, boxed-warning, and warnings/precautions section text, SPL set identifiers, FDA application numbers"
+    )
+    assert included[1]["included_records"] == "drug/indication case pairs; case counts"
+    # Both scope filters pinned: the approval gate is approved-treats-only (observed-use and
+    # text-mined contraindications are not approval-gated), and only the four mined section
+    # kinds survive the section filter.
+    filtered = ingest["filtered_content"]
+    assert [entry["file_name"] for entry in filtered] == [
+        "DailyMed SPL indication sections",
+        "DailyMed SPL sections",
+    ]
+    assert (
+        filtered[0]["filtered_records"]
+        == "indication sections on SPL sets whose NDA lacks a DailyMed SPL approval"
+    )
+    assert filtered[0]["rationale"] == (
+        "approved-treats assertions require an FDA approval backing the indication; observed-use and "
+        "text-mined contraindication assertions are deliberately not approval-gated"
+    )
+    assert filtered[1]["filtered_records"] == (
+        "all SPL sections other than indications_and_usage (LOINC 34067-9), contraindications (LOINC 34070-3), "
+        "boxed warnings (LOINC 34066-1), and warnings/precautions (LOINC 43685-7, legacy 34071-1/42232-9)"
+    )
+    assert (
+        filtered[1]["rationale"]
+        == "the remaining sections carry no treatment or contraindication evidence"
+    )
+    # Considerations carry ContentCategories members; the first defers the medication-context
+    # interaction assertion (disease_context_qualifier is intentionally disease-only).
+    considerations = ingest["future_considerations"]
+    assert considerations[0]["category"] == "edge_content"
+    assert "disease_context_qualifier" in considerations[0]["consideration"]
+
+    # The same facts must survive the installed Tablassert model (enum members coerce to their
+    # plain string values at validation time).
+    info = RIGConfig.model_validate(tablassert_configs.graph_config()["rig"]).ingest_info
+    assert info.ingest_categories == ["translator_knowledge_creator"]
+    assert info.included_content is not None
+    assert [entry.file_name for entry in info.included_content] == [
+        "DailyMed SPL sections",
+        "FAERS quarterly ASCII zips",
+        "EMA medicines report (xlsx)",
+        "EMA documents report (json)",
+        "Canada Vigilance data extract (zip)",
+    ]
+    assert info.filtered_content is not None
+    assert [entry.file_name for entry in info.filtered_content] == [
+        "DailyMed SPL indication sections",
+        "DailyMed SPL sections",
+    ]
+    assert info.future_considerations is not None
+    assert info.future_considerations[0].category == "edge_content"
+
+
+def test_rig_provenance_info_credits_named_contributors_and_artifacts() -> None:
+    """``provenance_info`` keeps the DINGO-reviewed contributors verbatim and adds Skye Lane Goetz.
+
+    The three upstream contributor statements must survive VERBATIM (the upstream RIG passed
+    DINGO review with them), and Skye Lane Goetz is credited because she authored the upstream
+    Tablassert feature this pipeline's provenance override requires (SkyeAv/Tablassert#104)
+    and co-authored the cited preprint (PMC11601480). Contributions carry PEOPLE only, matching
+    the upstream RIG format; pipeline/tooling attributions live in ``artifacts``.
+    ``RIGProvenanceInfo`` has ONLY ``contributions`` + ``artifacts``, so
+    validating through the installed model also proves no invented keys slip in.
+    """
+    from tablassert.models import RIGConfig
+
+    provenance = tablassert_configs.graph_config()["rig"]["provenance_info"]
+    contributions = provenance["contributions"]
+    assert contributions == [
+        "Gwenlyn Glusman - code author, domain expertise, data modeling",
+        "Matthew Brush - data modeling",
+        "Sierra Moxon - code, data modeling",
+        "Skye Lane Goetz - code author, pipeline engineering, Tablassert integration",
+    ]
+    assert all("http" not in entry for entry in contributions)  # attributions live in artifacts
+    assert (
+        "Skye Lane Goetz - code author, pipeline engineering, Tablassert integration"
+        in contributions
+    )
+    assert provenance["artifacts"] == [
+        "DAKP pipeline repository: https://github.com/glusman-team/dakp",
+        "Published KGX releases (Hugging Face dataset): https://huggingface.co/datasets/SkyeAv/drug-approvals-kp",
+        (
+            "Upstream DINGO-reviewed DAKP RIG: https://github.com/NCATSTranslator/translator-ingests/blob/main/src/"
+            "translator_ingest/ingests/dakp/dakp_rig.yaml"
+        ),
+        "RIG review issue: https://github.com/NCATSTranslator/translator-ingests/issues/416",
+    ]
+
+    info = RIGConfig.model_validate(tablassert_configs.graph_config()["rig"]).provenance_info
+    assert info.contributions == contributions
+    assert info.artifacts == provenance["artifacts"]
+
+
+def test_rig_target_info_pins_modeling_considerations_and_rejects_type_summaries() -> None:
+    """``target_info`` carries ONLY the two ``RIGTargetInfoExtras`` fields, never type summaries.
+
+    The upstream RIG's ``target_info.edge_type_info`` / ``node_type_info`` are rejected
+    wholesale: Tablassert GENERATES node/edge type summaries from the observed build, so
+    hand-authored summaries would both fail validation and drift from the graph. The
+    consideration categories must be exact ``ModelingCategories`` members. Asserting through
+    BOTH the raw config and the installed ``RIGConfig`` model makes any drift fail loudly.
+    """
+    from tablassert.models import RIGConfig
+
+    target = tablassert_configs.graph_config()["rig"]["target_info"]
+    assert set(target) == {"future_considerations", "additional_notes"}
+    considerations = target["future_considerations"]
+    assert [entry["category"] for entry in considerations] == ["qualifiers", "edge_properties"]
+    assert "disease_context_qualifier" in considerations[0]["consideration"]
+    # future_considerations hold only OPEN items: the still grant-carried qualifier slots and
+    # the slot-less ner_confidence_score; resolved facts live in additional_notes.
+    assert "temporal_context_qualifier" in considerations[0]["consideration"]
+    assert "population_context_qualifier" in considerations[0]["consideration"]
+    assert "ner_confidence_score" in considerations[1]["consideration"]
+    notes = target["additional_notes"]
+    assert any("generated by Tablassert" in note for note in notes)
+    assert any("regulatory_approvals" in note for note in notes)
+
+    info = RIGConfig.model_validate(tablassert_configs.graph_config()["rig"]).target_info
+    assert info is not None
+    assert info.future_considerations is not None
+    # ``use_enum_values``: validated ModelingCategories members compare as plain strings.
+    assert [entry.category for entry in info.future_considerations] == [
+        "qualifiers",
+        "edge_properties",
+    ]
+    assert info.additional_notes == target["additional_notes"]
+
+
+# --- emitted YAML is valid + faithful (round-trips through yaml.safe_load) --------
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_table_yaml_is_valid_and_faithful(table: str) -> None:
+    loaded = yaml.safe_load(tablassert_configs.table_yaml(table))
+    # The table config is a template-wrapped Section (the shape Tablassert's loader requires).
+    assert set(loaded) == {"template"}
+    assert loaded == {"template": tablassert_configs.table_config(table)}
+    # The tab delimiter survives serialization as a real tab character.
+    assert loaded["template"]["source"]["delimiter"] == "\t"
+
+
+def test_graph_yaml_is_valid_and_faithful() -> None:
+    loaded = yaml.safe_load(tablassert_configs.graph_yaml())
+    assert loaded == tablassert_configs.graph_config()
+    assert loaded["name"] == "DRUG_APPROVALS_KP"
+
+
+# --- runtime generation into the workdir ------------------------------------------
+
+
+def test_generate_writes_graph_and_table_configs(tmp_path: Path) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    ctx = _ctx(workdir)
+
+    refs = tablassert_configs.generate(assertion_refs, ctx)
+
+    # Graph config first, then one config per table in canonical order.
+    assert [ref.uri.name for ref in refs] == [
+        "graph.yaml",
+        "approved_treats.yaml",
+        "faers_applied_to_treat.yaml",
+        "contraindications.yaml",
+    ]
+    for ref in refs:
+        assert ref.uri.exists()
+        assert ref.uri.parent == workdir.root / "tables"
+
+    graph_text = refs[0].uri.read_text(encoding="utf-8")
+    assert "name: DRUG_APPROVALS_KP" in graph_text
+    assert "tables/approved_treats.yaml" in graph_text
+    assert "tables/faers_applied_to_treat.yaml" in graph_text
+    assert "tables/contraindications.yaml" in graph_text
+
+    # Each emitted table config parses and carries its predicate.
+    predicates = {
+        ref.uri.stem: yaml.safe_load(ref.uri.read_text(encoding="utf-8"))["template"]["statement"][
+            "predicate"
+        ]
+        for ref in refs[1:]
+    }
+    assert predicates == {
+        "approved_treats": "treats",
+        "faers_applied_to_treat": "applied_to_treat",
+        "contraindications": "contraindicated_in",
+    }
+
+
+def test_generate_links_assertion_inputs_as_provenance(tmp_path: Path) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    ctx = _ctx(workdir)
+
+    refs = tablassert_configs.generate(assertion_refs, ctx)
+    # The graph manifest lists the three table configs as inputs; each table config lists its TSV.
+    assert refs[0].manifest is not None
+    graph_manifest = json.loads(refs[0].manifest.read_text(encoding="utf-8"))
+    assert len(graph_manifest["inputs"]) == 3
+
+
+# --- runner: deferred handoff report ----------------------------------------------
+
+
+def test_deferred_runner_writes_deferred_handoff_report(tmp_path: Path) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    refs = DeferredTablassertRunner().run(assertion_refs, config_refs, _ctx(workdir))
+
+    assert len(refs) == 1
+    assert refs[0].uri == workdir.reports / "tablassert_handoff.json"
+    report = _read_report(workdir)
+    assert report["mode"] == "deferred"
+    assert report["status"] == "deferred"
+    assert report["stage"] == "tablassert_handoff"
+    assert {entry["table"] for entry in report["assertion_inputs"]} == set(TABLES)
+    assert len(report["config_inputs"]) == 4  # graph + 3 tables
+
+
+# --- runner: availability probes (importlib.util.find_spec seams) -----------------
+
+
+def _fake_find_spec(present: frozenset[str]):
+    """An ``importlib.util.find_spec`` stand-in: a name is importable iff it is in ``present``."""
+
+    def find_spec(name: str, *args: object, **kwargs: object) -> object:
+        return object() if name in present else None
+
+    return find_spec
+
+
+def test_tablassert_available_reflects_importability(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec(frozenset({"tablassert"})))
+    assert tablassert_available() is True
+    monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec(frozenset()))
+    assert tablassert_available() is False
+
+
+def test_qc_runtime_available_reflects_importability(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        importlib.util, "find_spec", _fake_find_spec(frozenset({"sentence_transformers"}))
+    )
+    assert qc_runtime_available() is True
+    monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec(frozenset()))
+    assert qc_runtime_available() is False
+
+
+# --- runner: command construction (pure; no process spawned) ----------------------
+
+
+def test_build_command_editable_override_prefix() -> None:
+    command = TablassertRunner().build_command(
+        Path("tables/graph.yaml"), tablassert_dir="../Tablassert"
+    )
+    assert command == [
+        "uv",
+        "run",
+        "--with-editable",
+        "../Tablassert",
+        "tablassert",
+        "build-kg",
+        "tables/graph.yaml",
+    ]
+
+
+def test_build_command_prefers_installed_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: "/venv/bin/tablassert")
+    command = TablassertRunner().build_command(Path("tables/graph.yaml"))
+    assert command == ["/venv/bin/tablassert", "build-kg", "tables/graph.yaml"]
+
+
+def test_build_command_falls_back_to_uv_run_tablassert(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    command = TablassertRunner().build_command(Path("tables/graph.yaml"))
+    assert command == ["uv", "run", "tablassert", "build-kg", "tables/graph.yaml"]
+
+
+def test_build_command_appends_qc_and_release_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    command = TablassertRunner().build_command(Path("graph.yaml"), qc=True, release=True)
+    assert command == ["uv", "run", "tablassert", "build-kg", "graph.yaml", "--qc", "--release"]
+
+
+def test_build_command_has_no_original_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    command = TablassertRunner().build_command(Path("graph.yaml"))
+    assert "--no-original" not in command
+
+
+def test_resolve_tablassert_dir_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(TABLASERT_DIR_ENV, raising=False)
+    # ctx param wins over env and runner default.
+    assert _resolve_tablassert_dir("/runner", "/param") == "/param"
+    # env wins over the runner default when no param is given.
+    monkeypatch.setenv(TABLASERT_DIR_ENV, "/env")
+    assert _resolve_tablassert_dir("/runner", None) == "/env"
+    # runner default is used when neither param nor env is set.
+    monkeypatch.delenv(TABLASERT_DIR_ENV, raising=False)
+    assert _resolve_tablassert_dir("/runner", None) == "/runner"
+    # None everywhere -> the installed PyPI package.
+    assert _resolve_tablassert_dir(None, None) is None
+
+
+# --- runner: real subprocess boundary (monkeypatched; no real Tablassert) ---------
+
+
+def _patch_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the runner's DEFAULT installed-package path deterministically (no editable dir)."""
+    monkeypatch.delenv(TABLASERT_DIR_ENV, raising=False)  # ignore any real dev override in the env
+    monkeypatch.setattr(_RUN_MODULE, "tablassert_available", lambda: True)
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # -> the `uv run tablassert` prefix
+
+
+def test_real_runner_captures_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    calls: list[tuple[list[str], Path | None]] = []
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((command, cwd))
+        _fake_build_kgx(workdir)  # a successful build-kg emits the KGX pair the contract gate reads
+        return subprocess.CompletedProcess(
+            args=command, returncode=0, stdout="built kg\n", stderr=""
+        )
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+
+    refs = TablassertRunner().run(
+        assertion_refs, config_refs, _ctx(workdir, fullmap="/maps/fullmap.redb")
+    )
+
+    assert len(refs) == 1
+    # The subprocess hook was invoked once, from the workdir root, with the build-kg command.
+    assert len(calls) == 1
+    command, cwd = calls[0]
+    assert cwd == workdir.root
+    assert command[:4] == ["uv", "run", "tablassert", "build-kg"]
+    assert command[4] == str(workdir.root / "tables" / "graph.yaml")
+    # Tablassert >= 8.1 removed the build-kg --fullmap flag; graph.yaml carries the fullmap path.
+    assert "--fullmap" not in command
+
+    report = _read_report(workdir)
+    assert report["mode"] == "real"
+    assert report["status"] == "ok"
+    assert report["kgx_contract"] == {"status": "ok", "problem_count": 0, "problems": []}
+    assert report["exit_code"] == 0
+    assert report["stdout"] == "built kg\n"
+    assert report["command"] == command
+    assert report["tablassert_dir"] is None
+    assert report["qc"] is False
+    assert report["release"] is False
+    assert "no_original" not in report
+
+
+def test_real_runner_records_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A non-zero exit writes the report (status=failed) AND raises TablassertError."""
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=command, returncode=2, stdout="", stderr="boom")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    with pytest.raises(TablassertError, match="exited 2"):
+        TablassertRunner().run(
+            assertion_refs, config_refs, _ctx(workdir, fullmap="/maps/fullmap.redb")
+        )
+
+    # The report must still be on disk (written before the exception was raised).
+    report = _read_report(workdir)
+    assert report["mode"] == "real"
+    assert report["status"] == "failed"
+    assert report["exit_code"] == 2
+    assert report["stderr"] == "boom"
+    assert "kgx_contract" not in report  # no KGX was emitted to validate
+
+
+def test_real_runner_reconciles_resolved_approvals_before_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The production handoff must repair resolved overlap, not only expose a pure helper."""
+    __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION  # explicit default, not a tag
+
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        _fake_build_kgx(workdir)
+        path = workdir.kgx / f"{tablassert_configs.GRAPH_NAME}_{__version__}.edges.ndjson"
+        edges = [json.loads(line) for line in path.read_text().splitlines()]
+        treated = next(edge for edge in edges if edge["predicate"] == "biolink:treats")
+        observed = next(edge for edge in edges if edge["predicate"] == "biolink:applied_to_treat")
+        observed.update(
+            subject=treated["subject"],
+            object=treated["object"],
+            clinical_approval_status="off_label_use",
+        )
+        path.write_text("".join(json.dumps(edge) + "\n" for edge in edges))
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(
+        assertion_refs, config_refs, _ctx(workdir, run_tablassert=True, fullmap="fixture.redb")
+    )
+    report = _read_report(workdir)
+    assert report["resolved_approval_promotions"] == 1
+    assert report["kgx_contract"]["status"] == "ok"
+
+
+@pytest.mark.parametrize("failure", ["null", "[]", "{bad", "io"])
+def test_real_runner_records_reconciliation_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+) -> None:
+    """Corrupt output or reconciliation I/O failure must leave the handoff report on disk."""
+    from dakp_pipeline import approval_reconciliation
+
+    __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION
+
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        _fake_build_kgx(workdir)
+        if failure != "io":
+            path = workdir.kgx / f"{tablassert_configs.GRAPH_NAME}_{__version__}.edges.ndjson"
+            path.write_text(failure + "\n")
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    if failure == "io":
+
+        def fail(path: Path) -> int:
+            raise OSError("reconciliation write failed")
+
+        monkeypatch.setattr(approval_reconciliation, "reconcile_approval_status", fail)
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    with pytest.raises(TablassertError):
+        TablassertRunner().run(
+            assertion_refs, config_refs, _ctx(workdir, run_tablassert=True, fullmap="fixture.redb")
+        )
+    report = _read_report(workdir)
+    assert report["kgx_contract"]["status"] == "error"
+    assert report["kgx_contract"]["error"]
+
+
+def test_real_runner_fails_on_kgx_contract_violation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A successful build whose KGX escapes the pinned classes fails the handoff.
+
+    The v1.11.2 leak shape: an edge demoted to bare ``biolink:Association`` — exactly what
+    escaped ``OBJECT_CATEGORY_OVERRIDE`` when ``GenomicEntity`` objects resolved — must fail
+    the task (``TablassertError``) with the violations recorded in the handoff report, so a
+    broken graph can never reach the export/publish stages.
+    """
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        _fake_build_kgx(workdir)
+        __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION  # explicit default, not a tag
+
+        emitted = workdir.kgx / f"{tablassert_configs.GRAPH_NAME}_{__version__}.edges.ndjson"
+        demoted = json.loads(emitted.read_text(encoding="utf-8").splitlines()[0])
+        demoted["id"] = "uuid-demoted-e1"
+        demoted["category"] = ["biolink:Association"]  # escaped the category pin
+        emitted.write_text(
+            emitted.read_text(encoding="utf-8") + json.dumps(demoted) + "\n", encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    with pytest.raises(TablassertError, match="KGX contract validation failed"):
+        TablassertRunner().run(
+            assertion_refs, config_refs, _ctx(workdir, fullmap="/maps/fullmap.redb")
+        )
+
+    report = _read_report(workdir)
+    assert report["status"] == "ok"  # the build itself succeeded
+    assert report["kgx_contract"]["status"] == "failed"
+    assert report["kgx_contract"]["problem_count"] == 1
+    assert any(
+        "incompatible_edge_category" in problem for problem in report["kgx_contract"]["problems"]
+    )
+
+
+def test_real_runner_missing_kgx_after_success_is_loud(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A zero exit with no emitted KGX pair fails with the report on disk first.
+
+    ``build-kg`` just ran successfully, so the pair MUST exist; absence means the emission
+    convention moved. The failure is recorded as a contract ``error`` in the handoff report
+    (written before raising) so a long build's logs are never lost with it.
+    """
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=command, returncode=0, stdout="", stderr=""
+        )  # emits nothing
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    with pytest.raises(TablassertError, match="expected exactly one"):
+        TablassertRunner().run(
+            assertion_refs, config_refs, _ctx(workdir, fullmap="/maps/fullmap.redb")
+        )
+
+    report = _read_report(workdir)
+    assert report["kgx_contract"]["status"] == "error"
+    assert "expected exactly one" in report["kgx_contract"]["error"]
+
+
+def test_real_runner_honors_ctx_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    seen: list[list[str]] = []
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        _fake_build_kgx(workdir)  # a successful build-kg emits the KGX pair the contract gate reads
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    # A tablassert_dir override selects the editable-checkout prefix AND bypasses the availability
+    # check (uv resolves the local checkout transiently), so it runs even when tablassert is absent.
+    monkeypatch.setattr(_RUN_MODULE, "tablassert_available", lambda: False)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(
+        assertion_refs,
+        config_refs,
+        _ctx(workdir, tablassert_dir="/opt/tablassert", fullmap="/maps/fullmap.redb"),
+    )
+
+    assert seen[0][:5] == ["uv", "run", "--with-editable", "/opt/tablassert", "tablassert"]
+    assert seen[0][-1] == str(
+        workdir.root / "tables" / "graph.yaml"
+    )  # no --fullmap flag (removed in Tablassert 8.1)
+
+
+def test_real_runner_raises_when_tablassert_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    monkeypatch.delenv(TABLASERT_DIR_ENV, raising=False)
+    monkeypatch.setattr(_RUN_MODULE, "tablassert_available", lambda: False)
+
+    with pytest.raises(RuntimeError, match="uv sync"):
+        TablassertRunner().run(
+            assertion_refs, config_refs, _ctx(workdir, fullmap="/maps/fullmap.redb")
+        )
+
+
+def test_real_runner_raises_when_fullmap_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    _patch_installed(monkeypatch)
+    with pytest.raises(RuntimeError, match="fullmap"):
+        TablassertRunner().run(assertion_refs, config_refs, _ctx(workdir))
+
+
+def test_real_runner_appends_qc_when_runtime_available(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    seen: list[list[str]] = []
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        _fake_build_kgx(workdir)  # a successful build-kg emits the KGX pair the contract gate reads
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "qc_runtime_available", lambda: True)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(
+        assertion_refs, config_refs, _ctx(workdir, qc=True, fullmap="/maps/fullmap.redb")
+    )
+
+    assert "--qc" in seen[0]
+    assert _read_report(workdir)["qc"] is True
+
+
+def test_real_runner_skips_qc_when_runtime_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    seen: list[list[str]] = []
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        _fake_build_kgx(workdir)  # a successful build-kg emits the KGX pair the contract gate reads
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "qc_runtime_available", lambda: False)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(
+        assertion_refs, config_refs, _ctx(workdir, qc=True, fullmap="/maps/fullmap.redb")
+    )
+
+    assert "--qc" not in seen[0]
+    assert _read_report(workdir)["qc"] is False
+
+
+def test_real_runner_appends_release_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    seen: list[list[str]] = []
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        _fake_build_kgx(workdir)  # a successful build-kg emits the KGX pair the contract gate reads
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(
+        assertion_refs, config_refs, _ctx(workdir, release=True, fullmap="/maps/fullmap.redb")
+    )
+
+    assert "--release" in seen[0]
+    assert _read_report(workdir)["release"] is True
+
+
+def test_real_runner_omits_no_original_flag_and_report_field(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    seen: list[list[str]] = []
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        _fake_build_kgx(workdir)  # a successful build-kg emits the KGX pair the contract gate reads
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(
+        assertion_refs, config_refs, _ctx(workdir, no_original=True, fullmap="/maps/fullmap.redb")
+    )
+
+    assert "--no-original" not in seen[0]
+    assert "no_original" not in _read_report(workdir)
+
+
+# --- module-level dispatch --------------------------------------------------------
+
+
+def test_run_dispatches_to_deferred_without_run_tablassert(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def no_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        msg = "subprocess must not run when the handoff is deferred"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", no_subprocess)
+
+    # No run_tablassert (no fullmap) -> deferred handoff, no subprocess.
+    run_tablassert(assertion_refs, config_refs, _ctx(workdir))
+    assert _read_report(workdir)["mode"] == "deferred"
+
+
+def test_run_dispatches_to_real_with_run_tablassert(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        _fake_build_kgx(workdir)  # a successful build-kg emits the KGX pair the contract gate reads
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+
+    run_tablassert(
+        assertion_refs,
+        config_refs,
+        _ctx(workdir, run_tablassert=True, fullmap="/maps/fullmap.redb"),
+    )
+    assert _read_report(workdir)["mode"] == "real"
+
+
+def test_graph_stem_raises_when_keys_missing(tmp_path: Path) -> None:
+    """The stem is read from the graph config the build used; a config without name/version fails loudly."""
+    config = tmp_path / "graph.yaml"
+    config.write_text("fullmap: '.fullmap'\n", encoding="utf-8")
+    from dakp_pipeline.tablassert import _graph_stem
+
+    with pytest.raises(RuntimeError, match="missing top-level name/version"):
+        _graph_stem(config)
+
+
+def test_every_qualifier_slot_carries_a_category_guard() -> None:
+    """Every granted qualifier slot (class-ranged AND type-ranged) emits a hard category guard.
+
+    The v1.13.0 audit showed the unguarded type-ranged slots resolved drug products, chemical
+    dosage forms, publications, genes, and a butterfly genus into frequency/temporal cells, and
+    the narrow ``BiologicalSex``-only sex guard resolved nothing at all (the fullmap has no
+    BiologicalSex rows; sex wordings resolve to population-group concepts).
+    """
+    import re
+
+    from dakp_pipeline.tablassert import (
+        _QUALIFIER_EXCLUDE_PREFIXES,
+        _QUALIFIER_EXCLUDE_REGEX,
+        _QUALIFIER_GUARD,
+    )
+
+    assert _QUALIFIER_GUARD == {
+        "disease_context_qualifier": ("Disease",),
+        "anatomical_context_qualifier": ("AnatomicalEntity",),
+        "sex_qualifier": ("BiologicalSex", "PopulationOfIndividualOrganisms"),
+        "population_context_qualifier": ("PopulationOfIndividualOrganisms",),
+        "frequency_qualifier": ("InformationContentEntity",),
+        "temporal_context_qualifier": ("InformationContentEntity", "Phenomenon"),
+        "species_context_qualifier": ("OrganismTaxon",),
+    }
+    for qualifier in _QUALIFIER_GUARD:
+        assert category_avoid_list(_QUALIFIER_GUARD[qualifier])  # avoid complement is never empty
+    # Every CURIE exclusion is anchored and compiles; anatomical exclusions also carry EMAPA.
+    for patterns in _QUALIFIER_EXCLUDE_REGEX.values():
+        assert patterns
+        for pattern in patterns:
+            assert pattern.startswith("^")
+            assert pattern.endswith("$")
+            re.compile(pattern)
+    assert _QUALIFIER_EXCLUDE_PREFIXES == {"anatomical_context_qualifier": ("EMAPA",)}
+    # The emitted configs carry the guards on exactly the slots that back columns.
+    for table in TABLES:
+        by_slot = {
+            entry["qualifier"]: entry
+            for entry in tablassert_configs.table_config(table)["statement"].get("qualifiers", [])
+        }
+        for qualifier, entry in by_slot.items():
+            assert entry["prioritize"] == list(_QUALIFIER_GUARD[qualifier])
+            assert entry["avoid"] == category_avoid_list(_QUALIFIER_GUARD[qualifier])
+            assert entry.get("exclude_prefixes", []) == list(
+                _QUALIFIER_EXCLUDE_PREFIXES.get(qualifier, ())
+            )
+            assert entry.get("exclude_regex", []) == list(
+                _QUALIFIER_EXCLUDE_REGEX.get(qualifier, ())
+            )

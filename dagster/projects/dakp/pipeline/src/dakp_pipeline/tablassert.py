@@ -1,0 +1,2407 @@
+"""Tablassert handoff: generate Graph/table configs and (optionally) run Tablassert.
+
+Flattened from the former ``tablassert/configs.py`` + ``tablassert/run.py`` (US-004).
+
+DAKP does everything up to the shape Tablassert consumes, then emits ONE Graph config
+(``tables/graph.yaml``) plus one table config per assertion table (:func:`generate`).
+Canonical entity resolution, KGX compilation, dedup, deterministic IDs, and RIG generation
+are delegated to ``../Tablassert`` — DAKP ships **no** local fallback KGX compiler.
+
+The configs match the ACTUAL current Tablassert schema (verified against
+``../Tablassert/src/tablassert/models.py`` and its ``ingests.to_sections`` loader):
+
+* a table config is a ``template:``-wrapped :class:`~tablassert.models.Section`
+  (``source`` / ``statement`` / ``provenance`` / ``annotations``). The loader only reads
+  top-level ``template`` / ``sections`` keys — a bare ``source:``/``statement:`` shape is
+  silently dropped, so the ``template:`` wrapper is mandatory;
+* ``source.kind: text`` with a tab ``delimiter`` and the uncompressed assertion ``.tsv``
+  as ``source.local``. ``source.url`` is required by the model and records the table's REAL
+  upstream dataset URL (:data:`_TABLE_SOURCE_URLS`) — never a placeholder. It serves the RIG
+  only: edge provenance comes entirely from the explicit ``override.sources`` template
+  (:data:`_TABLE_SOURCES`), which carries the FAERS supporting entry's static AEMS URL
+  (:data:`FAERS_SOURCE_RECORD_URL`) in addition to the per-edge DAKP URL. Tablassert
+  8.2.1+ models ``source.url`` as a ``list`` of one or more URLs per section and DAKP assertion
+  rows aggregate across quarters, releases, and applications, so no per-row URL is truthful at
+  row granularity; the dataset-level URLs are the honest RIG record, and per-row precision
+  stays on the edge via ``publications`` (SPL set links) and ``regulatory_approvals`` (FDA
+  application numbers);
+* column-encoded ``statement.subject`` / ``statement.object`` / ``statement.predicate``
+  with drug / disease ``prioritize`` categories plus a HARD category allow-list each:
+  ``avoid`` is emitted as the sorted complement of the side's allow-list over the installed
+  Tablassert's full Biolink ``Categories`` enum, so no off-allow-list category can ever
+  resolve into the graph (``prioritize`` alone is only a soft ranking boost);
+* a ``provenance.override`` (:class:`~tablassert.models.ManualProvenance`) block carrying
+  ``knowledge_level`` and ``agent_type``
+  (the DAKP ``infores`` is graph-level only since Tablassert >= 8.0.1 forbids it in the override;
+  no ``publication`` — the override replaces repo/publication provenance), plus the explicit
+  ``sources`` template (:data:`_TABLE_SOURCES`) replicating the legacy DAKP edge-provenance
+  shape — the DAKP wrapper entry carries the edge-linkout ``{edge_id}`` record-URL template
+  (:data:`EDGE_LINKOUT_URL_TEMPLATE`), resolved by Tablassert on the final edges;
+* column-encoded ``statement.qualifiers`` where an assertion column carries the qualifier's entity
+  (per-table :data:`_QUALIFIER_GUARD`). A Tablassert qualifier is a node encoding resolved through
+  the fullmap alongside subject/object; every qualifier is ``nullable``, so a blank or
+  unresolvable cell omits only the qualifier rather than dropping the edge, and each slot carries
+  its own category allow-list (:data:`_QUALIFIER_GUARD`), CURIE denylists
+  (:data:`_QUALIFIER_EXCLUDE_REGEX` / :data:`_QUALIFIER_EXCLUDE_PREFIXES`), and — upstream of
+  resolution — wording-level junk filters in :mod:`dakp_pipeline.assertions.contexts`.
+  ``species_context_qualifier`` is the one deliberate exception on all three axes: it is NOT
+  nullable (every row carries a species CURIE, so a blank cell is a shaper contract violation
+  that must drop the row loudly instead of minting a species-less edge), it lifts the ``9606``
+  taxon filter (``taxon: null``) so every NCBITaxon CURIE resolves, and it is the slot that
+  carries species into edge identity (:data:`UUID_FIELDS`). No encoding anywhere declares
+  ``taxon_from`` (per-row taxon-scoped resolution): the production fullmap cannot support it, as
+  documented beside :data:`_NON_NULLABLE_QUALIFIERS`.
+* column-encoded evidence ``annotations`` (aggregated evidence columns carry ``split_by: "|"``
+  so pipe-joined assertion cells emit as real JSON arrays, not joined scalars).
+
+Column letters are DERIVED from the assertion-table column contracts in
+:mod:`dakp_pipeline.io.schemas` (never hardcoded). YAML is emitted by a tiny stdlib
+emitter (no ``pyyaml`` runtime dependency) that round-trips through ``yaml.safe_load``
+(asserted in the unit tests).
+
+The real runner (:class:`TablassertRunner`) shells out to the installed ``tablassert`` CLI
+(a CORE dependency installed by the single ``uv sync``) and captures stdout / exit code into
+a handoff report; the deferred runner (:class:`DeferredTablassertRunner`) writes a
+deferred-handoff report without ever touching Tablassert (used when no fullmap triggers the
+real handoff, and in tests). DAKP requires Tablassert >= 19.7.0, the floor ``pyproject.toml`` pins;
+the releases that built it, oldest first: the graph config carries the
+fullmap path (the ``build-kg --fullmap`` flag was removed in Tablassert 8.1), the 8.2
+Biolink-valid KGX modeling (``sources[]`` retrieval provenance, first-class evidence slots)
+is what the emitted configs target, 9.1's per-row ``split_by`` (made the ONLY multivalued
+annotation encoding in 10.0) is what DAKP's pipe-joined evidence cells need, 11.0 makes
+the graph config's ``rig:`` section mandatory while dropping the flat
+``primary_knowledge_source`` edge column (nested ``sources[]`` provenance only — the edge
+primary source now derives from ``rig.source_info.infores_id``), and 12.0 keeps a curated FDA-application-number
+edge field TOP-LEVEL instead of folding it into ``supporting_text`` and stops
+fabricating an empty supporting study for publication-less sections like DAKP's. 13.0 (biolink-model 4.4.4) renames the
+``AffinityMeasurement`` config class to ``ProteinLigandAssayResult`` — the generated
+``avoid:``/``prioritize:`` lists assume the new name — reworks the inlined supporting study
+(``Study.id`` is the publication CURIE or config stem, no ``#`` composition), and adds the
+stage-7 ``--qc`` fail-the-build assertions (empty-or-null-values, unnamed/unidentified
+nodes, incomplete-edges) the production build now runs. 14.0 adds the explicit
+``override.sources`` template (SkyeAv/Tablassert#116) with post-dedup ``{edge_id}``
+resolution — what DAKP's legacy-shaped edge provenance requires. 16.0's ``uuid_fields``
+(SkyeAv/Tablassert#122) pins edge identity to the resolved statement (:data:`UUID_FIELDS`),
+16.2's ``uuid_on_collision: merge`` (SkyeAv/Tablassert#126) merges edges that derive one id —
+synonym mentions resolving to the same CURIE — instead of aborting the build. Tablassert
+>= 16.6 makes that merge exact for the FAERS case count: the build-internal
+``supporting_case_ids`` edge extra unions across folded edges and ``number_of_cases`` is
+recomputed as the union size, then the carrier is stripped before the final NDJSON (on older
+Tablassert the annotated ``case_ids`` column folds into ``supporting_text`` harmlessly and the
+merge keeps first-wins). The emitted
+graph config declares merge UNCONDITIONALLY and the FAERS table annotates ``case_ids``, so
+16.2 is the merge floor and 16.6 is where the merged count becomes exact. 16.7.0 lowers the
+release-mode minimum ``number_of_cases`` for ``applied_to_treat`` edges
+from 25 to 10 (SkyeAv/Tablassert#141), so ``--release`` builds now ship 10-24-case edges
+earlier releases dropped. 17.0.0 (SkyeAv/Tablassert#142) removes the
+``--threads`` CLI option and the ``threads`` Python/Rust API parameter — every parallel stage
+now sizes itself automatically — so DAKP passes no worker count anywhere. 17.0.1
+(SkyeAv/Tablassert#145) makes the fullmap resolver retain every CURIE tied on a term's best
+ranking tier instead of keeping one arbitrary winner, so a DAKP mention that maps equally
+well to several CURIEs expands to one edge per tied CURIE (level-one still beats level-two).
+18.1.0 closes the category-vocabulary hole behind the v1.11.2 bare-Association leak: the
+config ``Categories`` enum now names every category the fullmap emits (``GenomicEntity`` and
+other biolink mixins are first-class via ``CATEGORY_OVERRIDES``), ``filter_and_rank`` drops
+unnameable categories when ``avoid`` is set, and ``--qc`` fails on any edge demoted to bare
+``biolink:Association`` under a declared ``category_override``; 18.0.0 retains ``original_*``
+edge fields and deterministically aggregates distinct values across collision merges as sorted
+pipe-delimited strings while removing ``--no-original``; nothing else in the emitted config
+changes, only resolved KG content.
+19.0.0 granted DAKP's sparse qualifier stack
+(``anatomical_context_qualifier``, ``sex_qualifier``, ``population_context_qualifier``,
+``frequency_qualifier``, ``temporal_context_qualifier``) to the pinned classes via
+``CLASS_FIELD_OVERRIDES`` (SkyeAv/Tablassert#188) and moved the ``tablassert`` console script
+behind the optional ``[cli]`` extra with logging behind ``[log]``.
+Fullmaps must
+be ``tablassert.fullmap.v6`` redb files: 19.0.0 rebased level-one normalization onto stemmed,
+deduped, byte-sorted tokens, changing the RECORDS key space, so older ones (v1-v5) are rejected on
+read.
+19.3.0 moved the pipeline onto the polars 2.0 streaming engine (``pyarrow`` became a Tablassert core
+dependency) with output parity preserved, 19.4.0 started auditing enum-ranged qualifier columns
+against their closed Biolink vocabulary and failing the build with ``qualifier-vocabulary-violation``
+(none of DAKP's six qualifier slots is enum-ranged, so that audit cannot fire on a DAKP build), and
+19.5.0 added ``parquet`` as a table source kind, which DAKP does not use (it ships TSV). 19.5.1's
+biolink-model 4.4.5 attaches ``disease_context_qualifier``,
+``anatomical_context_qualifier``, and ``frequency_qualifier`` to the whole disease/phenotype
+association family, renames the FDA-specific ``FDA_regulatory_approvals`` to the canonical
+``regulatory_approvals`` on both pinned classes, and adds ``sex_qualifier`` to
+``EntityToPhenotypicFeatureAssociation``, so Tablassert retired those four ``CLASS_FIELD_OVERRIDES``
+grants and kept only ``population_context_qualifier`` and ``temporal_context_qualifier`` (both pinned
+classes) plus ``sex_qualifier`` (``EntityToDiseaseAssociation``). 19.7.0's biolink-model 4.4.6 then
+attached ``population_context_qualifier`` to both pinned classes natively, so Tablassert retired that
+grant as well (SkyeAv/Tablassert#213); the remaining grants are ``temporal_context_qualifier`` on both
+pinned classes plus ``sex_qualifier`` on ``EntityToDiseaseAssociation``. The effective edge field set, and
+every KGX byte DAKP emits, is unchanged; that is why the qualifier contract in
+``tests/unit/test_tablassert_configs.py`` runs ``prune_to_class`` rather than asserting the grant set.
+19.6.0 adds optional ``validate-kgx --prune``; DAKP does not enable destructive pruning.
+19.7.0 changes only the qualifier grants above (and ``BIOLINK_VERSION`` now reports 4.4.6
+accurately); fullmap v6, annotation encoding, case-count merging and QC are unchanged from 19.5.1.
+
+The DEFAULT invocation runs the installed package — the venv ``tablassert`` binary when it is
+on ``PATH``, otherwise ``uv run tablassert``. An OPTIONAL editable-checkout override (the
+``tablassert_dir`` ctx param, the ``DAKP_TABLASERT_DIR`` env var, or the
+``TablassertRunner.tablassert_dir`` field; conventionally ``DEFAULT_TABLASERT_DIR``) switches
+to ``uv run --with-editable <dir> tablassert`` for dev against a local ``../Tablassert``
+checkout. ``--qc`` is appended only when requested AND the QC audit runtime
+(sentence-transformers, part of the required ``tablassert[qc]`` install) is importable;
+``--release`` is a boolean flag.
+
+The module-level :func:`run` is the entry point the stage harness and ``dags.dakp_build``
+invoke as a MODULE ATTRIBUTE at call time (``tablassert.run(...)``), so
+``monkeypatch.setattr("dakp_pipeline.tablassert.run", ...)`` replaces the callable they see.
+It dispatches to the real runner when ``ctx.params["run_tablassert"]`` is truthy, else the
+deferred runner. Tests monkeypatch the runner's subprocess hook (:func:`run_subprocess`) and
+the availability probes (:func:`tablassert_available` / :func:`qc_runtime_available`) — no
+real Tablassert required.
+"""
+
+from __future__ import annotations
+
+import copy
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from dakp_pipeline.io import schemas
+from dakp_pipeline.io.artifact_store import ArtifactStore
+from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
+from dakp_pipeline.io.manifests import OperationBlock
+from dakp_pipeline.logging_setup import logger, stats, step
+from dakp_pipeline.paths import Workdir
+from dakp_pipeline.sources import canada_vigilance as canada_vigilance_source
+from dakp_pipeline.sources import dailymed as dailymed_source
+from dakp_pipeline.sources import drugsfda as drugsfda_source
+from dakp_pipeline.sources import ema as ema_source
+from dakp_pipeline.sources import ema_documents as ema_documents_source
+from dakp_pipeline.sources import faers as faers_source
+
+# --- Translator provenance constants (match dakp_pipeline.assertions + ../DINGO) ----
+
+INFORES_DAKP = "infores:drugapprovals-kp"
+AGENT_TYPE = "manual_validation_of_automated_agent"
+
+GRAPH_NAME = "DRUG_APPROVALS_KP"
+#: Fallback ``fullmap`` written into ``graph.yaml`` when no real fullmap is configured (deferred
+#: runs, which never invoke ``build-kg``). Tablassert's ``Graph`` model REQUIRES a ``fullmap``
+#: field, and Tablassert reads the fullmap path FROM this field on a graph build (the
+#: ``build-kg --fullmap`` flag was removed in Tablassert 8.1) — so :func:`generate`
+#: writes the real ``ctx.params["fullmap"]`` here for real runs. DAKP never downloads a fullmap.
+#: Tablassert reads only ``tablassert.fullmap.v6`` redb files (the on-disk format since
+#: Tablassert 19.0.0) — a v5-or-older fullmap is rejected on read ("fullmap DB is
+#: outdated"); rebuild it with the installed ``tablassert build-fullmap``. v6 is not a relayout
+#: of v5: level-one keys are now stemmed/deduped/byte-sorted, so v5 keys can never be hit.
+FULLMAP_DEFAULT = ".fullmap"
+
+#: Edge identity fields declared as the Graph config's ``uuid_fields`` (Tablassert >= 16.0,
+#: SkyeAv/Tablassert#122): only these feed the derived edge ``id``, so an attribute-only
+#: change (``supporting_text``, ``sources``) no longer mints a new edge.
+#: Identity is the SEMANTIC STATEMENT ONLY — the resolved triple plus the nullable
+#: ``disease_context_qualifier``. A declared field ABSENT from an edge record contributes
+#: nothing at all to the hash, so the qualifier — emitted only on the contraindication and
+#: approved-treats edges that carry one — discriminates those edges without forcing the key
+#: onto the other tables:
+#: rows with UNIQUE qualifier values are distinct statements and must never merge, while the
+#: treatment/observed-use tables are effectively subject/predicate/object-only.
+#: The pre-resolution mentions (``original_subject`` / ``original_object``) are deliberately
+#: NOT identity (they were, until Tablassert 16.1): two distinct source mentions can resolve
+#: to the same canonical CURIE (observed in production: two objects resolving to
+#: UMLS:C4721779), and those rows are ONE edge — they merge downstream via the graph config's
+#: ``uuid_on_collision: merge`` (Tablassert >= 16.2), which unions
+#: list-valued evidence and keeps first-wins scalars instead of aborting the build
+#: (``uuid-fields-not-a-key``). The one scalar that must NOT go first-wins is
+#: ``number_of_cases``: the merged edge would silently drop the absorbed rows' cases. The FAERS
+#: table therefore carries ``case_ids`` onto the edge as the build-internal
+#: ``supporting_case_ids`` list (one token per distinct case), and Tablassert >= 16.6 recomputes
+#: the merged count as the union size — the extra unique cases are ADDED — then strips the
+#: carrier before the final NDJSON. Other evidence fields (``publications``,
+#: ``regulatory_approvals``) are NOT identity either: rows agreeing on the identity fields
+#: are ONE
+#: edge whose evidence is the merged union (deduplicated, sorted, pipe-joined — the
+#: :func:`~dakp_pipeline.assertions.evidence.sorted_pipe` convention). That merging happens in
+#: the assertion shapers BEFORE Tablassert ever sees the rows — observed in production: two
+#: FAERS indication wordings resolving to the same object text
+#: (CHEBI:62088 applied_to_treat HP:0012531), which the observed-uses shaper folds into a
+#: single row with an exact distinct-case count (see
+#: :func:`~dakp_pipeline.assertions.observed_uses.build_observed_use_rows`); merge-on-collision
+#: is the safety net for the cross-spelling cases the shapers cannot see pre-resolution.
+#: Declaring ``uuid_fields`` also moves the UUID namespace onto the graph's infores unless
+#: ``uuid_domain`` overrides it — :func:`graph_config` pins :data:`UUID_DOMAIN` explicitly so
+#: an infores rename can never re-mint every edge id.
+UUID_FIELDS = [
+    "subject",
+    "predicate",
+    "object",
+    "disease_context_qualifier",
+    # Every qualifier slot a table can encode participates in edge identity: presence/absence
+    # and value of each qualifier keep qualifier-distinct rows as DISTINCT edges instead of
+    # folding under uuid_on_collision merge (an EPAR row qualified "adult patients" must not
+    # merge into the unqualified MeSH-area edge for the same pair).
+    "anatomical_context_qualifier",
+    "sex_qualifier",
+    "population_context_qualifier",
+    "frequency_qualifier",
+    "temporal_context_qualifier",
+    # Species is part of edge identity on EVERY table (Tablassert >= 22.1.0 declares the slot on
+    # the root association class): the same drug-condition pair asserted on a dog label and on a
+    # human label is two edges, never one folded edge. Every row carries a species CURIE (the
+    # human constant on human corpora, the derived NCBITaxon CURIE on animal labels), so the
+    # slot is always present and never silently omitted.
+    "species_context_qualifier",
+]
+
+#: Explicit ``uuid_domain`` for the derived edge ids (Tablassert >= 16.0): without it the
+#: namespace derives from ``rig.source_info.infores_id``, coupling every edge id to a
+#: provenance label. Pinning it keeps ids stable across an infores rename.
+UUID_DOMAIN = INFORES_DAKP
+
+#: Real upstream dataset URL recorded as each table's ``source.url`` — the constants the
+#: acquisition layer itself uses, so provenance can never drift from what was downloaded.
+#: ``source.url`` is the section's RIG/audit record ONLY: edges get their provenance from the
+#: explicit ``override.sources`` template (:data:`_TABLE_SOURCES`), which carries the static
+#: AEMS URL (:data:`FAERS_SOURCE_RECORD_URL`) on the FAERS supporting entry as a dataset-level
+#: exception. Each value is a TUPLE because a table can aggregate several upstream datasets:
+#: approved-treats rows come from DailyMed SPL releases (the DailyMed full-release index), the
+#: EMA medicines registry (the fixed-name xlsx bulk export), and the EMA SmPC product-information
+#: corpus (the EPAR documents JSON report that manifests the SmPC crawl); contraindication rows
+#: from DailyMed AND that same SmPC corpus; observed-use rows from the FAERS quarterly ASCII
+#: extracts (the FDA quarterly-data listing) AND Health Canada's Canada Vigilance data extract
+#: (the fixed-name monthly ZIP).
+_TABLE_SOURCE_URLS: dict[str, tuple[str, ...]] = {
+    "approved_treats_assertions": (
+        dailymed_source.FULL_RELEASE_INDEX_URL,
+        ema_source.EMA_MEDICINES_URL,
+        ema_documents_source.EMA_DOCUMENTS_URL,
+    ),
+    "faers_applied_to_treat_assertions": (
+        faers_source.FDA_FAERS_INDEX_URL,
+        canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL,
+    ),
+    "contraindication_assertions": (
+        dailymed_source.FULL_RELEASE_INDEX_URL,
+        ema_documents_source.EMA_DOCUMENTS_URL,
+    ),
+}
+GRAPH_DESCRIPTION = (
+    "Drug Approvals Knowledge Provider: FDA/EMA-approved treatment relationships, "
+    "FAERS-observed applied-to-treat uses, and contraindications text-mined from "
+    "DailyMed, modeled from DailyMed, Drugs@FDA, FAERS, and the EMA medicines registry. "
+    "Every edge carries the evidence identifiers backing it; approved-treats edges also carry "
+    "clinical approval status and FDA application numbers or EMA product numbers, FAERS-observed "
+    "use edges add case counts, and contraindication edges carry application numbers where available."
+)
+
+# --- RIG (Resource Ingest Guide) graph-config section -------------------------------
+#
+# Tablassert >= 11 REQUIRES a ``rig:`` section on every graph config and rejects the legacy
+# top-level ``description`` / ``infores`` keys (``rig-legacy-keys``). The nested shape mirrors
+# the released resource-ingest-guide-schema; Tablassert composes the generated-artifact
+# ``relevant_files`` / ``included_content`` entries and the observed target summaries itself,
+# so only human-authored facts live here. The edge primary knowledge source derives from
+# ``rig.source_info.infores_id`` — it is no longer a graph-level key.
+#
+# Content is ADAPTED from the DINGO-reviewed upstream DAKP RIG — ``NCATSTranslator/
+# translator-ingests`` ``src/translator_ingest/ingests/dakp/dakp_rig.yaml`` (review issue
+# #416; both linked in :data:`RIG_PROVENANCE_ARTIFACTS`) — keeping the reviewed facts and
+# rejecting upstream claims not supported by this repository:
+# * the ``source_info`` CC BY 4.0 data-license claim: this repository carries NO evidence of
+#   a CC BY 4.0 data license (the code license is Apache-2.0 and the upstream feeds are US
+#   government public-domain data), so ``terms_of_use_info`` records the NLM/FDA terms instead;
+# * the legacy KGX-file ``relevant_files``: legacy-pipeline OUTPUT artifacts no table section
+#   sources; listing them would trip Tablassert's RIG audit (``rig-validation-failed``, see
+#   ``_rig_config``);
+# * the ``target_info`` node/edge type summaries: Tablassert GENERATES those from the observed
+#   build, so hand-authored ones would fail validation and drift (details on
+#   :data:`RIG_TARGET_FUTURE_CONSIDERATIONS`).
+
+#: Public URL prefix the generated KGX artifacts are published under; Tablassert appends each
+#: ``.nodes.ndjson`` / ``.edges.ndjson`` name to build RIG file locations. Every version is
+#: published to the Hugging Face dataset ``SkyeAv/drug-approvals-kp`` under a version directory —
+#: Default publication version for builds whose caller does not pass one explicitly. This is
+#: a plain default, NOT derived from release tags or the package version: the stage passes the
+#: publication version per run, and the RIG/artifact URL follows it.
+DEFAULT_PUBLICATION_VERSION = "0.1.0"
+#: Artifact location prefix template for the RIG: ``<publication version>/`` under the public
+#: dataset. Overridable per run via ``rig_artifact_base_url=`` (callers pass the version
+#: explicitly; nothing here reads release tags).
+RIG_ARTIFACT_BASE_URL_TEMPLATE = (
+    "https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/main/{version}"
+)
+RIG_ARTIFACT_BASE_URL = RIG_ARTIFACT_BASE_URL_TEMPLATE.format(version=DEFAULT_PUBLICATION_VERSION)
+#: Workdir-relative directory ``build-kg`` writes the KGX + RIG artifacts into (the runner's cwd
+#: is the workdir root, so outputs land in ``./kgx``).
+RIG_ARTIFACT_BASE_PATH = "kgx"
+#: Full human-readable RIG source name — the bare acronym is ambiguous outside this repository,
+#: and downstream ingest maintainers index sources by this name.
+RIG_SOURCE_NAME = "Drug Approvals Knowledge Provider (DAKP)"
+#: RIG citations: the DAKP method preprint with its resolvable PMC landing page, so ingest
+#: maintainers can trace how the graph is produced. ``RIGSourceInfo.citations`` takes free-text,
+#: URL-bearing strings.
+RIG_CITATIONS = (
+    "Generating Biomedical Knowledge Graphs from Knowledge Bases, Registries, and Multiomic Data "
+    "(preprint): https://pmc.ncbi.nlm.nih.gov/articles/PMC11601480/",
+)
+#: RIG versioning statement. Interpolates the live package version so the prose can never drift
+#: from the version every build embeds in the graph config via ``graph_config(version=...)``.
+#: Freshness gates (see README "acquire"): DailyMed and Drugs@FDA re-downloads use the
+#: acquire-stage 7-day download-cache window; FAERS is cache-first content-addressed, no age gate.
+RIG_DATA_VERSIONING_AND_RELEASES = (
+    f"DAKP publication versions are set explicitly per build (graph config version); the default is {DEFAULT_PUBLICATION_VERSION}; "
+    "every build embeds it in the graph config via graph_config(version=...). Re-ingests track "
+    "the upstream cadence: FAERS quarterly ASCII extracts, DailyMed SPL releases, and the "
+    "nightly-regenerated EMA medicines export. DailyMed, Drugs@FDA, and EMA re-downloads are "
+    "freshness-gated to a 7-day cache window; FAERS downloads "
+    "are content-addressed and cache-first, with no age gate. Each version's generated KGX pair "
+    "and RIG are published to the Hugging Face dataset SkyeAv/drug-approvals-kp under a "
+    "per-version directory (<version>/DRUG_APPROVALS_KP_<version>.{nodes,edges}.ndjson), and "
+    "every earlier version remains available there."
+)
+#: RIG ``supporting_data_source_info``: the upstream data sources a DAKP graph derives its
+#: knowledge from. Exactly the EDGE-BACKED upstreams (four today: DailyMed, FAERS, EMA,
+#: Canada Vigilance), adapted from the DINGO-reviewed
+#: ``supporting_data_source_info`` of the upstream ``NCATSTranslator/translator-ingests`` DAKP
+#: RIG (names, descriptions, public-domain terms assessments), with each ``relevant_files[0]``
+#: location swapped for the URL constant DAKP's acquisition layer actually downloads, so the
+#: documented provenance can never drift from the download source. Unlike ``ingest_info``'s
+#: ``relevant_files`` (filtered per graph to the tables present and audit-cross-checked against
+#: table section sources), this section is free-form and always complete.
+#: NO Drugs@FDA entry: only edge-backed upstreams are listed; Drugs@FDA enriches
+#: assertions at build time (application joins) but backs no edge as a supporting source.
+RIG_SUPPORTING_DATA_SOURCES: tuple[dict[str, Any], ...] = (
+    {
+        "infores_id": "infores:dailymed",
+        "name": "DailyMed",
+        "description": (
+            "DailyMed provides trustworthy information about marketed drugs in the United States, "
+            "based on FDA Structured Product Labeling (SPL) documents. DAKP uses DailyMed to "
+            "identify FDA-approved drug-indication and drug-contraindication relationships."
+        ),
+        "terms_of_use_info": {
+            "terms_of_use_url": "https://dailymed.nlm.nih.gov/dailymed/",
+            "terms_of_use_description": "DailyMed data are freely available and in the public domain.",
+        },
+        "relevant_files": [
+            {
+                "file_name": "DailyMed Structured Product Labeling",
+                "location": dailymed_source.FULL_RELEASE_INDEX_URL,
+                "description": "Structured product labeling (SPL) documents for FDA-approved drugs",
+            }
+        ],
+    },
+    {
+        "infores_id": "infores:faers",
+        "name": "FDA Adverse Event Reporting System (FAERS)",
+        "description": (
+            "FAERS contains adverse event reports, medication error reports, and product quality "
+            "complaints submitted to the FDA. DAKP uses FAERS to derive drug-disease usage "
+            "relationships and case counts, including on-label and off-label use."
+        ),
+        "terms_of_use_info": {
+            "terms_of_use_url": (
+                "https://www.fda.gov/drugs/questions-and-answers-fdas-adverse-event-reporting-system-faers/"
+                "fda-adverse-event-reporting-system-faers-quarterly-data-extract-files"
+            ),
+            "terms_of_use_description": "FAERS data files are in the public domain and freely available for download.",
+        },
+        "relevant_files": [
+            {
+                "file_name": "FAERS Quarterly Data Files",
+                "location": faers_source.FDA_FAERS_INDEX_URL,
+                "description": "Quarterly data files containing adverse event reports",
+            }
+        ],
+    },
+    {
+        "infores_id": "infores:ema",
+        "name": "European Medicines Agency (EMA) medicines registry",
+        "description": (
+            "The EMA publishes a bulk export of every centrally reviewed medicine in the European Union. "
+            "DAKP uses the Authorised, Human rows to derive approved drug-indication relationships from "
+            "their MeSH therapeutic areas (infores:ema) and from their free-text EPAR therapeutic "
+            "indications (infores:epar)."
+        ),
+        "terms_of_use_info": {
+            "terms_of_use_url": "https://www.ema.europa.eu/en/about-us/about-website/legal-notice",
+            "terms_of_use_description": (
+                "EMA content may be reused for non-commercial and commercial purposes provided the source is "
+                "acknowledged; the agency's legal notice applies."
+            ),
+        },
+        "relevant_files": [
+            {
+                "file_name": "EMA medicines report (xlsx)",
+                "location": ema_source.EMA_MEDICINES_URL,
+                "description": "Bulk export of centrally reviewed medicines; MeSH therapeutic areas and EPAR indication text",
+            }
+        ],
+    },
+    {
+        "infores_id": "infores:canada-vigilance",
+        "name": "Health Canada Canada Vigilance Adverse Reaction Online Database",
+        "description": (
+            "Health Canada's Canada Vigilance database collects adverse reaction reports submitted for "
+            "drugs and health products marketed in Canada. DAKP uses the suspect drug-indication pairs "
+            "in its monthly data extract to derive observed drug-disease usage relationships and case "
+            "counts, including on-label and off-label use (infores:canada-vigilance)."
+        ),
+        "terms_of_use_info": {
+            "terms_of_use_url": "https://open.canada.ca/en/open-government-licence-canada",
+            "terms_of_use_description": (
+                "The extract is released under the Open Government Licence - Canada: reproduction for "
+                "commercial and non-commercial purposes is permitted with attribution to Health Canada."
+            ),
+        },
+        "relevant_files": [
+            {
+                "file_name": "Canada Vigilance data extract (zip)",
+                "location": canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL,
+                "description": "Monthly full extract of the Canada Vigilance Adverse Reaction Online Database; suspect drug-indication pairs",
+            }
+        ],
+    },
+)
+#: RIG ``ingest_info.included_content``: the upstream record types DAKP pulls into the graph.
+#: ``fields_used`` names exactly what the assertion tables consume from SPL — the four mined
+#: section kinds' text (indications_and_usage, contraindications, boxed warnings,
+#: warnings/precautions), SPL set identifiers feeding ``publications``, and FDA application
+#: numbers feeding ``regulatory_approvals``. Unlike ``relevant_files``, ``included_content`` is NOT
+#: audit-cross-checked by Tablassert, so these entries document intent rather than gate the build.
+RIG_INCLUDED_CONTENT: tuple[dict[str, str], ...] = (
+    {
+        "file_name": "DailyMed SPL sections",
+        "included_records": (
+            "indications_and_usage (LOINC 34067-9), contraindications (LOINC 34070-3), "
+            "boxed warnings (LOINC 34066-1), and warnings/precautions (LOINC 43685-7, legacy "
+            "34071-1/42232-9) sections; FDA application numbers are carried as provenance where available"
+        ),
+        "fields_used": (
+            "indications_and_usage, contraindications, boxed-warning, and warnings/precautions section text, "
+            "SPL set identifiers, FDA application numbers"
+        ),
+    },
+    {
+        "file_name": "FAERS quarterly ASCII zips",
+        "included_records": "drug/indication case pairs; case counts",
+    },
+    {
+        "file_name": "EMA medicines report (xlsx)",
+        "included_records": (
+            "Authorised, Human centrally-authorised medicines only (every other Medicine status and all "
+            "veterinary rows are dropped at extract time); EMA product numbers are carried as provenance"
+        ),
+        "fields_used": (
+            "Active substance / INN, Therapeutic area (MeSH), Therapeutic indication free text, EMA product number, Medicine URL (EPAR page)"
+        ),
+    },
+    {
+        "file_name": "EMA documents report (json)",
+        "included_records": (
+            "EPAR document listings for centrally-authorised medicines; the product-information (SmPC) "
+            "PDFs they reference carry the mined 4.1 Therapeutic indications and 4.3 Contraindications sections"
+        ),
+        "fields_used": (
+            "document listing metadata (product name, document kind, PDF URL) locating the product-information PDFs whose 4.1/4.3 sections are mined"
+        ),
+    },
+    {
+        "file_name": "Canada Vigilance data extract (zip)",
+        "included_records": "suspect drug/indication report pairs; case counts",
+        "fields_used": (
+            "suspect drug name and indication fields of the $-delimited monthly report extract, plus report identifiers feeding case counts"
+        ),
+    },
+)
+#: RIG ``ingest_info.filtered_content``: what DAKP deliberately drops from the upstream feeds,
+#: and why. Both entries restate the pipeline's actual scope gates: approved-treats assertions
+#: require an approval-backed indication (``assertions/approved_treats.py`` rule 2), and the
+#: assertion modules mine only the four section kinds listed in :data:`RIG_INCLUDED_CONTENT`
+#: (``assertions/contraindications.py`` passes 1-3).
+RIG_FILTERED_CONTENT: tuple[dict[str, str], ...] = (
+    {
+        "file_name": "DailyMed SPL indication sections",
+        "filtered_records": "indication sections on SPL sets whose NDA lacks a DailyMed SPL approval",
+        "rationale": (
+            "approved-treats assertions require an FDA approval backing the indication; observed-use and "
+            "text-mined contraindication assertions are deliberately not approval-gated"
+        ),
+    },
+    {
+        "file_name": "DailyMed SPL sections",
+        "filtered_records": (
+            "all SPL sections other than indications_and_usage (LOINC 34067-9), contraindications (LOINC 34070-3), "
+            "boxed warnings (LOINC 34066-1), and warnings/precautions (LOINC 43685-7, legacy 34071-1/42232-9)"
+        ),
+        "rationale": "the remaining sections carry no treatment or contraindication evidence",
+    },
+)
+#: RIG ingest-level ``future_considerations``: content DAKP deliberately defers, each grounded in
+#: code — the medication-context note is the ``_TABLE_QUALIFIERS`` disease-only policy (the
+#: qualifier is emitted; only medications are excluded from it), and the
+#: status-coercion note is the ``ClinicalApprovalStatusEnum`` membership rule documented in
+#: ``assertions/observed_uses.py``.
+RIG_INGEST_FUTURE_CONSIDERATIONS: tuple[dict[str, str], ...] = (
+    {
+        "category": "edge_content",
+        "consideration": (
+            "A drug-drug chemical-entity interaction assertion for medication context (currently "
+            "the disease_context_qualifier is intentionally disease-only; medications belong in a "
+            "future interaction assertion)"
+        ),
+        "relevant_files": "DailyMed SPL contraindication sections",
+    },
+    {
+        "category": "edge_property_content",
+        "consideration": (
+            "clinical_approval_status is a first-class Biolink ClinicalApprovalStatusEnum field. "
+            "Observed assertions ship approved_for_condition or off_label_use; not_provided is "
+            "emitted only in degraded mode, when no approved-treats table was available to check "
+            "the reported drug/condition pair against. Revisit if Biolink adds a dedicated "
+            "observation status."
+        ),
+    },
+)
+
+
+#: RIG ``provenance_info.contributions``: PEOPLE only, matching the DINGO-reviewed upstream
+#: ``NCATSTranslator/translator-ingests`` DAKP RIG format (pipeline/tooling attributions live
+#: in :data:`RIG_PROVENANCE_ARTIFACTS`). The first three are VERBATIM from the upstream RIG.
+#: Skye Lane Goetz is added because she
+#: authored the upstream Tablassert features this pipeline's provenance override requires
+#: (``ManualProvenance.upstream_source_record_urls``, SkyeAv/Tablassert#104, and the explicit
+#: ``override.sources`` template, SkyeAv/Tablassert#116) and co-authored
+#: the cited DAKP method preprint (PMC11601480).
+RIG_CONTRIBUTIONS: tuple[str, ...] = (
+    "Gwenlyn Glusman - code author, domain expertise, data modeling",
+    "Matthew Brush - data modeling",
+    "Sierra Moxon - code, data modeling",
+    "Skye Lane Goetz - code author, pipeline engineering, Tablassert integration",
+)
+#: RIG ``provenance_info.artifacts``: external provenance artifacts — this pipeline's
+#: repository, the upstream DINGO-reviewed DAKP RIG this one descends from, and that RIG's
+#: review ticket.
+RIG_PROVENANCE_ARTIFACTS: tuple[str, ...] = (
+    "DAKP pipeline repository: https://github.com/glusman-team/dakp",
+    "Published KGX releases (Hugging Face dataset): https://huggingface.co/datasets/SkyeAv/drug-approvals-kp",
+    "Upstream DINGO-reviewed DAKP RIG: https://github.com/NCATSTranslator/translator-ingests/blob/main/src/translator_ingest/ingests/dakp/dakp_rig.yaml",
+    "RIG review issue: https://github.com/NCATSTranslator/translator-ingests/issues/416",
+)
+#: RIG ``target_info`` modeling future considerations. The upstream DAKP RIG's
+#: ``target_info.edge_type_info`` / ``node_type_info`` are REJECTED wholesale: Tablassert's
+#: ``RIGTargetInfoExtras`` accepts ONLY ``future_considerations`` + ``additional_notes``
+#: because node/edge type summaries are GENERATED by Tablassert from the observed build —
+#: hand-written summaries would fail validation and drift from the graph. Categories are
+#: exact ``tablassert.enums.ModelingCategories`` members. Entries hold only OPEN modeling
+#: questions (slots still grant-carried ahead of the pinned model, slots that do not exist
+#: yet); resolved facts (slot coverage now native to the pinned model) belong in
+#: :data:`RIG_TARGET_ADDITIONAL_NOTES` instead.
+RIG_TARGET_FUTURE_CONSIDERATIONS: tuple[dict[str, str], ...] = (
+    {
+        "category": "qualifiers",
+        "consideration": (
+            "DAKP's sparse qualifier stack (anatomical_context_qualifier, sex_qualifier, "
+            "population_context_qualifier, frequency_qualifier, temporal_context_qualifier) and the "
+            "contraindication/approved-treats disease_context_qualifier ride the pinned Biolink model "
+            "except for two grant-carried slots: the 4.4.5 mixin consolidation (Tablassert >= 19.5.1) "
+            "attached disease_context_qualifier, anatomical_context_qualifier, and frequency_qualifier "
+            "to the whole disease/phenotype association family and sex_qualifier to "
+            "EntityToPhenotypicFeatureAssociation, and biolink-model 4.4.6 (Tablassert >= 19.7.0) added "
+            "population_context_qualifier to both pinned classes, so Tablassert retired those "
+            "CLASS_FIELD_OVERRIDES grants (SkyeAv/Tablassert#120, #188, #213). temporal_context_qualifier "
+            "on both pinned classes and sex_qualifier on EntityToDiseaseAssociation remain carried by "
+            "grants ahead of the model, which attaches them only to the environmental-exposure family "
+            "and the phenotypic-feature side. Drop reliance on those grants once upstream Biolink "
+            "widens them to the entity-to-disease classes"
+        ),
+    },
+    {
+        "category": "edge_properties",
+        "consideration": (
+            "ner_confidence_score is the one emitted column with no Biolink slot and no Tablassert "
+            "carve-out, so it folds into supporting_text until a dedicated "
+            "mention-recognition-confidence slot exists"
+        ),
+    },
+)
+#: RIG ``target_info.additional_notes``: records that the type summaries are machine-generated
+#: per build, so nobody re-authors them here, plus the resolved modeling facts that are no
+#: longer open questions (native slot coverage on the pinned Biolink classes).
+RIG_TARGET_ADDITIONAL_NOTES: tuple[str, ...] = (
+    "Node and edge type summaries are generated by Tablassert from the observed build, not authored in this configuration.",
+    "FDA application numbers are emitted on the canonical regulatory_approvals edge slot, which "
+    "the pinned biolink-model (>= 4.4.5) declares natively on EntityToDiseaseAssociation and "
+    "EntityToPhenotypicFeatureAssociation; every edge pins one of those classes by object "
+    "category, so the slot survives prune_to_class.",
+)
+
+
+def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict[str, Any]:
+    """The required ``rig:`` graph-config section (Tablassert >= 11), all constants.
+
+    Content is ADAPTED from the DINGO-reviewed upstream DAKP RIG (``NCATSTranslator/
+    translator-ingests`` ``src/translator_ingest/ingests/dakp/dakp_rig.yaml``, review issue
+    #416); the full adoption/rejection rationale lives in the section-header comment above
+    the RIG constants.
+
+    Shape verified against ``tablassert.models.RIGConfig`` (pinned directly by
+    ``test_rig_section_validates_directly_against_tablassert_rig_config``):
+    ``supporting_data_source_info`` (the edge-backed upstreams,
+    :data:`RIG_SUPPORTING_DATA_SOURCES`), ``source_info``
+    (infores id, full source name, description + citation, non-empty terms-of-use assessment,
+    URL-bearing data access locations, versioning story, source status),
+    ``ingest_info`` (explicit ingest category, authored utility/scope, per-table upstream
+    relevant files + included/filtered content + future considerations),
+    ``target_info`` (modeling future considerations + generated-summary note; upstream type
+    summaries rejected), ``provenance_info`` (named contributors + pipeline/tooling
+    contributions, provenance artifact links), and the artifact base URL/path pair.
+
+    ``relevant_files`` is filtered to the upstream URLs of the tables actually IN this graph:
+    Tablassert's RIG audit fails the build when a configured relevant-file matches no table
+    source (``rig-validation-failed``), so a single-table graph (tests, partial builds) must
+    not list the other tables' upstreams.
+    """
+    included_urls = {
+        url
+        for table in _TABLE_ORDER
+        if any(Path(t).name == f"{_TABLE_SPECS[table][0]}.yaml" for t in tables)
+        for url in _TABLE_SOURCE_URLS[table]
+    }
+    relevant_files = [
+        {
+            "file_name": "DailyMed full-release SPL zips",
+            "location": dailymed_source.FULL_RELEASE_INDEX_URL,
+            "description": "Structured Product Labeling XML releases; indications/contraindications sections and approval numbers.",
+        },
+        {
+            "file_name": "FAERS quarterly ASCII zips",
+            "location": faers_source.FDA_FAERS_INDEX_URL,
+            "description": "FDA Adverse Event Reporting System quarterly extracts; drug/indication case pairs.",
+        },
+        {
+            "file_name": "Canada Vigilance data extract (zip)",
+            "location": canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL,
+            "description": "Health Canada's Canada Vigilance Adverse Reaction Online Database monthly extract; suspect drug-indication pairs.",
+        },
+        {
+            "file_name": "EMA medicines report (xlsx)",
+            "location": ema_source.EMA_MEDICINES_URL,
+            "description": "EMA centrally-authorised medicines bulk export; MeSH therapeutic areas and EPAR indication text.",
+        },
+        {
+            "file_name": "EMA EPAR documents report (json)",
+            "location": ema_documents_source.EMA_DOCUMENTS_URL,
+            "description": "EMA EPAR documents bulk export; manifests the SmPC product-information PDFs mined for contraindication edges.",
+        },
+        # No Drugs@FDA entry: no assertion table declares it as a section source (it is joined
+        # in upstream, at assertion-build time), so the RIG audit would reject it.
+        # REJECTED from the upstream ``NCATSTranslator/translator-ingests`` DAKP RIG: its legacy
+        # KGX-file ``relevant_files`` (``drug_approvals_kg_{edges,nodes}.jsonl.gz`` at
+        # db.systemsbiology.net) are legacy pipeline OUTPUT artifacts, not inputs; no table
+        # section sources them here, so Tablassert's RIG audit would fail the build
+        # (``rig-validation-failed``).
+    ]
+    return {
+        # Deep copies: the returned config dict must never alias the module-level constants.
+        "supporting_data_source_info": [
+            copy.deepcopy(entry) for entry in RIG_SUPPORTING_DATA_SOURCES
+        ],
+        "source_info": {
+            "infores_id": INFORES_DAKP,
+            "name": RIG_SOURCE_NAME,
+            "description": GRAPH_DESCRIPTION,
+            "citations": list(RIG_CITATIONS),
+            "terms_of_use_info": {
+                "terms_of_use_url": "https://www.nlm.nih.gov/terms.html",
+                "terms_of_use_description": (
+                    "DAKP is derived from DailyMed (NLM), Drugs@FDA, and FAERS (FDA): US government "
+                    "public-domain data; the NLM and FDA terms of use apply. EMA content is reused under "
+                    "the European Medicines Agency's public reuse policy with source acknowledgement."
+                ),
+            },
+            "data_access_locations": [
+                f"DailyMed SPL releases - {dailymed_source.FULL_RELEASE_INDEX_URL}",
+                f"FAERS quarterly ASCII extracts - {faers_source.FDA_FAERS_INDEX_URL}",
+                f"Canada Vigilance data extract - {canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL}",
+                f"Drugs@FDA data files - {drugsfda_source.DRUGSFDA_DATA_FILES_URL}",
+                f"EMA medicines report - {ema_source.EMA_MEDICINES_URL}",
+                f"EMA EPAR documents report - {ema_documents_source.EMA_DOCUMENTS_URL}",
+            ],
+            "data_provision_mechanisms": ["file_download"],
+            "data_formats": ["kgx"],
+            "data_versioning_and_releases": RIG_DATA_VERSIONING_AND_RELEASES,
+            "source_status": "maintained_regular_updates",
+        },
+        "ingest_info": {
+            # Explicit even though it equals the ``RIGIngestInfo`` default: DAKP CREATES
+            # knowledge (the assertion tables this pipeline builds) rather than passing a source
+            # through, and the upstream DAKP RIG declares the same category.
+            "ingest_categories": ["translator_knowledge_creator"],
+            "utility": (
+                "Provides FDA- and EMA-approved drug-disease treatment relationships, FAERS- and Canada "
+                "Vigilance-observed applied-to-treat uses, and SPL-mined contraindications for "
+                "Translator querying."
+            ),
+            "scope": (
+                "Approved-treats edges (DailyMed SPL indications joined to Drugs@FDA applications and "
+                "FAERS cases, plus EMA centrally-authorised medicines' MeSH therapeutic areas, mined "
+                "EPAR indication text, and mined EMA SmPC product-information indications), FAERS and "
+                "Canada Vigilance observed-use edges, and contraindication edges text-mined from "
+                "DailyMed SPL sections "
+                "and EMA SmPC product-information sections; all other content of the upstream feeds is "
+                "out of scope."
+            ),
+            "relevant_files": [
+                entry for entry in relevant_files if entry["location"] in included_urls
+            ],
+            "included_content": [copy.deepcopy(entry) for entry in RIG_INCLUDED_CONTENT],
+            "filtered_content": [copy.deepcopy(entry) for entry in RIG_FILTERED_CONTENT],
+            "future_considerations": [
+                copy.deepcopy(entry) for entry in RIG_INGEST_FUTURE_CONSIDERATIONS
+            ],
+        },
+        "target_info": {
+            "future_considerations": [
+                copy.deepcopy(entry) for entry in RIG_TARGET_FUTURE_CONSIDERATIONS
+            ],
+            "additional_notes": list(RIG_TARGET_ADDITIONAL_NOTES),
+        },
+        "provenance_info": {
+            "contributions": list(RIG_CONTRIBUTIONS),
+            "artifacts": list(RIG_PROVENANCE_ARTIFACTS),
+        },
+        "artifact_base_url": artifact_base_url
+        if artifact_base_url is not None
+        else RIG_ARTIFACT_BASE_URL,
+        "artifact_base_path": RIG_ARTIFACT_BASE_PATH,
+    }
+
+
+# Canonical emission order for the three assertion tables.
+_TABLE_ORDER = (
+    "approved_treats_assertions",
+    "faers_applied_to_treat_assertions",
+    "contraindication_assertions",
+)
+
+# assertion table -> subject_text row exclusions, emitted as ``source.reindex`` ``ne`` filters so
+# the rows are dropped at Tablassert LOAD time and can never reach the final KGX output. The FAERS
+# off-label table aggregates methanol poison-exposure reports where the chemical is the EXPOSURE,
+# not a treatment — an ``applied_to_treat`` edge for it is semantically wrong ("METHYL ALCHOL" is
+# FAERS's own spelling of the ingredient). "GENERIC DRUG"/"GENERIC DRUGS" are FAERS verbatim
+# drug-name placeholders that name no real substance, and "PLACEBO" is the control arm: by
+# definition it treats nothing — FAERS prefixes a bare ``*`` onto some reporter-entered names, and
+# "*PLACEBO" is that spelling's survivor in the deployed 1.11.2 KG. Entries are written in their
+# canonical uppercase form and matched case-insensitively (see :func:`_casing_variants`). Reindex
+# conditions AND together: a row survives only when its subject_text matches no denylist entry in
+# any emitted casing.
+_TABLE_SUBJECT_DENYLIST: dict[str, tuple[str, ...]] = {
+    "faers_applied_to_treat_assertions": (
+        "METHYL ALCHOL",
+        "METHANOL",
+        "GENERIC DRUG",
+        "GENERIC DRUGS",
+        "PLACEBO",
+        "*PLACEBO",
+    )
+}
+
+# object_text row exclusions applied to EVERY assertion table (the same mention wording can be
+# mined from any source), emitted as ``source.reindex`` ``ne`` filters exactly like the subject
+# denylist above. ``ne`` is an exact whole-cell compare, so an entry drops ONLY rows whose
+# object_text IS that wording — qualified and disease-naming forms are untouched ("high blood
+# pressure" -> MONDO:0005044 hypertensive disorder, "heart rate increased" -> HP:0001649
+# tachycardia, "heart rate decreased" -> HP:0001662 bradycardia, "cardiac failure", "renal
+# failure", "status epilepticus", ...). Two derivation groups, both enumerated against the
+# deployed 1.11.2 KG:
+#
+# (1) The GENERIC allergy/hypersensitivity CURIE family — every distinct object_text mention that
+#     resolved into MONDO:0000605 hypersensitivity reaction disease, MONDO:0005271 allergic
+#     disease, MONDO:0000775 drug allergy, MONDO:0002459 type IV hypersensitivity disease,
+#     MONDO:0017853 hypersensitivity pneumonitis, MONDO:0006794 hypersensitivity vasculitis,
+#     MONDO:0007817 IgE responsiveness atopic, UMLS:C4552319 hypersensitivity myocarditis,
+#     UMLS:C0585186 allergic disorder of skin. "Hypersensitivity" is contraindication-section
+#     boilerplate — the #1 entry on nearly every DailyMed label, naming a reaction the drug itself
+#     CAUSES — and in FAERS indications it is an adverse-event word, not a treatable condition, so
+#     edges to this family are semantically wrong in all three tables (2,905 of 110,454 edges in
+#     1.11.2: 2,249 contraindicated_in, 613 applied_to_treat, 43 treats). On the contraindication
+#     side the boilerplate is also non-discriminative: "drug X contraindicated_in
+#     hypersensitivity" is asserted for essentially every labeled drug, so the edge distinguishes
+#     nothing and drowns the mined disease signal.
+#
+# (2) NON-DISEASE measurement / procedure / outcome meta-terms mined out of label prose and FAERS
+#     free text — not conditions at all, so a drug->X edge about them is meaningless in every
+#     table. "Blood pressure" resolves to NCIT:C54707 (Blood Pressure Finding, a MEASUREMENT
+#     finding: 431 edges in 1.11.2 — the largest non-disease meta-term object in the KG); the
+#     reporting meta-terms resolve to UMLS:C0877248 (Adverse event: 103 edges), UMLS:C0879626
+#     (Adverse effects: 15) and UMLS:C0559546 (Adverse reactions: 55); "disease progression"
+#     resolves to UMLS:C0242656 (Disease Progression: 62) — a trial OUTCOME, not something a drug
+#     treats or is contraindicated in. Those five CURIEs are 666 edges of 1.11.2. "Heart rate",
+#     "laboratory test(s)", "treatment failure" and "condition aggravated" carry no edges in
+#     1.11.2 but are the same MedDRA/CTCAE meta-term class and are denied preventively:
+#     "CONDITION AGGRAVATED" is the MedDRA PT spelling and "CONDITION AGGRIVATED" the reporter
+#     misspelling, denied on the same precedent as FAERS's own "METHYL ALCHOL" on the subject
+#     side. "ADVERSE DRUG REACTION(S)" is the canonical regulatory parent of the "adverse
+#     reaction"/"adverse event" wordings and a standing DailyMed section heading, so it is denied
+#     with them (the FAERS indication channel already substring-blocks that wording via
+#     ``_NON_DISEASE_INDICATION_RE`` in ``assertions/observed_uses.py``; the reindex entries cover
+#     the contraindication channel and any future one). Caveat, same spirit as the casing note
+#     below: three of the preventive entries can structurally never fire — fullmap resolves bare
+#     "heart rate" (a physiologic function), "laboratory test(s)" (UMLS:C0022885, a Procedure)
+#     and "condition aggravated" (UMLS:C0235874, a Phenomenon) to categories OUTSIDE
+#     ``OBJECT_PRIORITIZE``, so the ``avoid`` guard already drops them — only "treatment failure"
+#     (NCIT:C200647, PhenotypicFeature) resolves into an allowed category; the entries are kept
+#     as load-time insurance against fullmap re-ranking.
+#
+# Deliberately KEPT — drug-SPECIFIC and mechanism-specific members of both classes: the UMLS
+# "Hypersensitivity to <drug>" concepts (C5768819 abacavir, C5817290 gentamicin, C5817291
+# erythromycin, C5817297 hydrocortisone — 5 contraindication edges in 1.11.2) name a specific
+# pharmacogenomic phenotype rather than the generic boilerplate, and specific drug-allergy
+# findings ("allergy to benzocaine" -> UMLS:C0570648 etc.) resolve OUTSIDE that CURIE family
+# anyway. Likewise "adverse event following immunisation" (UMLS:C2721654), "immune-mediated
+# adverse reaction" (UMLS:C4087225) and "abnormal liver function tests" (HP:0002910) name defined
+# entities/findings — none is the bare meta-term. "LEUKOCYTOCLASTIC VASCULITIS" is also not denied: it is the one
+# family wording that independently resolves to its own distinct CURIE (MONDO:0001290), so
+# denying it would take out two real disease edges in 1.11.2; the residual is that MONDO:0006794
+# can still be reached via that synonym. See :func:`_casing_variants` for the casing renderings
+# each entry ships (the contraindications table's ``object_text`` is always
+# ``normalize_text``-lowercased, so only the lowercase rendering can ever match there; the rest
+# are harmless defense-in-depth).
+_TABLE_OBJECT_DENYLIST: tuple[str, ...] = (
+    # (1) generic allergy/hypersensitivity family
+    "HYPERSENSITIVITY",
+    "HYPERSENSITIVITY REACTION",
+    "HYPERSENSITIVITY REACTIONS",
+    "HYPERSENSITIVITY SYMPTOMS",
+    "HYPERSENSITIVITY ALLERGIC REACTION",
+    "TYPE I HYPERSENSITIVITY",
+    "TYPE IV HYPERSENSITIVITY REACTION",
+    "DRUG HYPERSENSITIVITY",
+    "SKIN HYPERSENSITIVITY",
+    "HYPERSENSITIVITY PNEUMONITIS",
+    "HYPERSENSITIVITY MYOCARDITIS",
+    "HYPERSENSITIVITY VASCULITIS",
+    "ALLERGIC REACTION",
+    "ALLERGIC REACTIONS",
+    "ALLERGIC DISORDERS",
+    "ALLERGY",
+    "ALLERGIES",
+    "DRUG ALLERGY",
+    "SENSITIVITY",
+    # (2) non-disease measurement / procedure / outcome meta-terms
+    "BLOOD PRESSURE",
+    "HEART RATE",
+    "LABORATORY TEST",
+    "LABORATORY TESTS",
+    "ADVERSE EVENT",
+    "ADVERSE EVENTS",
+    "ADVERSE EFFECT",
+    "ADVERSE EFFECTS",
+    "ADVERSE REACTION",
+    "ADVERSE REACTIONS",
+    "ADVERSE DRUG REACTION",
+    "ADVERSE DRUG REACTIONS",
+    "SIDE EFFECT",
+    "SIDE EFFECTS",
+    "DISEASE PROGRESSION",
+    "TREATMENT FAILURE",
+    "CONDITION AGGRAVATED",
+    "CONDITION AGGRIVATED",
+    # (3) outcome / exposure / event placeholders and mapping artifacts (1.11.2 audit)
+    "ANAESTHESIA",
+    "ANESTHESIA",
+    "OVERDOSE",
+    "DRUG OVERDOSE",
+    "DRUG OVERDOSES",
+    "INTENTIONAL OVERDOSE",
+    "POISONING",
+    "INJURY",
+    "TRAUMATIC INJURY",
+    "DEATH",
+    "SUDDEN DEATH",
+    "HIV TEST POSITIVE",
+    "UNEVALUABLE EVENT",
+    "SUBSTANCE USE",
+    "GLUCOSE TOLERANCE TEST",
+    # (4) patient-state wordings with no disease referent (v1.13.0 data audit): "CRYING" was
+    # QC-rejected by Tablassert in the v1.12.7 build (tied to NCIT:C103385 "Complete Response
+    # with Incomplete Bone Marrow Recovery" — an oncology status term, not crying) and the
+    # 2026jul22 fullmap ties it to fly/mouse "cri" gene concepts; the v1.13.0 category
+    # allow-lists happened to drop all of those, and the emitted KG carries 0 crying objects.
+    # Denying the wording at load keeps that guarantee against fullmap source churn.
+    "CRYING",
+)
+
+# CURIEs dropped from the OBJECT side during entity resolution via the object NodeEncoding's
+# ``exclude_regex`` (Tablassert >= 16): a wording-level ``ne`` filter cannot express "drop this
+# CURIE, keep that one". UMLS:C0812393 ("Cancer patients and suicide and depression", 623 edges
+# in 1.11.2 — a literature/phrase concept, not a disease) is reached almost entirely through
+# "depression", which fullmap ties to BOTH C0812393 and MONDO:0002050 (depressive disorder, a
+# real disease, 622 edges): denying the wording would destroy the real disease's edges, so the
+# junk CURIE is excluded at resolution instead — "depression" keeps resolving to MONDO:0002050
+# and the tied C0812393 candidate is dropped ("suicide", whose only candidate is C0812393, then
+# resolves to nothing and its 7 edges drop as unresolved). Each pattern is anchored to the whole
+# CURIE; extend this tuple only with CURIEs whose wording channels are shared with real diseases
+# — wording-only junk belongs in :data:`_TABLE_OBJECT_DENYLIST` above.
+_OBJECT_EXCLUDE_REGEX: tuple[str, ...] = (r"^UMLS:C0812393$",)
+
+# CURIEs dropped from the SUBJECT side during entity resolution via the subject NodeEncoding's
+# ``exclude_regex`` (same mechanism as :data:`_OBJECT_EXCLUDE_REGEX`, subject flavor). Seeded
+# from the v1.13.0 data audit (plans/v1.13.0-data-audit-findings.md): UMLS:C1314429 is the
+# HCPCS admin-code concept "INJECTION, OXALIPLATIN, 0.5 MG ADMINISTERED" — an administration
+# billing term, not a drug — but it is categorized ``biolink:Drug`` (so the subject category
+# allow-list passes it) and the fullmap ties it to the SAME wording as the real drug
+# ("OXALIPLATIN" + pipe-joined spelling variants): 197 v1.13.0 subject edges landed on it.
+# Wording-level denial is impossible (it would kill the real drug's rows); excluding the CURIE
+# lets "OXALIPLATIN" fall through to CHEBI oxaliplatin. Exact-CURIE anchor: the audit found no
+# other HCPCS admin-code concepts among the emitted nodes, so no range pattern is justified.
+# HCPCS administration billing concepts categorized ``biolink:Drug`` whose wording shares
+# the real drug's wording channel (v1.13.0: UMLS:C1314429 "INJECTION, OXALIPLATIN, 0.5 MG
+# ADMINISTERED", 197 leaked subject edges; v1.14.0: UMLS:C0812740 "INJECTION, PIPERACILLIN
+# SODIUM/TAZOBACTAM SODIUM, 1 GRAM/0.125 GRAMS (1.125 GRAMS) ADMINISTERED", which carried an
+# unbacked approved_for_condition edge in the v1.13.1 build). Exact-CURIE anchors: the
+# concepts share wording with their ingredient, so no class-wide wording filter can express
+# "drop this CURIE, keep that one".
+_SUBJECT_EXCLUDE_REGEX: tuple[str, ...] = (r"^UMLS:C1314429$", r"^UMLS:C0812740$")
+
+# Deliberately KEPT — the outcome/exposure relatives that name REAL conditions: "sensory loss"
+# (the real phenotype NCIT:C182234 wrongly also carries the procedure wording "anaesthesia"; its
+# own wording survives, so only the 212 procedure-worded edges die), "substance abuse"
+# (MONDO:0002491, a DSM disorder — only the behavior wording "substance use" is denied),
+# "wound"/"wounds and injuries" (treatable traumatic conditions), and every QUALIFIED form
+# ("methanol poisoning", "spinal cord injury", "drug withdrawal", "sudden cardiac death", …) —
+# the ``ne`` exact whole-cell compare keeps them by construction.
+
+# assertion table -> (config basename, predicate, knowledge_level, agent_type). Knowledge levels
+# match the DINGO translator-ingest provenance contract
+# (../DINGO/tests/unit/ingests/dakp/test_dakp.py): treats = knowledge_assertion;
+# applied_to_treat = observation; contraindicated_in = knowledge_assertion mined from DailyMed.
+# Every family uses ``AGENT_TYPE`` — the agent type the legacy DAKP KG shipped on all three
+# predicates (``manual_validation_of_automated_agent``).
+_TABLE_SPECS: dict[str, tuple[str, str, str, str]] = {
+    "approved_treats_assertions": ("approved_treats", "treats", "knowledge_assertion", AGENT_TYPE),
+    "faers_applied_to_treat_assertions": (
+        "faers_applied_to_treat",
+        "applied_to_treat",
+        "observation",
+        AGENT_TYPE,
+    ),
+    "contraindication_assertions": (
+        "contraindications",
+        "contraindicated_in",
+        "knowledge_assertion",
+        AGENT_TYPE,
+    ),
+}
+
+#: Per-edge record URL template carried by the ``infores:drugapprovals-kp`` sources
+#: entry — the EdgeLinkouts app (linkouts.skyelanegoetz.com) deep-links each edge by its
+#: own id. ``{edge_id}`` is resolved by Tablassert in a post-dedup sweep of the final
+#: edges ndjson (``override.sources``, SkyeAv/Tablassert#116).
+EDGE_LINKOUT_URL_TEMPLATE = "https://linkouts.skyelanegoetz.com/edges/{edge_id}"
+
+#: Static record URL carried by the FAERS table's ``infores:faers`` supporting-data-source
+#: entry — the FDA Adverse Event Monitoring System (AEMS) landing page. FAERS observed-use rows
+#: aggregate across quarters, so no per-quarter URL is truthful per edge; the static page remains
+#: the honest per-edge record for the supporting source (the quarterly-data index stays on the
+#: section's ``source.url`` and the RIG).
+FAERS_SOURCE_RECORD_URL = "https://www.fda.gov/safety/fda-adverse-event-monitoring-system-aems"
+
+# assertion table -> the explicit ``provenance.override.sources`` template:
+# (resource_id, role, upstream ids, extra record urls). DAKP is the primary knowledge source
+# for every edge family and always carries the edge-linkout record URL. FAERS remains a supporting
+# source for observed-use edges and keeps its static AEMS record URL; all other entries carry
+# no per-edge record URL. Requires Tablassert >= 14.0 (SkyeAv/Tablassert#116).
+_TABLE_SOURCES: dict[str, tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...]] = {
+    "approved_treats_assertions": (
+        (
+            INFORES_DAKP,
+            "primary_knowledge_source",
+            ("infores:dailymed", "infores:faers", "infores:ema", "infores:epar"),
+            (),
+        ),
+        ("infores:faers", "supporting_data_source", (), ()),
+        ("infores:dailymed", "supporting_data_source", (), ()),
+        # EMA/EPAR carry NO ``source_record_urls``: like DailyMed, the honest dataset URLs live on
+        # the section ``source.url`` + the RIG, and per-medicine EPAR URLs stay in the assertion
+        # TSV's ``supporting_spl_documents`` debug column (the override template is stamped
+        # verbatim on EVERY edge, so a per-row URL would be untruthful here).
+        ("infores:ema", "supporting_data_source", (), ()),
+        ("infores:epar", "supporting_data_source", (), ()),
+    ),
+    "faers_applied_to_treat_assertions": (
+        (
+            INFORES_DAKP,
+            "primary_knowledge_source",
+            ("infores:dailymed", "infores:faers", "infores:canada-vigilance"),
+            (),
+        ),
+        ("infores:faers", "supporting_data_source", (), (FAERS_SOURCE_RECORD_URL,)),
+        ("infores:dailymed", "supporting_data_source", (), ()),
+        # Canada Vigilance supporting entry: like DailyMed, the honest dataset URL lives on the
+        # section source.url + the RIG, and per-report record ids stay in the assertion TSV's
+        # supporting_faers_records debug column.
+        ("infores:canada-vigilance", "supporting_data_source", (), ()),
+    ),
+    "contraindication_assertions": (
+        (INFORES_DAKP, "primary_knowledge_source", ("infores:dailymed", "infores:epar"), ()),
+        ("infores:dailymed", "supporting_data_source", (), ()),
+        ("infores:epar", "supporting_data_source", (), ()),
+    ),
+}
+
+
+def _sources_template(table: str) -> list[dict[str, Any]]:
+    """Return explicit sources, adding the edge-linkout URL and any configured static record URLs."""
+    entries: list[dict[str, Any]] = []
+    for resource_id, role, upstream, record_urls in _TABLE_SOURCES[table]:
+        entry: dict[str, Any] = {"resource_id": resource_id, "resource_role": role}
+        if upstream:
+            entry["upstream_resource_ids"] = list(upstream)
+        urls = (
+            [EDGE_LINKOUT_URL_TEMPLATE, *record_urls]
+            if resource_id == INFORES_DAKP
+            else list(record_urls)
+        )
+        if urls:
+            entry["source_record_urls"] = urls
+        entries.append(entry)
+    return entries
+
+
+# assertion column -> (annotation name, multivalued separator), per table. Every DAKP edge resolves
+# to ``biolink:ChemicalEntityToDiseaseOrPhenotypicFeatureAssociation`` (Tablassert derives the
+# category from the (subject role, object role) pair, then keeps it for all three DAKP predicates),
+# so an annotation name is only useful if THAT class declares the slot. Anything else is relocated:
+# Tablassert's ``prune_to_class`` nulls what the class refuses and hands it to the inlined
+# ``has_supporting_studies`` as a ``"name=value"`` string in the StudyResult ``description`` — a
+# junk drawer, and nothing in ``NCATSTranslator/translator-ingests`` models evidence that way (there
+# a ``Study`` is a real cohort/dataset/trial with TYPED ``StudyResult`` slots). So each name below is
+# a slot the class actually holds:
+# * ``publications`` (``list[str]``, declared by the root ``Association`` class so every class
+#   :data:`OBJECT_CATEGORY_OVERRIDE` pins holds it) carries the sorted identifier union from the
+#   single ``edge_evidence`` column: ``dailymed:<spl_set_id>`` CURIEs for the backing DailyMed
+#   labels. This is the slot the deployed translator-ingests dakp transform lands DAKP evidence
+#   in anyway (it appends the legacy ``has_evidence`` values onto ``publications``, "store as
+#   publications for now"), so the edge ships the final slot directly and the ingest's stopgap
+#   re-homing disappears. One column,
+#   not two, because ANNOTATION NAMES MUST BE UNIQUE PER TABLE: Tablassert applies annotations
+#   as ``with_columns(pl.col(src).alias(name))`` in declaration order with no duplicate check,
+#   so a second ``publications`` entry would SILENTLY overwrite the first. Human-readable URLs
+#   remain in the unannotated source-specific debug columns and source-record provenance. (The
+#   deprecated Biolink ``supporting_documents`` slot — an alias of ``publications`` — is
+#   attached to no association class and was what previously landed in the study description.)
+#   The provenance-override path for the same slot is inert here: DAKP's ``ManualProvenance``
+#   carries no ``publications`` of its own (the model demands ``PMCID:``-prefixed CURIEs
+#   there), so Tablassert's provenance-phase ``publications`` op never runs to overwrite the
+#   column-encoded values.
+# * DAKP aggregates each cell into ONE pipe-joined string, so ``split_by: "|"`` is what makes it a
+#   real JSON array. Without the split Tablassert wraps the joined scalar into a USELESS
+#   one-element list (``["url1|url2"]``) that still passes Biolink validation — a silent-corruption
+#   guard, not a hard-failure one. Tablassert 8.2.1 removed the old ``delimiter`` spelling, and 10.0
+#   removed its ``method: list`` successor (a config-time literal — the same array on every row)
+#   entirely, so ``split_by`` is the ONLY encoding that can express a per-row array;
+# * ``clinical_approval_status`` is a first-class enum-typed field on the association class, so its
+#   values must be ``ClinicalApprovalStatusEnum`` members (see the enum-membership note in
+#   ``assertions/observed_uses.py``);
+# * ``number_of_cases`` (integer) takes the FAERS case count — the literal Biolink slot ("cases
+#   carrying the phenotype/disease"), declared by the classes :data:`OBJECT_CATEGORY_OVERRIDE`
+#   pins. Until 15.1 the NAME was unusable: Tablassert's study-size classifier claimed it
+#   (``coerce.study_size_target("number_of_cases") == "study_size"``), so the clean phase renamed
+#   it and the count landed on the inlined supporting study as ``Study.study_size``. 15.1's
+#   ``STUDY_SIZE_EXEMPT_PATTERN`` (SkyeAv/Tablassert#119) exempts the exact slot, so the column
+#   reaches the edge as ``number_of_cases`` — DAKP used the ``evidence_count`` alias before that;
+# * ``regulatory_approvals`` (FDA application numbers) is the CANONICAL multivalued slot,
+#   "numbers that identify specific drug applications", declared NATIVELY on
+#   ``EntityToDiseaseAssociation`` and ``EntityToPhenotypicFeatureAssociation``, the classes
+#   :data:`OBJECT_CATEGORY_OVERRIDE` pins, by biolink-model 4.4.5 (Tablassert >= 19.5.1), which
+#   renamed the FDA-specific ``FDA_regulatory_approvals`` to it on those classes. Tablassert 18 had
+#   carried the slot there ahead of the model through ``CLASS_FIELD_OVERRIDES`` and dropped that
+#   grant when 4.4.5 landed; ``prune_to_class`` keeps the field either way. The assertion TSV column keeps its
+#   ``FDA_regulatory_approvals`` name (the FDA-specific provenance contract) and the
+#   annotation renames it onto the canonical edge slot, the same column-to-slot mapping
+#   pattern as ``edge_evidence`` -> ``publications``. DAKP annotates it with
+#   ``split_by: "|"`` so the pipe-joined cell reaches the final KGX edge as its own top-level
+#   JSON ARRAY (the legacy ``approvals`` list shape) instead of a joined scalar.
+#   ``ner_confidence_score`` still has no reachable slot and no carve-out, so it folds into
+#   ``supporting_text`` as a ``"name: value"`` string — visible provenance, deliberately kept.
+#   ``has_confidence_score`` would be mechanically available for it, but the column is the max NER
+#   SPAN score — confidence that the disease MENTION was recognized, not that the statement is true
+#   — so promoting it would mislead any consumer that weights edges by confidence. The column name
+#   says so on the edge itself, so a reader of the folded ``supporting_text`` string sees what the
+#   number measures without consulting this file.
+# * ``supporting_case_ids`` (``list[str]``, Tablassert >= 16.6) is a Tablassert edge EXTRA, not a
+#   Biolink slot — the build-internal carrier of the exact per-case token set behind
+#   ``number_of_cases`` (one token per distinct FAERS case; see
+#   :func:`~dakp_pipeline.assertions.observed_uses.build_observed_use_rows`). When
+#   ``uuid_on_collision: merge`` folds rows whose different ``object_text`` spellings resolved to
+#   one CURIE — the case the old ``original_subject``/``original_object`` identity discriminators
+#   kept as separate edges — the merge unions the carrier lists and recomputes
+#   ``number_of_cases`` as the union size, so the extra unique cases are ADDED instead of dropped
+#   by first-wins scalar merging. The dedup pass strips the field before writing, so it never
+#   reaches the published NDJSON.
+_TABLE_ANNOTATIONS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
+    "approved_treats_assertions": (
+        ("FDA_regulatory_approvals", "regulatory_approvals", "|"),
+        ("edge_evidence", "publications", "|"),
+        ("clinical_approval_status", "clinical_approval_status", None),
+    ),
+    "faers_applied_to_treat_assertions": (
+        ("number_of_cases", "number_of_cases", None),
+        ("case_ids", "supporting_case_ids", "|"),
+        # Reporter application numbers are product metadata, not indication approvals.
+        # Keep the TSV column for status lookup/audit, but never encode it onto observed edges.
+        ("edge_evidence", "publications", "|"),
+        ("clinical_approval_status", "clinical_approval_status", None),
+    ),
+    "contraindication_assertions": (
+        ("FDA_regulatory_approvals", "regulatory_approvals", "|"),
+        ("edge_evidence", "publications", "|"),
+        # ``evidence_text`` (the SPL contraindication prose) is deliberately NOT annotated: mapped
+        # to ``supporting_text`` it buried every edge under full sentences, making the KGX output
+        # unreadable. The column stays in the assertion TSV as provenance; only the edge drops it.
+        ("ner_confidence_score", "ner_confidence_score", None),
+    ),
+}
+
+SUBJECT_COLUMN = "subject_text"
+OBJECT_COLUMN = "object_text"
+# Per-side category allow-lists. Tablassert ``prioritize`` is a soft ranking boost only, so each
+# side ALSO emits a hard ``avoid`` guard — the sorted complement of its allow-list over the
+# installed Tablassert's full Biolink ``Categories`` enum (see :func:`category_avoid_list`) —
+# keeping wacky fullmap categories (genes, taxa, publications, devices, ...) out of the graph.
+# The allow-list IS the ``prioritize`` tuple on each side; widen both together.
+SUBJECT_PRIORITIZE = ("Drug", "SmallMolecule", "ChemicalEntity")
+OBJECT_PRIORITIZE = ("Disease", "PhenotypicFeature")
+#: ``statement.category_override`` (Tablassert >= 15.0): the association class each object
+#: category pins, in place of the derived ``(subject role, object role)`` pair lookup. Tablassert
+#: derives ``ChemicalEntityToDiseaseOrPhenotypicFeatureAssociation`` for every DAKP pair, and that
+#: class neither declares ``number_of_cases`` nor receives the ``regulatory_approvals`` grant —
+#: Biolink/model policy keeps both on ``EntityToDiseaseAssociation`` /
+#: ``EntityToPhenotypicFeatureAssociation`` instead — so ``prune_to_class`` nulled them off the
+#: edge and rescued them into the pruned column. Pinning the
+#: two classes per object category is the split the legacy KG made for the same reason
+#: (``ref/legacy/bin/dakp-postprocess2jsonlBL.py``: ``biolink:EntityToDiseaseAssociation`` for
+#: Disease objects, ``biolink:EntityToPhenotypicFeatureAssociation`` for PhenotypicFeature ones,
+#: with the chemical-to-disease class commented out beside it). The keys are exactly
+#: :data:`OBJECT_PRIORITIZE`: every object category DAKP allows is pinned, so no row falls back to
+#: the derived pair.
+OBJECT_CATEGORY_OVERRIDE: dict[str, str] = {
+    "Disease": "EntityToDiseaseAssociation",
+    "PhenotypicFeature": "EntityToPhenotypicFeatureAssociation",
+}
+
+
+# Per-slot category guard for qualifier node encodings: the soft ``prioritize`` list plus the
+# hard ``avoid`` complement emitted alongside it. Every granted qualifier slot carries a guard —
+# for class-ranged slots the allow-list is the slot's Biolink range category; for the type-ranged
+# slots the allow-lists are EVIDENCE-derived from the v1.13.0 release audit (every distinct
+# resolved qualifier CURIE categorized against the production fullmap):
+# ``frequency_qualifier`` — 40/40 InformationContentEntity values legitimate ("Dosage", "Daily",
+# "Nearly every day"); all 78 off-list values junk (42 Drug dosage-form products like "clopidogrel
+# Oral Tablet", 16 ChemicalEntity forms like "Tablets", 2 Publication instruments like the
+# "Urgency Perception Scale Questionnaire", plus procedures/activities/locations);
+# ``temporal_context_qualifier`` — 72 InformationContentEntity values legitimate ("7 days",
+# "Preoperative", "short-term") plus exactly three legitimate Phenomenon values, all numeric
+# duration ranges ("3 to 5 days", "2 to 4 years", "1-5 years"); every off-list value junk
+# (Publications, a butterfly genus "Historis", genes "Minute"/"frst", diseases).
+# ``sex_qualifier`` is widened past its nominal ``BiologicalSex`` range because the fullmap has
+# essentially no BiologicalSex rows — sex wordings resolve to population-group concepts
+# ("women" -> UMLS:C0043210 "Woman") — so without PopulationOfIndividualOrganisms in the
+# allow-list every sex cell resolves to nothing and the slot never emits.
+_QUALIFIER_GUARD: dict[str, tuple[str, ...]] = {
+    "disease_context_qualifier": ("Disease",),
+    "anatomical_context_qualifier": ("AnatomicalEntity",),
+    "sex_qualifier": ("BiologicalSex", "PopulationOfIndividualOrganisms"),
+    "population_context_qualifier": ("PopulationOfIndividualOrganisms",),
+    "frequency_qualifier": ("InformationContentEntity",),
+    "temporal_context_qualifier": ("InformationContentEntity", "Phenomenon"),
+    # Biolink ranges the slot ``organism taxon``; the fullmap category is ``OrganismTaxon``. The
+    # cells are literal NCBITaxon CURIEs (see :mod:`dakp_pipeline.assertions.species`), each
+    # verified to resolve back to itself by ``tests/eval/species_lexicon_audit.py``.
+    "species_context_qualifier": ("OrganismTaxon",),
+}
+
+#: The Biolink slot DAKP carries its species context in (Tablassert >= 22.1.0 declares it on the
+#: root association class, so every DAKP association can hold it).
+SPECIES_QUALIFIER = "species_context_qualifier"
+
+#: Qualifier slots whose backing column the shapers populate on EVERY row. A blank cell there is
+#: a contract violation, so the row drops loudly instead of the edge silently losing the
+#: qualifier, which for a slot in :data:`UUID_FIELDS` would mint an edge id that could fold
+#: onto another species' edge.
+_NON_NULLABLE_QUALIFIERS: frozenset[str] = frozenset({SPECIES_QUALIFIER})
+
+# Why DAKP declares NO ``taxon_from`` (Tablassert >= 22.1.0 per-row taxon-scoped resolution),
+# even though the feature exists and an animal label's own species is the natural scope.
+# Two probes against the production fullmap (``/local_raid1/sgoetz/DBSTORE/FULLMAP/fullmap``,
+# ``tablassert quick_map``, 2026-10-21) make it unusable with today's vocabulary:
+#
+# 1. The scope source can never satisfy the guard. ``ResolveSpec.taxon_from`` reads the source
+#    column's resolved ``<col>_taxon`` metadata, which Tablassert NULLS whenever a match carries
+#    ``TAXON_ID 0`` (``fullmap._join_matches_eager``). Every ``OrganismTaxon`` row in the
+#    production fullmap is ``TAXON_ID 0`` (``NCBITaxon:9606`` and ``NCBITaxon:9615`` both return
+#    ``TAXON_ID 0``), so a species column provides no scope at all: a build over the real
+#    vocabulary dies with ``taxon-from-not-ncbitaxon`` ("'NCBITaxon:9615' -> None").
+# 2. Scoping the OBJECT would delete animal-label edges even if (1) were fixed. Disease and
+#    phenotype concepts carry the HUMAN taxon: ``asthma`` -> ``MONDO:0004979`` at ``TAXON_ID
+#    9606``, ``headache`` -> ``HP:0002315`` at ``TAXON_ID 9606``, ``hypercholesterolemia`` ->
+#    ``HP:0003124`` at ``TAXON_ID 9606``, and the filter keeps only ``TAXON_ID == <scope> or 0``.
+#    The same probe under the dog scope (9615) returned ZERO rows for ``asthma`` and demoted
+#    ``hypercholesterolemia`` to ``UMLS:C1522133`` (``Phenomenon``). Objects are non-nullable, so
+#    every animal edge would vanish instead of being partitioned by species.
+#
+# Species therefore shapes the OUTPUT, not resolution: it is a resolved ``OrganismTaxon``
+# qualifier (the species entity itself resolves per row, human default lifted) and it is part of
+# every edge id, which is what keeps a dog assertion and a human assertion about the same drug and
+# condition on two separate edges. Revisit ``taxon_from`` when the fullmap tags ``OrganismTaxon``
+# rows with their own taxon id and carries species-partitioned disease and phenotype vocabularies
+# (and when Tablassert can read a scope from a taxon-typed source CURIE).
+#
+# The rationale above is exercised by tests/unit/test_tablassert_configs.py, which asserts that
+# no statement encoding on any table declares ``taxon_from``.
+
+# CURIE namespace prefixes dropped during qualifier entity resolution (``Qualifier`` extends
+# ``NodeEncoding``, so ``exclude_prefixes`` applies verbatim). ``EMAPA`` is the Mouse Anatomy
+# ontology; 65 anatomical-context edges in v1.13.0 carried ``EMAPA:36867`` (craniocervical
+# region) on human drug data.
+_QUALIFIER_EXCLUDE_PREFIXES: dict[str, tuple[str, ...]] = {
+    "anatomical_context_qualifier": ("EMAPA",)
+}
+
+# Anchored CURIE denylists for qualifier node encodings (same mechanism as
+# :data:`_OBJECT_EXCLUDE_REGEX`): junk candidates the fullmap ties to legitimate wordings, where
+# denying the WORDING would also kill the honest candidate. Every entry is evidence-cited from
+# the v1.13.0 release audit (edge counts in parentheses). Denying a junk candidate lets the next
+# ranked candidate win — "eye" then resolves to the UBERON concept instead of the UMLS specimen
+# concept — and an unresolvable cell keeps its edge minus only the qualifier (``nullable``).
+_QUALIFIER_EXCLUDE_REGEX: dict[str, tuple[str, ...]] = {
+    "anatomical_context_qualifier": (
+        # UMLS specimen / bodily-material concepts (category AnatomicalEntity, but lab specimens
+        # and products, not anatomy): "Eye Specimen" (195), "Skin Specimen" (127),
+        # "Plasma - SpecimenType" (52), "Plasma Product" NCIT (52), "SpecimenType - Cornea" (48),
+        # "Fetal Tissue" (36), "Tumor tissue sample" (35), "Serum specimen" (19),
+        # "Specimen Type - Bone" (15), "XXX bone" (14), "Specimen Type - Wound" (12),
+        # "Specimen Type - Throat" (8), "Peripheral blood specimen" (8),
+        # "Bronchial Secretion" UMLS+NCIT (5+5), "Breast tissue sample" (2),
+        # "Red Blood Cells Product" NCIT (2), "Urethra specimen" (2), "Milk, Human" (2),
+        # "Placenta Specimen" (2), "Tissue specimen" (1), "Specimen Type - Skeletal muscle" (1),
+        # "Cervix Specimen" (1), "Specimen Type - Conjunctiva" (1), "Blood Glucose" NCIT (1).
+        r"^UMLS:C1550636$",
+        r"^UMLS:C0444099$",
+        r"^UMLS:C1609077$",
+        r"^NCIT:C133266$",
+        r"^UMLS:C1550625$",
+        r"^UMLS:C0242291$",
+        r"^UMLS:C0475358$",
+        r"^UMLS:C1550100$",
+        r"^UMLS:C1550616$",
+        r"^UMLS:C1442209$",
+        r"^UMLS:C1550680$",
+        r"^UMLS:C1550663$",
+        r"^UMLS:C1292451$",
+        r"^UMLS:C1511332$",
+        r"^NCIT:C13465$",
+        r"^UMLS:C0444070$",
+        r"^NCIT:C133280$",
+        r"^UMLS:C1550675$",
+        r"^UMLS:C0026140$",
+        r"^UMLS:C1550656$",
+        r"^UMLS:C1292533$",
+        r"^UMLS:C1550659$",
+        r"^UMLS:C1550623$",
+        r"^UMLS:C1550624$",
+        r"^NCIT:C94312$",
+        # Non-human / cross-taxon concepts: "Mouse Uterus" (20), "Mouse Vagina" (7),
+        # "Animal Tarsus" (1), insect "adult cerebral ganglion" UBERON (12),
+        # invertebrate "somatic muscle" UBERON (1). Mouse-anatomy EMAPA namespace prefixes are
+        # dropped wholesale via :data:`_QUALIFIER_EXCLUDE_PREFIXES`.
+        r"^UMLS:C1519876$",
+        r"^UMLS:C1519910$",
+        r"^UMLS:C1522382$",
+        r"^UBERON:6110636$",
+        r"^UBERON:0014895$",
+        # UMLS structural breadcrumb concepts ( anatomical parent>child path strings, not
+        # anatomy themselves): "Head>Eye" (195), "Lower extremity>Knee" (79),
+        # "Abdomen>Liver" (45), "Pelvis>Fallopian tube" (28), "Chest>Heart" (26),
+        # "Lower extremity>Hip" (20), "Pelvis>Uterus" (20), "Head+Neck>Nasopharynx" (14),
+        # "Pelvis>Rectum" (12), "Head>Brain" (12), "Pelvis>Ovary" (11), "Chest>Lung" (10),
+        # "Neck>Thyroid gland" (9), "Upper extremity>Forearm" (8), "Abdomen>Pancreas" (7),
+        # "Pelvis>Vagina" (7), "Abdomen+Pelvis>Gastrointestinal tract" (5),
+        # "Pelvis>Groin" (3), "Lower extremity>Thigh" (3),
+        # "Abdomen+Pelvis>Urinary bladder" (3), "Abdomen+Pelvis>Colon" (3),
+        # "Chest>Aortic arch" (2), "Head>Sinuses" (2), "Upper extremity>Shoulder" (2),
+        # "Pelvis>Placenta" (2), "Head>Face" (1), "Lower extremity>Toes" (1),
+        # "Abdomen>Stomach" (1), "Upper extremity>Finger" (1), "Head>Teeth" (1),
+        # "Chest>Airway" (1).
+        r"^UMLS:C4266572$",
+        r"^UMLS:C4299094$",
+        r"^UMLS:C4037986$",
+        r"^UMLS:C4266534$",
+        r"^UMLS:C4037974$",
+        r"^UMLS:C4299095$",
+        r"^UMLS:C4266525$",
+        r"^UMLS:C4266579$",
+        r"^UMLS:C4482211$",
+        r"^UMLS:C4266577$",
+        r"^UMLS:C4266530$",
+        r"^UMLS:C4037972$",
+        r"^UMLS:C4266537$",
+        r"^UMLS:C4299051$",
+        r"^UMLS:C4037927$",
+        r"^UMLS:C4482396$",
+        r"^UMLS:C4299166$",
+        r"^UMLS:C4266533$",
+        r"^UMLS:C4299091$",
+        r"^UMLS:C4037992$",
+        r"^UMLS:C4071907$",
+        r"^UMLS:C4037976$",
+        r"^UMLS:C4071871$",
+        r"^UMLS:C4299050$",
+        r"^UMLS:C4266528$",
+        r"^UMLS:C4266571$",
+        r"^UMLS:C4299090$",
+        r"^UMLS:C4266636$",
+        r"^UMLS:C4299059$",
+        r"^UMLS:C4071855$",
+        r"^UMLS:C4071894$",
+    ),
+    "population_context_qualifier": (
+        # Survey/administrative UMLS Population-Group concepts that are not populations of
+        # individuals for our purposes: "Humanities" (2), "Respondents" (2),
+        # "Health Personnel" (1).
+        r"^UMLS:C0020157$",
+        r"^UMLS:C0282122$",
+        r"^UMLS:C0018724$",
+    ),
+    "temporal_context_qualifier": (
+        # History-of / anamnesis Phenomenon concepts — the category guard keeps Phenomenon for
+        # genuine duration ranges ("3 to 5 days"), so these are excluded by CURIE:
+        # "Medical History" (73), "History of osteoporotic fracture" (25), "Prior Therapy" (13),
+        # "Planning to become pregnant" (12), "Prolonged menses" (6), "Past history of" (4),
+        # "H/O: hypertension" (3), "Childhood onset" (2), "previous therapy" (1),
+        # "Undiagnosed" (1), "history of drug abuse" (1).
+        r"^UMLS:C0262926$",
+        r"^UMLS:C4075937$",
+        r"^UMLS:C1514463$",
+        r"^UMLS:C2081645$",
+        r"^UMLS:C0425945$",
+        r"^UMLS:C0332119$",
+        r"^UMLS:C0455527$",
+        r"^UMLS:C1837352$",
+        r"^UMLS:C2114510$",
+        r"^UMLS:C1408353$",
+        r"^UMLS:C1299544$",
+    ),
+}
+
+# Per-table biolink statement qualifiers: (qualifier slot, backing assertion column). Emitted as
+# ``statement.qualifiers`` entries ONLY where the table's writer actually populates the backing
+# column. Every entry is sparse — blank for the vast majority of rows — so every qualifier emits
+# ``nullable: true``: an absent or unresolved cell keeps the edge and omits only the qualifier
+# rather than dropping the row. Validity is two-layered: the slot must be a member of the
+# installed Tablassert's Biolink ``Qualifiers`` enum and survive ``prune_to_class`` on the pinned
+# classes. The second layer is met natively or by grant, depending on the pinned model: biolink-model
+# 4.4.5 (Tablassert >= 19.5.1) attaches ``disease_context_qualifier``,
+# ``anatomical_context_qualifier``, and ``frequency_qualifier`` to the whole disease/phenotype
+# association family and ``sex_qualifier`` to ``EntityToPhenotypicFeatureAssociation``; biolink-model
+# 4.4.6 (Tablassert >= 19.7.0, SkyeAv/Tablassert#213) attaches ``population_context_qualifier`` to both
+# pinned classes; and Tablassert's ``CLASS_FIELD_OVERRIDES`` still grants
+# ``temporal_context_qualifier`` to both pinned classes plus ``sex_qualifier`` to
+# ``EntityToDiseaseAssociation`` (15.1/#120 and 19.0/#188 had granted all six before the model
+# absorbed five of them). Either way the qualifier rides the edge; a downgrade that loses coverage nulls it
+# into the pruned column, which
+# ``test_qualifier_stack_survives_prune_to_class_on_the_pinned_classes`` fails on.
+_TABLE_QUALIFIERS: dict[str, tuple[tuple[str, str], ...]] = {
+    # DailyMed approved-treats rows: ``anatomical_context_text`` / ``sex_text`` /
+    # ``population_context_text`` / ``frequency_text`` / ``temporal_context_text`` are populated
+    # by the sentence-hosted qualifier attachment (``assertions/approved_treats.py`` via
+    # ``contexts.attach_qualifiers_with_scores``) — sparse, blank when a sentence carries no
+    # qualifier span. ``disease_context_text`` is populated by the explicit patient-clause
+    # template classifier (``contexts.patient_clause_contexts``): an indication sentence
+    # "for treatment of A in patients with B" carries B as the disease context of the A edge —
+    # the same slot, guard, and grant the contraindication table rides. ``clinical_approval_status``
+    # ("approved_for_condition") stays an annotation: it is the Biolink ClinicalApprovalStatusEnum
+    # ASSOCIATION slot, not a qualifier slot — no ``Qualifiers`` member expresses approval status —
+    # and FDA application numbers / SPL ids are provenance strings, not entities.
+    "approved_treats_assertions": (
+        ("disease_context_qualifier", "disease_context_text"),
+        ("anatomical_context_qualifier", "anatomical_context_text"),
+        ("sex_qualifier", "sex_text"),
+        ("population_context_qualifier", "population_context_text"),
+        ("frequency_qualifier", "frequency_text"),
+        ("temporal_context_qualifier", "temporal_context_text"),
+        # Populated on EVERY row (human constant or the derived animal CURIE), so it is the one
+        # non-nullable slot; it also joins the edge identity in :data:`UUID_FIELDS`.
+        (SPECIES_QUALIFIER, "species_context_text"),
+    ),
+    # The indication (object) is the only disease on a FAERS row, so a ``disease_context_qualifier``
+    # encoded from the object column just restates the object — biolink defines it as the condition
+    # a relationship "took place" in, which only informs when it DIFFERS from the object. The
+    # ``applied_to_treat`` predicate + ``knowledge_level: observation`` already carry the semantics.
+    # The adverse event itself (FAERS ``effects``) is aggregated away and not part of the assertion
+    # contract; it is an adverse reaction rather than a disease context, so it is not a substitute.
+    # The five sentence-hosted qualifier columns stay unwired: a FAERS row has no sentence to host
+    # qualifier attachment, so no writer populates them. ``species_context_text`` IS populated (the
+    # human constant on every FAERS and Canada Vigilance row: both are human spontaneous-report
+    # sources), so this table declares exactly that one qualifier, which keeps observed-use edges
+    # in the same species-partitioned identity space as the label-derived families.
+    "faers_applied_to_treat_assertions": ((SPECIES_QUALIFIER, "species_context_text"),),
+    # ``disease_context_text`` is a distinct disease from the contraindicated object only when the
+    # extractor's explicit template classifier populated it; blank cells are valid and the qualifier
+    # is emitted ``nullable``, so an unconditional contraindication keeps its edge minus only the
+    # qualifier. Disease-only by design: medications belong in a future chemical-entity interaction
+    # assertion, not this slot. The same sentence-hosted attachment (``assertions/
+    # contraindications.py``) populates the five sparse qualifier columns on this table too.
+    "contraindication_assertions": (
+        ("disease_context_qualifier", "disease_context_text"),
+        ("anatomical_context_qualifier", "anatomical_context_text"),
+        ("sex_qualifier", "sex_text"),
+        ("population_context_qualifier", "population_context_text"),
+        ("frequency_qualifier", "frequency_text"),
+        ("temporal_context_qualifier", "temporal_context_text"),
+        # Populated on EVERY row (human constant or the derived animal CURIE), so it is the one
+        # non-nullable slot; it also joins the edge identity in :data:`UUID_FIELDS`.
+        (SPECIES_QUALIFIER, "species_context_text"),
+    ),
+}
+
+_GENERATE_OPERATION = "generate_tablassert_configs"
+
+
+@lru_cache(maxsize=1)
+def _biolink_categories() -> tuple[str, ...]:
+    """All entity category names of the installed Tablassert's Biolink model, sorted.
+
+    Tablassert builds its ``Categories`` enum dynamically from the Biolink Model it ships, so
+    deriving the universe from the installed package (instead of freezing a copy here) keeps the
+    emitted ``avoid`` lists exactly consistent with the enum that validates them at config load —
+    across Tablassert/Biolink upgrades and fullmap rebuilds alike. The first import parses the
+    whole LinkML model (seconds), so the result is cached per interpreter: the model is static
+    within a process, and ``table_config`` calls this once per encoded slot.
+    """
+    from tablassert.biolink import Categories  # lazy: keep this module's own import light
+
+    return tuple(sorted(category.value for category in Categories))
+
+
+def category_avoid_list(allowed: Sequence[str]) -> list[str]:
+    """Hard category allow-list for one node encoding, expressed as Tablassert's ``avoid`` list.
+
+    Tablassert has no allow-list knob: ``NodeEncoding.avoid`` is the only hard category filter
+    (``prioritize`` merely re-ranks), so the allow-list is emitted as the SORTED complement of
+    ``allowed`` over every category in the installed Biolink model. Candidates carrying an avoided
+    category are dropped during entity resolution; a mention whose only candidates are avoided
+    stays unresolved (its row emits no edge, logged by Tablassert) — recall is deliberately traded
+    for the guarantee that no off-allow-list category reaches the graph.
+
+    Raises ``ValueError`` when an ``allowed`` entry is not a category the installed Tablassert
+    knows (it would fail Tablassert config validation anyway — fail loudly at generation time).
+    """
+    universe = _biolink_categories()
+    unknown = sorted(set(allowed) - set(universe))
+    if unknown:
+        msg = f"allowed categories not in the installed Tablassert Biolink model: {unknown}"
+        raise ValueError(msg)
+    allowed_set = set(allowed)
+    return [category for category in universe if category not in allowed_set]
+
+
+# --- Excel-style column letters ---------------------------------------------------
+
+
+def excel_column(index: int) -> str:
+    """0-based column index -> Excel-style letters (``0->A``, ``25->Z``, ``26->AA``).
+
+    Tablassert reads source files headerless and addresses columns by Excel-style letters
+    (``EncodingMethods.COLUMN``); this maps an assertion-table column position to its letter.
+    """
+    if index < 0:
+        msg = f"column index must be >= 0, got {index}"
+        raise ValueError(msg)
+    letters = ""
+    n = index + 1
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        letters = chr(ord("A") + remainder) + letters
+    return letters
+
+
+def _casing_variants(name: str) -> tuple[str, ...]:
+    """Casing renderings of a denylist entry, canonical uppercase first.
+
+    Tablassert's ``ne`` reindex filter is polars ``!=`` — an exact, case-SENSITIVE string compare
+    (``tablassert.lib.reindex``, ``cast=False`` for ``eq``/``ne``) — and the ``Comparisons`` enum
+    has no case-insensitive member, so case-insensitive denial has to be spelled out as one ``ne``
+    per rendering. On the subject side FAERS ``drugname`` is reporter-entered free text carried
+    through verbatim: uppercase dominates, with title ("Generic Drug"), sentence ("Generic drug")
+    and lower renderings all occurring in practice. On the object side the casing varies by
+    channel — disease-map dictionary keys, raw FAERS indication strings, and
+    ``normalize_text``-lowercased NER mentions — but the same four renderings cover the realistic
+    space (see the deployed 1.11.2 KG, where "hypersensitivity", "HYPERSENSITIVITY",
+    "Hypersensitivity" and "Drug hypersensitivity" all occur). Deduplicated (single-word entries
+    collapse title into sentence case) and order-stable so the committed configs stay
+    byte-reproducible. Known gap: a mid-word oddity ("PLaCEBO") still slips through — closing it
+    needs a case-insensitive comparison in Tablassert itself.
+    """
+    return tuple(dict.fromkeys((name.upper(), name.lower(), name.title(), name.capitalize())))
+
+
+def column_letter(table: str, column: str) -> str:
+    """Excel-style letter for ``column`` in ``table``'s ordered contract (KeyError if absent)."""
+    columns = schemas.columns_for(table)
+    if column not in columns:
+        msg = f"column {column!r} not in {table} contract: {columns}"
+        raise KeyError(msg)
+    return excel_column(columns.index(column))
+
+
+# --- config dict builders (single source of truth) --------------------------------
+
+
+def table_config(table: str) -> dict[str, Any]:
+    """Build the Tablassert ``Section`` body (the ``template:`` value) for an assertion table.
+
+    Shape verified against ``tablassert.models.Section``: ``source`` (text), ``statement``
+    (column-encoded subject/predicate/object plus the table's ``qualifiers`` when a column backs
+    them), ``provenance.override`` (ManualProvenance), and column-encoded ``annotations`` for the
+    table's evidence columns. Subject/object carry ``prioritize`` (soft ranking) plus ``avoid`` —
+    the hard allow-list guard computed by :func:`category_avoid_list` from the side's ``prioritize``
+    tuple. Since Tablassert 18.1.0 the ``Categories`` enum names every category the fullmap emits
+    (biolink mixins like ``GenomicEntity`` are first-class via ``CATEGORY_OVERRIDES``), so the
+    complement needs no CURIE-level stopgap. Qualifier values use their own per-slot category
+    guard (:data:`_QUALIFIER_GUARD`): class-ranged slots are constrained to their range's
+    category (``Disease`` for the contraindication context, ``AnatomicalEntity`` /
+    ``BiologicalSex`` / ``PopulationOfIndividualOrganisms`` for the sparse stack's class-ranged
+    slots), while the type-ranged slots (``frequency_qualifier``, ``temporal_context_qualifier``)
+    carry no guard. Every qualifier is ``nullable`` — sparse columns keep the edge when the cell
+    is blank or unresolved, omitting only the qualifier. A table
+    with a :data:`_TABLE_SUBJECT_DENYLIST` entry additionally carries ``source.reindex`` ``ne``
+    filters — one per :func:`_casing_variants` rendering of each entry — that drop those
+    subject_text rows before entity resolution, and EVERY table carries the same ``ne`` filters for
+    :data:`_TABLE_OBJECT_DENYLIST` on its object_text column plus the object NodeEncoding's
+    :data:`_OBJECT_EXCLUDE_REGEX` CURIE exclusions.
+    """
+    _basename, predicate, knowledge_level, agent_type = _TABLE_SPECS[
+        table
+    ]  # KeyError for unknown tables
+    annotations: list[dict[str, Any]] = []
+    for column, annotation, split_by in _TABLE_ANNOTATIONS[table]:
+        entry: dict[str, Any] = {
+            "annotation": annotation,
+            "method": "column",
+            "encoding": column_letter(table, column),
+        }
+        if (
+            split_by is not None
+        ):  # multivalued Biolink slot: split the pipe-joined cell into a JSON array
+            entry["split_by"] = split_by
+        annotations.append(entry)
+    qualifiers: list[dict[str, Any]] = []
+    for qualifier, column in _TABLE_QUALIFIERS[table]:
+        entry: dict[str, Any] = {
+            "qualifier": qualifier,
+            "method": "column",
+            "encoding": column_letter(table, column),
+            # Sparse by construction: blank cells keep the edge and omit only the qualifier
+            # (Tablassert >= 15.1 ``nullable`` semantics), except for the slots in
+            # :data:`_NON_NULLABLE_QUALIFIERS`, which the shapers populate on every row.
+            "nullable": qualifier not in _NON_NULLABLE_QUALIFIERS,
+        }
+        if qualifier == SPECIES_QUALIFIER:
+            # Lift the 9606 default so the slot resolves EVERY species CURIE, not just the human
+            # one. Production OrganismTaxon rows carry TAXON_ID 0 (which any taxon filter keeps),
+            # so this is intent-revealing today and load-bearing if a rebuild ever tags those rows
+            # with their own taxon id.
+            entry["taxon"] = None
+        guard = _QUALIFIER_GUARD[
+            qualifier
+        ]  # every granted slot carries a guard; KeyError = unknown slot
+        entry["prioritize"] = list(guard)
+        entry["avoid"] = category_avoid_list(guard)
+        if prefixes := _QUALIFIER_EXCLUDE_PREFIXES.get(qualifier):
+            entry["exclude_prefixes"] = list(prefixes)
+        if patterns := _QUALIFIER_EXCLUDE_REGEX.get(qualifier):
+            entry["exclude_regex"] = list(patterns)
+        qualifiers.append(entry)
+    statement: dict[str, Any] = {
+        "subject": {
+            "method": "column",
+            "encoding": column_letter(table, SUBJECT_COLUMN),
+            "prioritize": list(SUBJECT_PRIORITIZE),
+            "avoid": category_avoid_list(SUBJECT_PRIORITIZE),
+            "exclude_regex": list(_SUBJECT_EXCLUDE_REGEX),
+        },
+        "predicate": predicate,
+        "object": {
+            "method": "column",
+            "encoding": column_letter(table, OBJECT_COLUMN),
+            "prioritize": list(OBJECT_PRIORITIZE),
+            "avoid": category_avoid_list(OBJECT_PRIORITIZE),
+            "exclude_regex": list(_OBJECT_EXCLUDE_REGEX),
+        },
+        "category_override": dict(OBJECT_CATEGORY_OVERRIDE),
+    }
+    if qualifiers:  # no backing column => no ``qualifiers`` key (Tablassert treats absent and empty alike; keep configs minimal)
+        statement["qualifiers"] = qualifiers
+    source: dict[str, Any] = {
+        "kind": "text",
+        "local": f"tabular/{table}.tsv",
+        "url": list(_TABLE_SOURCE_URLS[table]),
+        "delimiter": "\t",
+    }
+    reindex: list[dict[str, Any]] = []
+    subject_denylist = _TABLE_SUBJECT_DENYLIST.get(table)
+    if subject_denylist:
+        subject_letter = column_letter(table, SUBJECT_COLUMN)
+        reindex += [
+            {"column": subject_letter, "comparison": "ne", "comparator": variant}
+            for name in subject_denylist
+            for variant in _casing_variants(name)
+        ]
+    object_letter = column_letter(table, OBJECT_COLUMN)
+    reindex += [
+        {"column": object_letter, "comparison": "ne", "comparator": variant}
+        for name in _TABLE_OBJECT_DENYLIST
+        for variant in _casing_variants(name)
+    ]
+    source["reindex"] = reindex
+    return {
+        "source": source,
+        "statement": statement,
+        "provenance": {
+            "override": {
+                # Explicit ``sources`` list: the DAKP primary entry carries the edge-linkout
+                # record-URL template, followed by the per-resource supporting entries;
+                # Tablassert >= 14.0 uses it verbatim on every edge and resolves the
+                # ``{edge_id}`` placeholder post-build. The FAERS supporting entry additionally
+                # carries its static AEMS record URL; the section ``source.url`` remains the
+                # RIG/audit record.
+                "sources": _sources_template(table),
+                "knowledge_level": knowledge_level,
+                "agent_type": agent_type,
+            }
+        },
+        "annotations": annotations,
+    }
+
+
+def graph_config(
+    tables: list[str] | None = None,
+    version: str | None = None,
+    fullmap: str = FULLMAP_DEFAULT,
+    rig_artifact_base_url: str | None = None,
+) -> dict[str, Any]:
+    """Build the Tablassert ``Graph`` config dict (verified against ``tablassert.models.Graph``).
+
+    ``tables`` defaults to the three committed table configs (``tables/<basename>.yaml``);
+    ``version`` defaults to the DAKP package version. ``fullmap`` is the fullmap redb path the
+    ``build-kg`` resolve step reads from the Graph config (Tablassert >= 8.1 has no ``--fullmap``
+    flag); it defaults to :data:`FULLMAP_DEFAULT` for deferred runs that never invoke ``build-kg``.
+    The mandatory ``rig:`` section (Tablassert >= 11) is constant — see :func:`_rig_config`.
+    ``uuid_fields`` (Tablassert >= 16.0) pins edge identity to :data:`UUID_FIELDS`;
+    ``uuid_domain`` pins the id namespace to :data:`UUID_DOMAIN` so an infores rename cannot
+    re-mint ids, and ``uuid_on_collision: merge`` (Tablassert >= 16.2) merges edges that
+    derive one id (synonym mentions resolving to the same CURIE) instead of aborting the
+    build with ``uuid-fields-not-a-key``.
+    """
+    if tables is None:
+        tables = [f"tables/{_TABLE_SPECS[table][0]}.yaml" for table in _TABLE_ORDER]
+    return {
+        "name": GRAPH_NAME,
+        "version": version if version is not None else DEFAULT_PUBLICATION_VERSION,
+        "fullmap": fullmap,
+        "rig": _rig_config(tables, rig_artifact_base_url),
+        "uuid_fields": list(UUID_FIELDS),
+        "uuid_domain": UUID_DOMAIN,
+        "uuid_on_collision": "merge",
+        "tables": list(tables),
+    }
+
+
+# --- minimal stdlib YAML emitter (no pyyaml runtime dep; round-trips) -------------
+
+_PLAIN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_./-]*$")
+_RESERVED = {
+    "",
+    "~",
+    "true",
+    "false",
+    "null",
+    "yes",
+    "no",
+    "on",
+    "off",
+    "True",
+    "False",
+    "Null",
+    "None",
+}
+_FOLD_WIDTH = 70
+_FOLD_THRESHOLD = 60
+
+
+def _is_safe_plain(text: str) -> bool:
+    """True when ``text`` may be emitted as an unquoted YAML plain scalar.
+
+    Excludes YAML reserved words and anything with characters outside a conservative
+    identifier-ish set (so infores CURIEs, URLs, and the tab delimiter are always quoted).
+    A leading letter/underscore is required, which also keeps bare numbers quoted.
+    """
+    return text not in _RESERVED and bool(_PLAIN_RE.match(text))
+
+
+def _yaml_scalar(value: Any) -> str:
+    if value is None:
+        # YAML null, never the string "None": Tablassert types these fields (``taxon``) as
+        # ``PositiveInt | None``, so a stringified None fails config validation at load.
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value)
+    if _is_safe_plain(text):
+        return text
+    escaped = (
+        text.replace("\\", "\\\\").replace('"', '\\"').replace("\t", "\\t").replace("\n", "\\n")
+    )
+    return f'"{escaped}"'
+
+
+def _should_fold(text: str) -> bool:
+    """Long, space-bearing strings are emitted as ``>-`` folded blocks (readable committed configs)."""
+    return len(text) > _FOLD_THRESHOLD and " " in text
+
+
+def _wrap(text: str, width: int = _FOLD_WIDTH) -> list[str]:
+    """Greedy word-wrap; ``>-`` folding joins the lines back with single spaces (lossless)."""
+    lines: list[str] = []
+    current = ""
+    for word in text.split(" "):
+        if current and len(current) + 1 + len(word) > width:
+            lines.append(current)
+            current = word
+        else:
+            current = f"{current} {word}" if current else word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _indent(level: int) -> str:
+    return "  " * level
+
+
+def _emit_mapping(mapping: dict[str, Any], level: int, lines: list[str]) -> None:
+    pad = _indent(level)
+    for key, value in mapping.items():
+        if isinstance(value, dict):
+            lines.append(f"{pad}{key}:")
+            _emit_mapping(value, level + 1, lines)
+        elif isinstance(value, list):
+            lines.append(f"{pad}{key}:")
+            _emit_list(value, level + 1, lines)
+        elif isinstance(value, str) and _should_fold(value):
+            lines.append(f"{pad}{key}: >-")
+            lines.extend(f"{_indent(level + 1)}{folded}" for folded in _wrap(value))
+        else:
+            lines.append(f"{pad}{key}: {_yaml_scalar(value)}")
+
+
+def _emit_list(items: list[Any], level: int, lines: list[str]) -> None:
+    pad = _indent(level)
+    for item in items:
+        if isinstance(item, dict):
+            # Render as a mapping one level deeper, then rewrite the first line's indent into
+            # a "- " dash (same width: one indent level == two spaces == "- ").
+            sub: list[str] = []
+            _emit_mapping(item, level + 1, sub)
+            prefix = _indent(level + 1)
+            sub[0] = f"{pad}- {sub[0][len(prefix) :]}"
+            lines.extend(sub)
+        else:
+            lines.append(f"{pad}- {_yaml_scalar(item)}")
+
+
+def _dump_yaml(data: dict[str, Any]) -> str:
+    lines: list[str] = []
+    _emit_mapping(data, 0, lines)
+    return "\n".join(lines) + "\n"
+
+
+# --- serialized config strings ----------------------------------------------------
+
+
+def table_yaml(table: str) -> str:
+    """Serialized table config YAML: the ``Section`` body wrapped in a top-level ``template:``."""
+    return _dump_yaml({"template": table_config(table)})
+
+
+def graph_yaml(
+    tables: list[str] | None = None,
+    version: str | None = None,
+    fullmap: str = FULLMAP_DEFAULT,
+    rig_artifact_base_url: str | None = None,
+) -> str:
+    """Serialized Graph config YAML."""
+    return _dump_yaml(
+        graph_config(
+            tables=tables,
+            version=version,
+            fullmap=fullmap,
+            rig_artifact_base_url=rig_artifact_base_url,
+        )
+    )
+
+
+# --- runtime generation into the workdir ------------------------------------------
+
+
+def generate(assertion_refs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
+    """Write ``tables/graph.yaml`` plus one table config per assertion table into the workdir.
+
+    Configs land in ``<workdir>/tables/`` so their workdir-relative references
+    (``tables/<name>.yaml``, ``tabular/<table>.tsv``) resolve when Tablassert runs from the
+    workdir root. ``graph.yaml`` carries the fullmap redb path the ``build-kg`` resolve step reads
+    (Tablassert reads it from the Graph config; the ``--fullmap`` flag is gone in >= 8.1):
+    the real ``ctx.params["fullmap"]`` when present, else the :data:`FULLMAP_DEFAULT`
+    placeholder (deferred runs never invoke ``build-kg``). Returns ``[graph_ref, *table_refs]`` in
+    the canonical table order; assertion refs are linked as input provenance by table stem.
+    """
+    workdir = Workdir(ctx.workdir)
+    store = ArtifactStore(workdir)
+    tables_dir = workdir.root / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+
+    input_ids = {ref.uri.stem: ref.blake3 for ref in assertion_refs}
+    operation = OperationBlock(name=_GENERATE_OPERATION)
+
+    event = "generate_tablassert_configs"
+    stats(logger, event, configs_dir=str(tables_dir), assertion_inputs=len(assertion_refs))
+    table_refs: list[ArtifactRef] = []
+    table_paths: list[str] = []
+    for table in _TABLE_ORDER:
+        basename = _TABLE_SPECS[table][0]
+        config_path = tables_dir / f"{basename}.yaml"
+        config_path.write_text(table_yaml(table), encoding="utf-8")
+        table_paths.append(f"tables/{basename}.yaml")
+        inputs = [input_ids[table]] if table in input_ids else []
+        table_refs.append(
+            store.register(
+                config_path, media_type="application/yaml", inputs=inputs, operation=operation
+            )
+        )
+
+    graph_path = tables_dir / "graph.yaml"
+    fullmap = str(ctx.params["fullmap"]) if ctx.params.get("fullmap") else FULLMAP_DEFAULT
+    graph_path.write_text(graph_yaml(table_paths, fullmap=fullmap), encoding="utf-8")
+    graph_ref = store.register(
+        graph_path,
+        media_type="application/yaml",
+        inputs=[ref.blake3 for ref in table_refs],
+        operation=operation,
+    )
+
+    for ref in table_refs:
+        stats(logger, event, table_config=str(ref.uri), blake3=ref.blake3)
+    stats(logger, event, graph_config=str(graph_ref.uri), blake3=graph_ref.blake3, fullmap=fullmap)
+    return [graph_ref, *table_refs]
+
+
+# --- runner ------------------------------------------------------------------------
+
+
+class TablassertError(RuntimeError):
+    """Raised when the ``tablassert`` subprocess exits non-zero.
+
+    The handoff report (with ``status: failed`` and full stdout/stderr) is written to disk
+    *before* this exception is raised, so it remains available for post-mortem debugging.
+    """
+
+
+DEFAULT_TABLASERT_DIR = "../Tablassert"
+TABLASERT_DIR_ENV = "DAKP_TABLASERT_DIR"
+REPORT_NAME = "tablassert_handoff.json"
+_REPORT_SCHEMA = "dakp.tablassert_handoff.v1"
+_RUN_OPERATION = "run_tablassert"
+
+
+def run_subprocess(
+    command: list[str], cwd: Path | None = None, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Execute ``command`` capturing stdout/stderr, never raising on non-zero exit.
+
+    ``timeout`` bounds the wall time: an expired process is killed and
+    :class:`subprocess.TimeoutExpired` is raised (loud, never a silent hang). ``None`` keeps
+    the historical unbounded behavior for callers that manage liveness themselves.
+
+    This is the monkeypatch point for tests: patch the ``run_subprocess`` attribute on THIS
+    module (``dakp_pipeline.tablassert``) and no real process is spawned.
+    """
+    return subprocess.run(
+        command, cwd=cwd, capture_output=True, text=True, check=False, timeout=timeout
+    )
+
+
+#: Terminal control sequences (colors / cursor moves) stripped from streamed subprocess lines.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _clean_stream_line(raw: str) -> str | None:
+    """Reduce one raw subprocess line to a loggable message, or ``None`` when it is noise.
+
+    Progress-bar redraws collapse to their LAST non-empty ``\r`` segment (the visible state
+    the writer left on the line); ANSI escapes are stripped; empty leftovers drop out.
+    Tablassert renders its rich progress on stderr, and under a pipe the bar emits its final
+    state rather than every frame — this filter keeps the rare stray redraw out of the task
+    log either way.
+    """
+    segments = [_ANSI_ESCAPE_RE.sub("", segment).strip() for segment in raw.split("\r")]
+    return next((segment for segment in reversed(segments) if segment), None)
+
+
+def stream_subprocess(
+    command: list[str], cwd: Path | None = None, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run ``command`` streaming stdout/stderr LIVE into the task log, never raising on exit.
+
+    Each surviving line (see :func:`_clean_stream_line`) is logged as
+    ``tablassert[stdout]: <line>`` / ``tablassert[stderr]: <line>`` while the process runs —
+    a Tablassert build takes 20+ minutes and its stage transitions should be visible as they
+    happen, not only after exit. Consecutive duplicate lines collapse (redraw spam). The full
+    unfiltered output is still accumulated and returned for the handoff report.
+
+    ``timeout`` bounds the wall time: an expired process is killed and
+    :class:`subprocess.TimeoutExpired` (carrying the output collected so far) is raised. A
+    build must never hang forever with an empty log; ``None`` keeps the unbounded historical
+    behavior for callers that manage liveness themselves.
+
+    Monkeypatch point for tests: patch ``stream_subprocess`` on this module; fakes keep the
+    same ``(command, cwd=None, timeout=None) -> CompletedProcess[str]`` shape.
+    """
+    proc = subprocess.Popen(
+        command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    collected: dict[str, list[str]] = {"stdout": [], "stderr": []}
+    last_line: dict[str, str | None] = {"stdout": None, "stderr": None}
+
+    def _pump(stream: Any, tag: str) -> None:
+        for raw in stream:
+            collected[tag].append(raw)
+            cleaned = _clean_stream_line(raw)
+            if cleaned is None or cleaned == last_line[tag]:
+                continue
+            last_line[tag] = cleaned
+            logger.info("tablassert[{}]: {}", tag, cleaned)
+
+    threads = [
+        threading.Thread(target=_pump, args=(proc.stdout, "stdout"), daemon=True),
+        threading.Thread(target=_pump, args=(proc.stderr, "stderr"), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        returncode = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        for thread in threads:
+            thread.join()
+        raise subprocess.TimeoutExpired(
+            command,
+            timeout,
+            output="".join(collected["stdout"]),
+            stderr="".join(collected["stderr"]),
+        ) from None
+    for thread in threads:
+        thread.join()
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout="".join(collected["stdout"]),
+        stderr="".join(collected["stderr"]),
+    )
+
+
+def tablassert_available() -> bool:
+    """True when the ``tablassert`` package (a core DAKP dependency) is importable here."""
+    return importlib.util.find_spec("tablassert") is not None
+
+
+def qc_runtime_available() -> bool:
+    """True when the QC audit runtime (sentence-transformers, via ``tablassert[qc]``) is importable."""
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
+def _command_prefix(tablassert_dir: str | None) -> list[str]:
+    """argv prefix that launches the ``tablassert`` CLI.
+
+    Editable override (dev against a local checkout): ``uv run --with-editable <dir> tablassert``;
+    installed package: the venv ``tablassert`` binary when it is on ``PATH``, otherwise
+    ``uv run tablassert`` (uv materializes the console script for the rare importable-but-no-PATH
+    case; the availability guard in ``TablassertRunner.run`` has already confirmed ``tablassert``
+    is importable before this fallback is reachable).
+    """
+    if tablassert_dir:
+        return ["uv", "run", "--with-editable", tablassert_dir, "tablassert"]
+    binary = shutil.which("tablassert")
+    if binary is not None:
+        return [binary]
+    return ["uv", "run", "tablassert"]
+
+
+def _resolve_tablassert_dir(runner_dir: str | None, params_dir: str | None) -> str | None:
+    """Editable-checkout override precedence: ctx param > ``DAKP_TABLASERT_DIR`` env > runner default.
+
+    ``None`` (the default everywhere) means "use the installed PyPI package".
+    """
+    return params_dir or os.environ.get(TABLASERT_DIR_ENV) or runner_dir
+
+
+def _base_report(
+    mode: str, assertion_refs: list[ArtifactRef], config_refs: list[ArtifactRef]
+) -> dict[str, Any]:
+    return {
+        "schema_version": _REPORT_SCHEMA,
+        "stage": "tablassert_handoff",
+        "mode": mode,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "assertion_inputs": [
+            {"table": ref.uri.stem, "artifact_id": ref.blake3, "rows": ref.rows}
+            for ref in assertion_refs
+        ],
+        "config_inputs": [str(ref.uri) for ref in config_refs],
+    }
+
+
+def _write_report(
+    report: dict[str, Any], assertion_refs: list[ArtifactRef], ctx: TaskContext
+) -> ArtifactRef:
+    workdir = Workdir(ctx.workdir)
+    path = workdir.reports / REPORT_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    store = ArtifactStore(workdir)
+    return store.register(
+        path,
+        media_type="application/json",
+        inputs=[ref.blake3 for ref in assertion_refs],
+        operation=OperationBlock(name=_RUN_OPERATION),
+    )
+
+
+def _find_graph(config_refs: list[ArtifactRef], ctx: TaskContext) -> Path:
+    """Locate ``graph.yaml`` among the generated config refs (fall back to the conventional path)."""
+    for ref in config_refs:
+        if ref.uri.name == "graph.yaml":
+            return ref.uri
+    return Workdir(ctx.workdir).root / "tables" / "graph.yaml"
+
+
+#: Cap on contract problems mirrored into the handoff report / error message — enough to
+#: diagnose the failure mode without bloating the report or the task log.
+_CONTRACT_PROBLEM_LIMIT = 10
+
+
+def _graph_stem(graph_yaml: Path) -> str:
+    """The ``<name>_<version>`` stem Tablassert names the emitted pair with, read from the graph config the build actually used.
+
+    Parsed as real YAML (the generator's minimal emitter round-trips through ``yaml.safe_load``),
+    not line-scanned: quoting, ordering, and later top-level keys can no longer break the read.
+    Never assume the :data:`GRAPH_NAME` / package-version defaults: a ``graph_config(version=...)``
+    override would make the defaults lie.
+    """
+    import yaml
+
+    config = yaml.safe_load(graph_yaml.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        msg = f"graph config {graph_yaml} did not parse to a mapping"
+        raise RuntimeError(msg)
+    name = config.get("name")
+    version = config.get("version")
+    if not name or version is None:
+        msg = f"graph config {graph_yaml} is missing top-level name/version keys"
+        raise RuntimeError(msg)
+    return f"{name}_{version}"
+
+
+def validate_kgx_contract(ctx: TaskContext, graph_yaml: Path) -> list[str]:
+    """Validate the KGX pair a successful ``build-kg`` just emitted against the DAKP contract.
+
+    Streams the pair Tablassert named ``<name>_<version>.{nodes,edges}.ndjson`` from the workdir
+    KGX dir through :func:`dakp_pipeline.translator.validate_kgx` and returns the rendered
+    problem lines (empty when the pair is contract-clean). A missing pair after a successful
+    build raises ``RuntimeError`` — Tablassert just wrote it, so absence means the emission
+    convention moved and downstream stages would silently read stale files (the caller records
+    that as a contract ``error`` in the handoff report before failing).
+
+    This gate is what the v1.11.2 35-edge ``GenomicEntity``-object leak shipped without:
+    edges that escaped the pinned association classes (bare ``biolink:Association`` with
+    evidence slots pruned into ``has_supporting_studies`` descriptions) reached the publish
+    stage because nothing validated the REAL build output — ``validate_kgx`` only ever ran
+    over test fixtures. Now every successful handoff must pass it before the export/publish
+    stages run.
+    """
+    from dakp_pipeline.translator import (  # local: keeps module import light
+        read_kgx_jsonl,
+        validate_kgx,
+    )
+
+    kgx_dir = Workdir(ctx.workdir).kgx
+    stem = _graph_stem(graph_yaml)
+
+    def _emitted(kind: str) -> Path:
+        matches = sorted(kgx_dir.glob(f"{stem}.{kind}.ndjson"))
+        if len(matches) != 1:
+            msg = f"expected exactly one {stem}.{kind}.ndjson under {kgx_dir} after a successful build-kg, found {len(matches)}"
+            raise RuntimeError(msg)
+        return matches[0]
+
+    problems = validate_kgx(
+        read_kgx_jsonl(_emitted("nodes")), read_kgx_jsonl(_emitted("edges"))
+    ).problems
+    if problems:
+        logger.error(
+            "run_tablassert: KGX contract validation failed with {} problem(s):", len(problems)
+        )
+        for problem in problems[:_CONTRACT_PROBLEM_LIMIT]:
+            logger.error("  {p}", p=problem)
+    return problems
+
+
+@dataclass(frozen=True)
+class TablassertRunner:
+    """Run the INSTALLED ``tablassert`` CLI (a core DAKP dependency) as a subprocess.
+
+    Builds ``tablassert build-kg <graph.yaml> [--qc] [--release]`` (the graph config carries the
+    fullmap path — Tablassert 8.1 removed the ``build-kg --fullmap`` flag), streams the
+    subprocess output live into the task log (:func:`stream_subprocess`), and records the full
+    stdout / stderr / exit code in the handoff report. On a successful build the emitted KGX
+    pair is validated against the DAKP Translator contract
+    (:func:`validate_kgx_contract`): violations are recorded in the report (``kgx_contract``)
+    and raise :class:`TablassertError`, so a graph that escapes the pinned association
+    classes (bare ``biolink:Association`` edges) can never reach the export/publish stages.
+    A non-zero exit is captured as ``status: failed`` in the report (written to disk before
+    raising) and then raises :class:`TablassertError` so the calling task (Airflow or stage
+    harness) fails correctly.
+    Raises ``RuntimeError`` when ``tablassert`` is unavailable and no editable-checkout
+    override is configured (reinstall with ``uv sync``).
+    """
+
+    tablassert_dir: str | None = None
+
+    def build_command(
+        self,
+        graph_yaml: Path,
+        *,
+        tablassert_dir: str | None = None,
+        qc: bool = False,
+        release: bool = False,
+    ) -> list[str]:
+        """The exact Tablassert invocation (pure; testable without spawning a process)."""
+        command = [*_command_prefix(tablassert_dir), "build-kg", str(graph_yaml)]
+        if qc:
+            command.append("--qc")
+        if release:
+            command.append("--release")
+        return command
+
+    def run(
+        self, assertion_refs: list[ArtifactRef], config_refs: list[ArtifactRef], ctx: TaskContext
+    ) -> list[ArtifactRef]:
+        stats(logger, "run_tablassert", mode="real")
+        graph_yaml = _find_graph(config_refs, ctx)
+        fullmap_value = ctx.params.get("fullmap")
+        if not fullmap_value:
+            msg = (
+                "a fullmap redb path is required for a real Tablassert handoff but none was provided: pass "
+                "`--fullmap <path>` to `dakp up` (DAKP no longer downloads a fullmap; build one with "
+                "`tablassert build-fullmap`). Tablassert reads only `tablassert.fullmap.v6` redb "
+                "files (the format since Tablassert 19.0.0) — a v5-or-older fullmap must be "
+                "rebuilt"
+            )
+            raise RuntimeError(msg)
+        fullmap = str(fullmap_value)
+        tablassert_dir = _resolve_tablassert_dir(
+            self.tablassert_dir, ctx.params.get("tablassert_dir")
+        )
+        if tablassert_dir is None and not tablassert_available():
+            msg = (
+                "tablassert is not available: it is a core DAKP dependency, so reinstall with `uv sync`, or point at a "
+                f"local editable checkout via the tablassert_dir param / {TABLASERT_DIR_ENV} env var"
+            )
+            raise RuntimeError(msg)
+
+        event = "run_tablassert"
+        qc_requested = bool(ctx.params.get("qc"))
+        qc = qc_requested and qc_runtime_available()
+        if qc_requested and not qc:
+            logger.warning(
+                "{}: --qc requested but the QC audit runtime (sentence-transformers) is not importable; running without --qc",
+                event,
+            )
+        release = bool(ctx.params.get("release"))
+
+        command = self.build_command(
+            graph_yaml, tablassert_dir=tablassert_dir, qc=qc, release=release
+        )
+        cwd = Workdir(ctx.workdir).root
+
+        with step(logger, event):
+            stats(
+                logger,
+                event,
+                graph_config=str(graph_yaml),
+                fullmap=fullmap,
+                qc=qc,
+                release=release,
+                tablassert_dir=tablassert_dir or "-",
+            )
+            stats(logger, event, command=" ".join(command))
+            completed = stream_subprocess(command, cwd=cwd)
+        status = "ok" if completed.returncode == 0 else "failed"
+        stats(logger, event, status=status, exit_code=completed.returncode)
+        if completed.returncode != 0:
+            logger.error(
+                "{}: exited {} — stderr = {}",
+                event,
+                completed.returncode,
+                (completed.stderr or "").strip(),
+            )
+
+        report = _base_report("real", assertion_refs, config_refs)
+        contract_problems: list[str] = []
+        contract_error: str | None = None
+        approval_promotions = 0
+        if completed.returncode == 0:  # reconcile only a build that actually emitted a KGX pair
+            try:
+                from dakp_pipeline.approval_reconciliation import reconcile_approval_status
+
+                kgx_dir = Workdir(ctx.workdir).kgx
+                stem = _graph_stem(graph_yaml)
+                report["kgx_stem"] = stem  # the downstream legacy-tsv export keys off this
+                edges_path = kgx_dir / f"{stem}.edges.ndjson"
+                if not edges_path.is_file():
+                    msg = f"expected exactly one {stem}.edges.ndjson under {kgx_dir} after a successful build-kg, found 0"
+                    raise RuntimeError(msg)
+                approval_promotions = reconcile_approval_status(edges_path)
+                stats(logger, "resolved_approval_status", promoted=approval_promotions)
+                contract_problems = validate_kgx_contract(ctx, graph_yaml)
+            except (OSError, ValueError, RuntimeError) as exc:
+                contract_error = str(exc)
+        report.update(
+            {
+                "status": status,
+                "command": command,
+                "exit_code": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+                "graph_config": str(graph_yaml),
+                "fullmap": fullmap,
+                "tablassert_dir": tablassert_dir,
+                "qc": qc,
+                "release": release,
+                "resolved_approval_promotions": approval_promotions,
+            }
+        )
+        if completed.returncode == 0:
+            report["kgx_contract"] = {
+                "status": "error" if contract_error else ("failed" if contract_problems else "ok"),
+                "problem_count": len(contract_problems),
+                "problems": contract_problems[:_CONTRACT_PROBLEM_LIMIT],
+            }
+            if contract_error:
+                report["kgx_contract"]["error"] = contract_error
+        refs = [_write_report(report, assertion_refs, ctx)]
+        if completed.returncode != 0:
+            raise TablassertError(
+                f"Tablassert exited {completed.returncode}; see handoff report: {refs[0].uri}\n{(completed.stderr or '').strip()[:500]}"
+            )
+        if contract_error:
+            raise TablassertError(f"{contract_error}; see handoff report: {refs[0].uri}")
+        if contract_problems:
+            raise TablassertError(
+                f"KGX contract validation failed with {len(contract_problems)} problem(s); see handoff report: {refs[0].uri}\n"
+                + "\n".join(contract_problems[:_CONTRACT_PROBLEM_LIMIT])
+            )
+        return refs
+
+
+@dataclass(frozen=True)
+class DeferredTablassertRunner:
+    """Write a deferred-handoff report; never touch Tablassert (no fullmap trigger + tests)."""
+
+    def run(
+        self, assertion_refs: list[ArtifactRef], config_refs: list[ArtifactRef], ctx: TaskContext
+    ) -> list[ArtifactRef]:
+        event = "run_tablassert"
+        stats(logger, event, mode="deferred")
+        stats(
+            logger,
+            event,
+            reason="no fullmap provided (run_tablassert disabled); canonical resolution + KGX compilation delegated to the installed tablassert CLI",
+        )
+        report = _base_report("deferred", assertion_refs, config_refs)
+        report.update(
+            {
+                "status": "deferred",
+                "reason": "no fullmap provided (run_tablassert disabled); canonical resolution + KGX compilation delegated to the installed tablassert CLI",
+            }
+        )
+        return [_write_report(report, assertion_refs, ctx)]
+
+
+def run(
+    assertion_refs: list[ArtifactRef], config_refs: list[ArtifactRef], ctx: TaskContext
+) -> list[ArtifactRef]:
+    """Module entry point (stage harness / ``dags.dakp_build``): dispatch to a runner.
+
+    Callers invoke this as a module attribute at call time (``tablassert.run(...)``) so
+    ``monkeypatch.setattr("dakp_pipeline.tablassert.run", ...)`` replaces the callable they see.
+    Real execution requires ``run_tablassert`` truthy in ``ctx.params`` (derived from a fullmap
+    path); otherwise the deferred runner writes a deferred-handoff report. Returns a list with
+    one ArtifactRef to the handoff report.
+    """
+    run_real = bool(ctx.params.get("run_tablassert"))
+    runner: TablassertRunner | DeferredTablassertRunner = (
+        TablassertRunner() if run_real else DeferredTablassertRunner()
+    )
+    return runner.run(assertion_refs, config_refs, ctx)
+
+
+__all__ = [
+    "AGENT_TYPE",
+    "DEFAULT_TABLASERT_DIR",
+    "EDGE_LINKOUT_URL_TEMPLATE",
+    "FAERS_SOURCE_RECORD_URL",
+    "FULLMAP_DEFAULT",
+    "GRAPH_DESCRIPTION",
+    "GRAPH_NAME",
+    "INFORES_DAKP",
+    "REPORT_NAME",
+    "TABLASERT_DIR_ENV",
+    "DeferredTablassertRunner",
+    "TablassertError",
+    "TablassertRunner",
+    "category_avoid_list",
+    "column_letter",
+    "excel_column",
+    "generate",
+    "graph_config",
+    "graph_yaml",
+    "qc_runtime_available",
+    "run",
+    "run_subprocess",
+    "tablassert_available",
+    "table_config",
+    "table_yaml",
+    "validate_kgx_contract",
+]

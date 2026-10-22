@@ -432,8 +432,7 @@ def test_pinned_edge_categories_match_the_category_override() -> None:
     real build that resolves the new object category would be rejected by the gate that exists
     to accept it.
     """
-    tablassert = pytest.importorskip("dakp_pipeline.tablassert")  # arrives with the kg-build port
-    OBJECT_CATEGORY_OVERRIDE = tablassert.OBJECT_CATEGORY_OVERRIDE
+    from dakp_pipeline.tablassert import OBJECT_CATEGORY_OVERRIDE
 
     assert {f"biolink:{pinned}" for pinned in OBJECT_CATEGORY_OVERRIDE.values()} == set(
         PINNED_EDGE_CATEGORIES

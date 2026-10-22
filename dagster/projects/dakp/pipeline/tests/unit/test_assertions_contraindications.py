@@ -246,4 +246,6 @@ def test_finalize_row_computes_set_evidence_once(monkeypatch: pytest.MonkeyPatch
     row = contraindications._finalize_row(agg)
     assert calls == 1
     assert row["supporting_spl_evidence"] == "dailymed:set-x"
-    assert row["edge_evidence"]  # the edge annotation carries the same evidence
+    # The edge annotation carries the SAME evidence string (one computation, two consumers).
+    assert row["edge_evidence"]
+    assert "dailymed:set-x" in row["edge_evidence"]
