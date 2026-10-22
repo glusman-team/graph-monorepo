@@ -1,0 +1,440 @@
+"""Unit tests for KGX/Translator contract validation (Milestone 8).
+
+Validates small fixture KGX (nodes/edges JSONL) mirroring what Tablassert would emit:
+a valid fixture covering the three DAKP edge families passes cleanly, and a broken fixture
+reports each defect as a specific structured :class:`ContractProblem` code. Also guards the
+legacy assertion-table :func:`validate` contract used by the runner/DAG.
+"""
+
+from __future__ import annotations
+
+import gzip
+from pathlib import Path
+
+import pytest
+
+from dakp_pipeline import translator as contract
+from dakp_pipeline.translator import (
+    DUPLICATE_NODE_ID,
+    INCOMPATIBLE_EDGE_CATEGORY,
+    INCOMPATIBLE_OBJECT_CATEGORY,
+    INCOMPATIBLE_SUBJECT_CATEGORY,
+    INVALID_NODE_CATEGORY,
+    INVALID_PREDICATE,
+    INVALID_SUPPORTING_STUDIES,
+    MISSING_EDGE_FIELD,
+    MISSING_NODE_FIELD,
+    MISSING_NODE_REFERENCE,
+    MISSING_PROVENANCE,
+    PINNED_EDGE_CATEGORIES,
+    ContractReport,
+    read_kgx_jsonl,
+    validate,
+    validate_kgx,
+)
+
+KGX_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "kgx"
+
+
+def _load(name: str) -> list[dict[str, object]]:
+    return read_kgx_jsonl(KGX_ROOT / name)
+
+
+def _codes(report: ContractReport) -> set[str]:
+    return {problem.code for problem in report.kgx_problems}
+
+
+def _by_entity(report: ContractReport, entity_id: str) -> list[contract.ContractProblem]:
+    return [problem for problem in report.kgx_problems if problem.entity_id == entity_id]
+
+
+# --- positive: the valid fixture passes cleanly ----------------------------------
+
+
+def test_valid_fixture_passes_with_no_problems() -> None:
+    report = validate_kgx(_load("nodes.jsonl"), _load("edges.jsonl"))
+    assert report.ok is True
+    assert report.kgx_problems == []
+    assert report.problems == []
+
+
+def test_valid_fixture_exercises_all_three_edge_families() -> None:
+    edges = _load("edges.jsonl")
+    predicates = {edge["predicate"] for edge in edges}
+    assert predicates == {
+        "biolink:treats",
+        "biolink:applied_to_treat",
+        "biolink:contraindicated_in",
+    }
+    assert validate_kgx(_load("nodes.jsonl"), edges).ok is True
+
+
+def test_fixture_treats_edges_carry_the_full_ema_union_upstream_chain() -> None:
+    """Every fixture treats edge carries the table-level union Tablassert stamps, not a per-row subset.
+
+    ``override.sources`` is a TABLE-level template: once the approved-treats table unions FDA and
+    EMA rows, every treats edge it emits carries all four upstream infores plus all four supporting
+    entries, regardless of which side produced the row. Per-row attribution lives in the evidence
+    columns (``regulatory_approvals`` carrying an NDA vs an ``EMEA/H/C`` product number), not in
+    ``sources`` — so the fixture must show the union, or it stops mirroring real build output.
+    """
+    treats = [edge for edge in _load("edges.jsonl") if edge["predicate"] == "biolink:treats"]
+    assert len(treats) == 2
+    for edge in treats:
+        sources: list[dict[str, object]] = edge["sources"]  # type: ignore[assignment]
+        primary = sources[0]
+        assert primary["resource_id"] == "infores:drugapprovals-kp"
+        assert set(primary["upstream_resource_ids"]) == {
+            "infores:dailymed",
+            "infores:faers",
+            "infores:ema",
+            "infores:epar",
+        }  # type: ignore[arg-type]
+        assert {entry["resource_id"] for entry in sources[1:]} == {
+            "infores:dailymed",
+            "infores:faers",
+            "infores:ema",
+            "infores:epar",
+        }
+        assert all(entry["resource_role"] == "supporting_data_source" for entry in sources[1:])
+    # The EMA-side row is distinguished by its evidence: an EMA product number and the
+    # population qualifier mined off the EPAR indication sentence.
+    epar_edge = next(edge for edge in treats if edge["id"] == "uuid-treats-0002")
+    assert epar_edge["regulatory_approvals"] == "EMEA/H/C/000123"
+    assert epar_edge["population_context_qualifier"] == "adult patients"
+
+
+def test_single_inline_valid_edge_passes() -> None:
+    nodes = [
+        {"id": "CHEBI:1", "name": "drug", "category": ["biolink:Drug"]},
+        {"id": "MONDO:1", "name": "disease", "category": ["biolink:Disease"]},
+    ]
+    edges = [
+        {
+            "id": "e1",
+            "subject": "CHEBI:1",
+            "predicate": "biolink:treats",
+            "object": "MONDO:1",
+            "category": ["biolink:EntityToDiseaseAssociation"],
+            "knowledge_level": "knowledge_assertion",
+            "agent_type": "manual_validation_of_automated_agent",
+            "primary_knowledge_source": "infores:drugapprovals-kp",
+            "sources": [
+                {
+                    "resource_id": "infores:drugapprovals-kp",
+                    "upstream_resource_ids": ["infores:dailymed", "infores:faers", "infores:ema"],
+                }
+            ],
+        }
+    ]
+    assert validate_kgx(nodes, edges).ok is True
+
+
+def test_treats_edge_with_ema_only_upstream_passes() -> None:
+    """An EMA-derived treats edge carries the ``infores:ema`` chain instead of the FDA one."""
+    nodes = [
+        {"id": "CHEBI:1", "name": "drug", "category": ["biolink:Drug"]},
+        {"id": "MONDO:1", "name": "disease", "category": ["biolink:Disease"]},
+    ]
+    edges = [
+        {
+            "id": "e1",
+            "subject": "CHEBI:1",
+            "predicate": "biolink:treats",
+            "object": "MONDO:1",
+            "category": ["biolink:EntityToDiseaseAssociation"],
+            "knowledge_level": "knowledge_assertion",
+            "agent_type": "manual_validation_of_automated_agent",
+            "primary_knowledge_source": "infores:drugapprovals-kp",
+            "sources": [
+                {
+                    "resource_id": "infores:drugapprovals-kp",
+                    "upstream_resource_ids": ["infores:ema"],
+                }
+            ],
+        }
+    ]
+    assert validate_kgx(nodes, edges).ok is True
+
+
+def test_treats_edge_with_epar_only_upstream_passes() -> None:
+    """An EPAR indication-mined treats edge carries the ``infores:epar`` chain."""
+    nodes = [
+        {"id": "CHEBI:1", "name": "drug", "category": ["biolink:Drug"]},
+        {"id": "MONDO:1", "name": "disease", "category": ["biolink:Disease"]},
+    ]
+    edges = [
+        {
+            "id": "e1",
+            "subject": "CHEBI:1",
+            "predicate": "biolink:treats",
+            "object": "MONDO:1",
+            "category": ["biolink:EntityToDiseaseAssociation"],
+            "knowledge_level": "knowledge_assertion",
+            "agent_type": "manual_validation_of_automated_agent",
+            "primary_knowledge_source": "infores:drugapprovals-kp",
+            "sources": [
+                {
+                    "resource_id": "infores:drugapprovals-kp",
+                    "upstream_resource_ids": ["infores:epar"],
+                }
+            ],
+        }
+    ]
+    assert validate_kgx(nodes, edges).ok is True
+
+
+@pytest.mark.parametrize("alternative", ["infores:ema", "infores:epar"])
+def test_treats_alternative_upstream_without_dakp_provenance_fails(alternative: str) -> None:
+    """EMA/EPAR alternatives replace FDA upstreams only; they never replace DAKP provenance."""
+    nodes = [
+        {"id": "CHEBI:1", "name": "drug", "category": ["biolink:Drug"]},
+        {"id": "MONDO:1", "name": "disease", "category": ["biolink:Disease"]},
+    ]
+    edges = [
+        {
+            "id": "e1",
+            "subject": "CHEBI:1",
+            "predicate": "biolink:treats",
+            "object": "MONDO:1",
+            "category": ["biolink:EntityToDiseaseAssociation"],
+            "knowledge_level": "knowledge_assertion",
+            "agent_type": "manual_validation_of_automated_agent",
+            # A source list exists, but neither the flat primary slot nor its resource id names DAKP.
+            "sources": [{"resource_id": alternative, "upstream_resource_ids": [alternative]}],
+        }
+    ]
+    report = validate_kgx(nodes, edges)
+    assert MISSING_PROVENANCE in _codes(report)
+    assert "infores:drugapprovals-kp" in _by_entity(report, "e1")[0].message
+
+
+def test_validation_is_deterministic() -> None:
+    nodes, edges = _load("broken_nodes.jsonl"), _load("broken_edges.jsonl")
+    assert validate_kgx(nodes, edges).kgx_problems == validate_kgx(nodes, edges).kgx_problems
+
+
+def test_read_kgx_jsonl_reads_plain_and_gzip(tmp_path: Path) -> None:
+    plain = KGX_ROOT / "nodes.jsonl"
+    gz_path = tmp_path / "nodes.jsonl.gz"
+    with gzip.open(gz_path, "wb") as handle:
+        handle.write(plain.read_bytes())
+    assert read_kgx_jsonl(gz_path) == read_kgx_jsonl(plain)
+
+
+# --- negative: the broken fixture reports specific problems ----------------------
+
+
+def test_broken_fixture_reports_every_defect_code() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    assert report.ok is False
+    assert _codes(report) == {
+        MISSING_NODE_REFERENCE,
+        INVALID_PREDICATE,
+        INCOMPATIBLE_SUBJECT_CATEGORY,
+        INCOMPATIBLE_OBJECT_CATEGORY,
+        MISSING_PROVENANCE,
+        MISSING_EDGE_FIELD,
+        MISSING_NODE_FIELD,
+        INVALID_NODE_CATEGORY,
+        DUPLICATE_NODE_ID,
+    }
+
+
+def test_missing_node_reference_isolated_to_offending_edge() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    problems = _by_entity(report, "uuid-broken-e1")
+    assert [(p.code, p.field) for p in problems] == [(MISSING_NODE_REFERENCE, "object")]
+    assert "MONDO:0000001" in problems[0].message
+
+
+def test_bad_predicate_isolated() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    problems = _by_entity(report, "uuid-broken-e2")
+    assert [p.code for p in problems] == [INVALID_PREDICATE]
+    assert "biolink:causes" in problems[0].message
+
+
+def test_incompatible_subject_and_object_categories_isolated() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    assert [p.code for p in _by_entity(report, "uuid-broken-e3")] == [INCOMPATIBLE_SUBJECT_CATEGORY]
+    assert [p.code for p in _by_entity(report, "uuid-broken-e4")] == [INCOMPATIBLE_OBJECT_CATEGORY]
+
+
+def test_missing_provenance_presence_isolated() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    problems = _by_entity(report, "uuid-broken-e5")
+    assert [(p.code, p.field) for p in problems] == [
+        (MISSING_PROVENANCE, "primary_knowledge_source/sources")
+    ]
+
+
+def test_missing_family_upstream_names_dailymed() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    problems = _by_entity(report, "uuid-broken-e7")
+    assert [p.code for p in problems] == [MISSING_PROVENANCE]
+    assert "infores:dailymed" in problems[0].message
+
+
+def test_missing_required_edge_fields_isolated() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    problems = _by_entity(report, "uuid-broken-e6")
+    assert {p.code for p in problems} == {MISSING_EDGE_FIELD}
+    assert {p.field for p in problems} == {"knowledge_level", "agent_type"}
+
+
+def test_node_level_problems_are_specific() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    node_problems = {p.entity_id: p.code for p in report.kgx_problems if p.entity_kind == "node"}
+    assert node_problems["CHEBI:11111"] == MISSING_NODE_FIELD  # missing name
+    assert node_problems["MONDO:99999"] == INVALID_NODE_CATEGORY  # category lacks biolink: prefix
+    assert node_problems["CHEBI:99999"] == DUPLICATE_NODE_ID  # second occurrence of the id
+
+
+def test_rendered_problems_carry_their_code() -> None:
+    report = validate_kgx(_load("broken_nodes.jsonl"), _load("broken_edges.jsonl"))
+    assert report.problems
+    for line, problem in zip(report.problems, report.kgx_problems, strict=True):
+        assert line == f"[{problem.code}] {problem.message}"
+
+
+# --- backward compatibility: the legacy assertion-table contract -----------------
+
+
+def test_legacy_validate_reports_missing_assertion_tables() -> None:
+    report = validate([])
+    assert report.ok is False
+    assert any("approved_treats_assertions" in problem for problem in report.problems)
+    assert report.kgx_problems == []  # legacy path never populates KGX problems
+
+
+# --- pinned association classes: the bare-biolink:Association leak class --------------
+
+
+def test_bare_association_edge_fails_the_pin() -> None:
+    """A DAKP-family edge on bare biolink:Association violates the pinned-class contract."""
+    nodes = [
+        {"id": "CHEBI:1", "name": "drug", "category": ["biolink:Drug"]},
+        {"id": "MONDO:1", "name": "disease", "category": ["biolink:Disease"]},
+    ]
+    edges = [
+        {
+            "id": "e1",
+            "subject": "CHEBI:1",
+            "predicate": "biolink:treats",
+            "object": "MONDO:1",
+            "category": ["biolink:Association"],  # escaped the OBJECT_CATEGORY_OVERRIDE pin
+            "knowledge_level": "knowledge_assertion",
+            "agent_type": "manual_validation_of_automated_agent",
+            "primary_knowledge_source": "infores:drugapprovals-kp",
+            "sources": [
+                {
+                    "resource_id": "infores:drugapprovals-kp",
+                    "upstream_resource_ids": ["infores:dailymed", "infores:faers"],
+                }
+            ],
+        }
+    ]
+    report = validate_kgx(nodes, edges)
+    assert INCOMPATIBLE_EDGE_CATEGORY in _codes(report)
+    assert report.ok is False
+
+
+def test_genomic_entity_object_leak_shape_fails_both_category_checks() -> None:
+    """The exact v1.11.2 35-edge shape: bare biolink:Association edge onto a GenomicEntity object.
+
+    Both the escaped edge class and the off-allow-list object category are flagged; 35 such
+    edges (17 applied_to_treat + 18 contraindicated_in) shipped because no stage validated the
+    real build output against this contract.
+    """
+    nodes = [
+        {"id": "CHEBI:28901", "name": "busulfan", "category": ["biolink:SmallMolecule"]},
+        {"id": "UMLS:C0678941", "name": "Gene Mutant", "category": ["biolink:GenomicEntity"]},
+    ]
+    edges = [
+        {
+            "id": "uuid-leak-1",
+            "subject": "CHEBI:28901",
+            "original_subject": "BUSULFAN",
+            "predicate": "biolink:applied_to_treat",
+            "object": "UMLS:C0678941",
+            "original_object": "gene mutation",
+            "category": ["biolink:Association"],
+            "knowledge_level": "observation",
+            "agent_type": "manual_validation_of_automated_agent",
+            "primary_knowledge_source": "infores:drugapprovals-kp",
+            "sources": [
+                {
+                    "resource_id": "infores:drugapprovals-kp",
+                    "upstream_resource_ids": ["infores:dailymed", "infores:faers"],
+                },
+                {"resource_id": "infores:faers", "resource_role": "supporting_data_source"},
+            ],
+            "has_supporting_studies": {
+                "faers_applied_to_treat": {"id": "faers_applied_to_treat", "has_study_results": []}
+            },
+        }
+    ]
+    report = validate_kgx(nodes, edges)
+    assert {INCOMPATIBLE_EDGE_CATEGORY, INCOMPATIBLE_OBJECT_CATEGORY} <= _codes(report)
+    assert report.ok is False
+
+
+def test_junk_drawer_supporting_studies_descriptions_fail() -> None:
+    """Evidence slots pruned into has_supporting_studies descriptions violate the contract.
+
+    The second half of the leak shape: a bare row-reference study is legitimate; any
+    ``description`` string means a value DAKP owns was relocated off the edge.
+    """
+    nodes = [
+        {"id": "CHEBI:1", "name": "drug", "category": ["biolink:Drug"]},
+        {"id": "MONDO:1", "name": "disease", "category": ["biolink:Disease"]},
+    ]
+    base = {
+        "id": "e1",
+        "subject": "CHEBI:1",
+        "predicate": "biolink:treats",
+        "object": "MONDO:1",
+        "category": ["biolink:EntityToDiseaseAssociation"],
+        "knowledge_level": "knowledge_assertion",
+        "agent_type": "manual_validation_of_automated_agent",
+        "primary_knowledge_source": "infores:drugapprovals-kp",
+        "sources": [
+            {
+                "resource_id": "infores:drugapprovals-kp",
+                "upstream_resource_ids": ["infores:dailymed", "infores:faers"],
+            }
+        ],
+    }
+    clean = {
+        **base,
+        "has_supporting_studies": {
+            "table": {"id": "table", "has_study_results": [{"id": "row:1"}]}
+        },
+    }
+    assert INVALID_SUPPORTING_STUDIES not in _codes(validate_kgx(nodes, [clean]))
+    junked = {
+        **base,
+        "has_supporting_studies": {
+            "table": {
+                "id": "table",
+                "has_study_results": [{"id": "row:1", "description": "number_of_cases=15.0"}],
+            }
+        },
+    }
+    assert INVALID_SUPPORTING_STUDIES in _codes(validate_kgx(nodes, [junked]))
+
+
+def test_pinned_edge_categories_match_the_category_override() -> None:
+    """The validator's pinned classes are exactly the override's pinned classes, biolink-prefixed.
+
+    ``OBJECT_CATEGORY_OVERRIDE`` is widened only with a matching validator update; otherwise a
+    real build that resolves the new object category would be rejected by the gate that exists
+    to accept it.
+    """
+    tablassert = pytest.importorskip("dakp_pipeline.tablassert")  # arrives with the kg-build port
+    OBJECT_CATEGORY_OVERRIDE = tablassert.OBJECT_CATEGORY_OVERRIDE
+
+    assert {f"biolink:{pinned}" for pinned in OBJECT_CATEGORY_OVERRIDE.values()} == set(
+        PINNED_EDGE_CATEGORIES
+    )

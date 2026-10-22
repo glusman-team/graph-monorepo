@@ -1,0 +1,1094 @@
+"""Contraindication assertion aggregation — text-mined from DailyMed SPL.
+
+Builds ``contraindication_assertions.tsv``: drug→condition contraindication assertions
+**mined directly** from DailyMed SPL label text using DAKP's single composite NER backend
+(:mod:`dakp_pipeline.ner.ner`). Contraindications are extracted from the label text itself,
+which yields better coverage and DailyMed-grounded provenance than an externally-sourced list.
+
+Three-pass mining rule (explicit and tested)
+------------------------------------------
+**Pass 1** — for every SPL set with a contraindication section (LOINC ``34070-3``) and ≥1
+active ingredient, run the NER backend over the full section text to extract disease/phenotype
+mentions. All text in a dedicated contraindication section is assumed relevant.
+
+**Pass 2** — for every SPL set with an indications-and-usage section (LOINC ``34067-9``), filter
+the section text to sentences containing contraindication-context keywords (``contraindicated``,
+``should not be used``, ``not recommended``, …) and run the same NER extraction on the filtered
+text. This catches contraindications embedded in the indication section — common in real
+DailyMed labels where safety statements appear alongside indication text. The keyword filter
+ensures indication-context diseases (``indicated for X``) are NOT mined as contraindications.
+
+**Pass 3** — for every SPL set with a boxed-warning section (LOINC ``34066-1``) or a
+warnings/precautions section (``43685-7``, or the legacy split ``34071-1``/``42232-9``), mine the
+full section text. Boxed warnings in particular frequently carry absolute contraindications that
+never appear in a dedicated ``34070-3`` section. Acceptance is **hard-trigger-only** (the Pass 2
+discipline): a warning section's general caution prose supplies no section-level contraindication
+context, so a mention becomes an edge only when its sentence carries hard prohibition language.
+
+Mentions from all passes are paired with the set's active ingredient to form a
+``biolink:contraindicated_in`` assertion (ingredient = subject, mention = object) — but ONLY for
+**singleton-ingredient sets** (the legacy ``selectActiveIngredientSingletons.pl`` discipline): a
+combination product's contraindication section applies to the mixture, so pairing a mention with
+every one of its actives would over-attribute the contraindication to each component. Sets with
+zero or multiple active ingredients are skipped (``skipped_multi_ingredient_sets`` counts the
+latter). Rows are aggregated by ``(subject_text, object_text, disease_context_text, species)``:
+``supporting_spl_sets``, ``supporting_spl_documents``, and evidence sentences are unioned within
+that key, and ``ner_confidence_score`` takes the max NER span score — confidence that the disease
+MENTION was recognized, not confidence that the statement is true (see the annotation note in
+:mod:`dakp_pipeline.tablassert`, which keeps it out of ``has_confidence_score``).
+
+Ontology mapping is Tablassert-only
+-----------------------------------
+The **object** is the mined disease MENTION TEXT (``object_text``); ``object_curie`` /
+``object_name`` / ``object_category`` are left empty for Tablassert/fullmap to resolve at
+``tablassert build-kg`` — DAKP does **not** resolve mentions to ontology CURIEs. The
+**subject** (active ingredient) carries its text + UNII straight from the SPL source
+(source-provided, not DAKP-mapped).
+
+The NER backend
+---------------
+The shaper uses an injected ``params["ner"]`` :class:`~dakp_pipeline.ner.ner.DiseaseNER` when
+present (tests / production wiring), else builds the deterministic **offline** backend from the
+ontology fixture gazetteer (``<fixture_root>/ontology/disease_map.tsv``, read as term→type only
+— CURIE columns ignored), falling back to the embedded gazetteer. There is no backend-name
+selector. Constructing the backend is import-free, so module import + the test suite run with
+no heavy NER deps imported.
+
+Provenance: contraindications are text-mined from DailyMed. The unannotated
+``supporting_spl_sets`` / ``supporting_spl_documents`` debug columns carry DailyMed label URLs
+(``https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=<spl_set_id>[#<loinc>]``), while
+``supporting_spl_evidence`` carries the backing SPL sets as ``dailymed:<spl_set_id>`` CURIEs in
+the single column Tablassert encodes as the Biolink ``publications`` slot (the legacy DAKP KG
+evidence form; see :func:`~dakp_pipeline.assertions.evidence.spl_evidence_pipe`).
+``primary_knowledge_source = infores:drugapprovals-kp``,
+``upstream_resource_ids = infores:dailymed``, ``agent_type = manual_validation_of_automated_agent``
+(the agent type the legacy DAKP KG shipped on all three predicates),
+``knowledge_level = knowledge_assertion``.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
+from typing import Any
+
+import polars as pl
+
+from dakp_pipeline.assertions import (
+    AT_MANUAL,
+    INFORES_DAILYMED,
+    INFORES_DAKP,
+    INFORES_EPAR,
+    KL_ASSERTION,
+    object_mentions,
+    row_for,
+)
+from dakp_pipeline.assertions.contexts import MEDICATION_CONTEXT as _MEDICATION_CONTEXT
+from dakp_pipeline.assertions.contexts import PATIENT_WITH_MARKER as _PATIENT_WITH_MARKER
+from dakp_pipeline.assertions.contexts import attach_qualifiers_with_scores, patient_clause_contexts
+from dakp_pipeline.assertions.evidence import (
+    build_fda_approval_index,
+    dailymed_document_url,
+    dailymed_set_url,
+    edge_evidence_pipe,
+    find_table,
+    load_or_build_dailymed_evidence,
+    pipe_safe_text,
+    sorted_pipe,
+    spl_evidence_pipe,
+    write_assertion_table,
+)
+from dakp_pipeline.assertions.ner_dispatch import (
+    BUILD_HOST_GPUS,
+    _resolve_devices,
+    default_ner,
+    dispatch_pool,
+    mine_by_position,
+)
+from dakp_pipeline.assertions.ner_dispatch import MiningPool as MiningPool
+from dakp_pipeline.assertions.ner_dispatch import NerWorkerError as NerWorkerError
+from dakp_pipeline.assertions.ner_dispatch import _init_worker as _init_worker
+from dakp_pipeline.assertions.ner_dispatch import _mine_chunk as _mine_chunk
+from dakp_pipeline.assertions.ner_dispatch import _shard_by_text_length as _shard_by_text_length
+from dakp_pipeline.assertions.ner_dispatch import _spawn_safe_main as _spawn_safe_main
+from dakp_pipeline.assertions.ner_dispatch import _worker_backend as _worker_backend
+from dakp_pipeline.assertions.species import HUMAN_TAXON
+from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
+from dakp_pipeline.logging_setup import logger, progress, stats, step
+from dakp_pipeline.ner.dictionary import normalize_text
+from dakp_pipeline.ner.mention_cache import MentionCache
+from dakp_pipeline.ner.ner import DiseaseNER, Mention, extract_contraindication_diseases
+
+_TABLE = "contraindication_assertions"
+_PREDICATE = "biolink:contraindicated_in"
+#: One INFO progress line per this many mined contraindication sections (GLiNER is the slow step).
+_MINING_PROGRESS_EVERY = 500
+
+#: Interim tables the EU SmPC pass reads: the mined section text (extract.ema_smpc) and the
+#: medicines registry that resolves a product number to its active substance(s).
+_SMPC_SECTIONS_FILENAME = "smpc_sections.parquet"
+_EMA_REGISTRY_FILENAME = "ema_registry.parquet"
+#: Provenance discriminators. A SmPC row and a DailyMed row for the same (subject, object,
+#: context) must NOT merge: their upstream chains differ (``infores:epar`` vs
+#: ``infores:dailymed``), and one row can only carry one honest chain.
+_SOURCE_DAILYMED = "dailymed"
+_SOURCE_SMPC = "epar"
+#: SmPC section_kind -> the DailyMed-shaped ``section_kind`` the acceptance rules are written
+#: against (the SPL evidence index spells the indication pass singular).
+_SMPC_SECTION_KINDS: dict[str, str] = {
+    "contraindications": "contraindications",
+    "warnings": "warnings",
+    "indications": "indication",
+}
+_SMPC_SET_PREFIX = "smpc:"
+
+#: Broad sentence filter used only to avoid sending ordinary indication prose to NER. The
+#: stricter positive-trigger classifier below decides whether a mention becomes a hard edge.
+#: Configurable at runtime via ``ctx.params["contraindication_keywords"]`` (str or compiled Pattern).
+DEFAULT_CONTRA_KEYWORDS: re.Pattern[str] = re.compile(
+    r"\b(contraindicat\w*|should\s+not\s+be\s+used|must\s+not\s+(?:be\s+)?used|"
+    r"do\s+not\s+use|not\s+recommended|avoid\s+(?:use\s+)?in|prohibit\w*|"
+    r"must\s+avoid|use\s+is\s+contraindicat\w*|not\s+for\s+use\s+in)\b",
+    re.IGNORECASE,
+)
+
+#: Historical name for the shared build-host GPU list (see
+#: :data:`~dakp_pipeline.assertions.ner_dispatch.BUILD_HOST_GPUS`).
+CONTRAINDICATION_GPUS: tuple[str, ...] = BUILD_HOST_GPUS
+
+#: Hard prohibition language accepted for Pass 2. Soft safety language such as ``avoid`` and
+#: ``not recommended`` is deliberately not sufficient for a ``contraindicated_in`` edge.
+_HARD_CONTRA_TRIGGER = re.compile(
+    r"\b(?:contraindicat\w*|do\s+not\s+use|must\s+not\s+(?:be\s+)?used|"
+    r"should\s+not\s+be\s+used|not\s+for\s+use\s+in|never\s+(?:give|use)|prohibit\w*)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_NEGATION = re.compile(
+    r"\b(?:not|never)\s+(?:be\s+)?contraindicat\w*\b|"
+    r"\b(?:no|none|without)\s+(?:known\s+)?contraindications?\b|"
+    r"\bnone\s+known\b|\bnone\s*(?:[.;!?]|$)",
+    re.IGNORECASE,
+)
+_SOFT_SAFETY_TRIGGER = re.compile(
+    r"\b(?:avoid(?:\s+use)?|not\s+recommended|use\s+with\s+caution|warning|precaution|"
+    r"monitor(?:ing)?|consider\s+an\s+alternative)\b",
+    re.IGNORECASE,
+)
+
+#: Section kinds whose mentions become edges ONLY under hard prohibition language: indication
+#: sections (Pass 2) and the Pass 3 warning sections, whose general caution prose supplies no
+#: section-level contraindication context (unlike a dedicated ``34070-3`` section).
+_HARD_TRIGGER_SECTION_KINDS = frozenset({"indications", "boxed_warning", "warnings"})
+
+
+@dataclass(frozen=True)
+class MentionDecision:
+    """Conservative local semantic decision for one mined disease mention."""
+
+    accepted: bool
+    trigger: str
+    evidence_text: str
+    context_text: str = ""
+
+
+# --- sentence filtering for Pass 2 (indication-section contraindications) ------------
+
+
+_SENTENCE_BOUNDARY = re.compile(r"[.!?;](?:\s+|$)")
+
+
+@dataclass(frozen=True)
+class SentenceSpan:
+    """A sentence/clause with offsets into the original SPL section text."""
+
+    start: int
+    end: int
+    text: str
+
+
+@dataclass(frozen=True)
+class EvidenceSpan:
+    """Mapping from a mined-text span to its original source sentence."""
+
+    mined_start: int
+    mined_end: int
+    source_start: int
+    source_end: int
+    text: str
+
+
+@dataclass(frozen=True)
+class ContraWorkItem:
+    """One NER input plus enough mapping to recover local source evidence.
+
+    Pass 1 uses the full section as ``text``. Pass 2 uses a filtered, joined text; its
+    ``evidence_spans`` map each joined sentence back to the original indication section so
+    NER offsets never become detached from provenance. The tuple-like methods intentionally
+    preserve the old ``(set_id, doc_id, text)`` test/worker interface.
+    """
+
+    set_id: str
+    doc_id: str
+    text: str
+    source_text: str
+    evidence_spans: tuple[EvidenceSpan, ...]
+    section_kind: str = "contraindications"
+
+    def __iter__(self) -> Iterator[str]:
+        yield self.set_id
+        yield self.doc_id
+        yield self.text
+
+    def __getitem__(self, index: int) -> str:
+        return (self.set_id, self.doc_id, self.text)[index]
+
+    def __len__(self) -> int:
+        return 3
+
+
+def _sentence_spans(text: str) -> list[SentenceSpan]:
+    """Split text into deterministic, source-offset-preserving sentence-ish pieces."""
+    if not text or not text.strip():
+        return []
+    spans: list[SentenceSpan] = []
+    pos = 0
+    # Every loop chunk contains its boundary punctuation and the tail (when present) always
+    # starts on a non-whitespace char — the boundary regex consumes all trailing whitespace
+    # and re's ``\s`` agrees with ``str.strip`` on exactly which chars are whitespace — so
+    # each stripped chunk is provably non-empty (no emptiness guard needed).
+    for match in _SENTENCE_BOUNDARY.finditer(text):
+        raw = text[pos : match.end()]
+        stripped = raw.strip()
+        leading = len(raw) - len(raw.lstrip())
+        start = pos + leading
+        end = start + len(stripped)
+        spans.append(SentenceSpan(start=start, end=end, text=text[start:end]))
+        pos = match.end()
+    if pos < len(text):
+        raw = text[pos:]
+        stripped = raw.strip()
+        leading = len(raw) - len(raw.lstrip())
+        start = pos + leading
+        end = start + len(stripped)
+        spans.append(SentenceSpan(start=start, end=end, text=text[start:end]))
+    return spans
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Compatibility wrapper returning sentence text without losing the old API."""
+    return [span.text for span in _sentence_spans(text)]
+
+
+def _work_item_parts(item: ContraWorkItem | tuple[str, str, str]) -> tuple[str, str, str]:
+    """Read a new evidence-aware work item or a legacy tuple used by focused tests."""
+    if isinstance(item, ContraWorkItem):
+        return item.set_id, item.doc_id, item.text
+    return item
+
+
+def _overlapping_span(
+    item: ContraWorkItem, mention: Mention, spans: dict[Mention, EvidenceSpan | None] | None = None
+) -> EvidenceSpan | None:
+    """First evidence span overlapping ``mention``, or ``None`` (the shared evidence lookup).
+
+    ``spans`` is an optional per-item memo keyed by the value-hashable frozen :class:`Mention`:
+    the same mention is localized repeatedly (classification, object attachment, qualifier
+    attachment) and every lookup otherwise rescans all evidence spans. ``evidence_spans`` is an
+    immutable tuple, so the first-overlap answer for a mention value never changes within a run
+    and the memo is exact.
+    """
+    if spans is not None:
+        try:
+            return spans[mention]
+        except KeyError:
+            pass
+    found: EvidenceSpan | None = None
+    for span in item.evidence_spans:
+        if mention.start < span.mined_end and span.mined_start < mention.end:
+            found = span
+            break
+    if spans is not None:
+        spans[mention] = found
+    return found
+
+
+def _work_item_evidence(
+    item: ContraWorkItem | tuple[str, str, str],
+    mention: Mention,
+    spans: dict[Mention, EvidenceSpan | None] | None = None,
+) -> str:
+    """Return the original sentence containing a mention, or the mined text as a fallback."""
+    if not isinstance(item, ContraWorkItem):
+        return item[2].strip()
+    span = _overlapping_span(item, mention, spans)
+    return item.source_text.strip() if span is None else span.text.strip()
+
+
+def _offset_space(item: ContraWorkItem | tuple[str, str, str]) -> str:
+    """The text a mined mention's offsets are relative to when no sentence mapping covers it.
+
+    Used as the ``sentence_of`` value for :func:`~dakp_pipeline.assertions.contexts.attach_qualifiers_with_scores`,
+    whose contract check rejects offsets outside the sentence it is handed. The mined text is the
+    only string those offsets index, so it is what they must be validated against:
+    :func:`_work_item_evidence` strips (shifting every offset) and falls back to the whole source
+    section (a different coordinate space for a filtered Pass-2 item), either of which raises
+    ``ValueError`` and fails the task after its mining has already run.
+    """
+    return item[2]
+
+
+def _mention_local_span(
+    item: ContraWorkItem, mention: Mention, spans: dict[Mention, EvidenceSpan | None] | None = None
+) -> tuple[str, int, int, int] | None:
+    """Map a mined mention back to ``(source sentence, local start, local end, source start)``."""
+    span = _overlapping_span(item, mention, spans)
+    if span is None:
+        return None
+    start = span.source_start + max(0, mention.start - span.mined_start)
+    end = span.source_start + min(mention.end - span.mined_start, span.mined_end - span.mined_start)
+    return (
+        span.text,
+        max(0, start - span.source_start),
+        min(len(span.text), end - span.source_start),
+        span.source_start,
+    )
+
+
+def _classify_mention(
+    item: ContraWorkItem | tuple[str, str, str],
+    mention: Mention,
+    spans: dict[Mention, EvidenceSpan | None] | None = None,
+) -> MentionDecision:
+    """Apply local polarity and trigger rules before an edge is formed.
+
+    A dedicated contraindication section supplies section-level positive context, but explicit
+    negation always wins. Indication-section and warning-section (boxed warning / warnings and
+    precautions) candidates require hard prohibition language; broad filter terms (``avoid`` /
+    ``not recommended``) are not enough to assert a contraindication.
+    """
+    evidence_text = _work_item_evidence(item, mention, spans)
+    if _EXPLICIT_NEGATION.search(evidence_text):
+        return MentionDecision(False, "explicit_negation", evidence_text)
+    hard = _HARD_CONTRA_TRIGGER.search(evidence_text)
+    medication = _MEDICATION_CONTEXT.search(evidence_text)
+    if medication is not None and isinstance(item, ContraWorkItem):
+        mapped = _mention_local_span(item, mention, spans)
+        patient_with = _PATIENT_WITH_MARKER.search(evidence_text)
+        # A disease named only before ``patients receiving/taking <drug>`` is treatment context,
+        # not a contraindicated patient disease. The grouped template below preserves a separate
+        # patient disease when one is explicitly present.
+        if mapped is not None and patient_with is None and mapped[2] <= medication.start():
+            return MentionDecision(False, "medication_only_context", evidence_text)
+    if isinstance(item, ContraWorkItem) and item.section_kind in _HARD_TRIGGER_SECTION_KINDS:
+        if hard is None:
+            return MentionDecision(False, "no_hard_trigger", evidence_text)
+        return MentionDecision(True, hard.group(0).lower(), evidence_text)
+    if hard is not None:
+        return MentionDecision(True, hard.group(0).lower(), evidence_text)
+    # A dedicated 34070-3 section supplies section-4 context for terse condition lists, but a
+    # sentence that contains only soft warning language is not promoted to a hard edge.
+    if isinstance(item, ContraWorkItem) and item.section_kind == "contraindications":
+        soft = _SOFT_SAFETY_TRIGGER.search(evidence_text)
+        if soft is not None:
+            return MentionDecision(False, "soft_safety_only", evidence_text)
+        return MentionDecision(True, "contraindication_section", evidence_text)
+    # Legacy tuple work items represent dedicated contraindication sections.
+    return MentionDecision(True, "contraindication_section", evidence_text)
+
+
+def _classify_mentions(
+    item: ContraWorkItem | tuple[str, str, str],
+    mentions: list[Mention],
+    spans: dict[Mention, EvidenceSpan | None] | None = None,
+) -> list[MentionDecision]:
+    """Classify mentions and assign only explicit, unambiguous disease context.
+
+    The common template is ``for treatment of A in patients with B``: ``B`` is the
+    contraindicated object and ``A`` is the disease context. Multiple conditions in the patient
+    clause are withheld because a scalar qualifier cannot preserve an AND/OR requirement.
+    Medication markers never produce a disease qualifier.
+
+    Only object-channel mentions are classified: the NER backend returns qualifiers too, and a
+    qualifier is never an assertion object (see
+    :func:`~dakp_pipeline.assertions.object_mentions`). The returned decisions are therefore
+    parallel to ``object_mentions(mentions)``, which is what the caller iterates.
+    """
+    mentions = object_mentions(mentions)
+    decisions = [_classify_mention(item, mention, spans) for mention in mentions]
+    if not isinstance(item, ContraWorkItem) or not mentions:
+        return decisions
+
+    localized: list[Mention] = []
+    origin: list[int] = []
+    sentence_by_mention: dict[int, tuple[str, int]] = {}
+    for index, mention in enumerate(mentions):
+        mapped = _mention_local_span(item, mention, spans)
+        if mapped is None:
+            continue
+        sentence, start, end, source_start = mapped
+        local_mention = replace(mention, start=start, end=end, text=sentence[start:end])
+        origin.append(index)
+        localized.append(local_mention)
+        sentence_by_mention[id(local_mention)] = (sentence, source_start)
+
+    clause = patient_clause_contexts(
+        localized,
+        lambda mention: sentence_by_mention[id(mention)][0],
+        group_of=lambda mention: sentence_by_mention[id(mention)][1],
+    )
+    for local_index, sentence in clause.ambiguous.items():
+        # ``A and B``/``A or B`` in a patient clause is not representable by one scalar
+        # qualifier without changing the logic. Drop these candidate objects rather than
+        # falsely asserting either disease alone.
+        decisions[origin[local_index]] = MentionDecision(
+            False, "ambiguous_patient_conjunction", sentence
+        )
+    for local_index, (reason, sentence) in clause.context_only.items():
+        decisions[origin[local_index]] = MentionDecision(False, reason, sentence)
+    for local_index, context_text in clause.contexts.items():
+        index = origin[local_index]
+        if decisions[index].accepted:
+            current = decisions[index]
+            decisions[index] = MentionDecision(
+                True, current.trigger, current.evidence_text, context_text
+            )
+    return decisions
+
+
+def _filtered_evidence(
+    text: str, keywords: re.Pattern[str]
+) -> tuple[str, tuple[EvidenceSpan, ...]]:
+    """Join matching source sentences while preserving their original offsets."""
+    selected = [span for span in _sentence_spans(text) if keywords.search(span.text)]
+    pieces: list[str] = []
+    mappings: list[EvidenceSpan] = []
+    cursor = 0
+    for index, span in enumerate(selected):
+        if index:
+            pieces.append(" ")
+            cursor += 1
+        pieces.append(span.text)
+        mappings.append(
+            EvidenceSpan(cursor, cursor + len(span.text), span.start, span.end, span.text)
+        )
+        cursor += len(span.text)
+    return "".join(pieces), tuple(mappings)
+
+
+def _contraindication_sentences(text: str, keywords: re.Pattern[str]) -> str:
+    """Return only the contraindication-context sentences from ``text``, space-joined.
+
+    Splits ``text`` into sentences and keeps only those matching ``keywords``. The result is
+    suitable for direct NER extraction — GLiNER sees only contraindication-relevant text so
+    indication-context diseases are never mined. Returns ``""`` when no sentence matches.
+    """
+    filtered, _mappings = _filtered_evidence(text, keywords)
+    return filtered
+
+
+def _split_semicolons(cell: str) -> list[str]:
+    """Split a semicolon-joined EMA cell into its stripped, non-empty values."""
+    return [part.strip() for part in cell.split(";") if part.strip()]
+
+
+def _smpc_subjects(registry: pl.DataFrame) -> dict[str, str]:
+    """Map ``ema_product_number`` -> its EMA active substance (INN fallback), registry order kept."""
+    subjects: dict[str, str] = {}
+    for rec in registry.iter_rows(named=True):
+        product = str(rec.get("ema_product_number") or "").strip()
+        substance = (
+            str(rec.get("active_substance") or "").strip() or str(rec.get("inn") or "").strip()
+        )
+        if product and substance:
+            subjects.setdefault(product, substance)
+    return subjects
+
+
+def _smpc_work_items(
+    inputs: Iterable[ArtifactRef], keywords: re.Pattern[str]
+) -> tuple[list[ContraWorkItem], dict[str, tuple[str, str]], dict[str, int]]:
+    """Build the EU SmPC work items from the EMA interim tables among ``inputs``.
+
+    Sections (``smpc_sections.parquet``, :mod:`dakp_pipeline.extract.ema_smpc`) join the
+    medicines registry (``ema_registry.parquet``) on ``ema_product_number`` to resolve the
+    subject active substance. The DailyMed singleton rule carries over: a combination
+    product's contraindication cannot be attributed to one component, so multi-substance
+    products are skipped, as are products absent from the registry (withdrawn or not human —
+    no resolvable subject). Indication sections are filtered to contraindication-context
+    sentences exactly like DailyMed Pass 2; contraindication and warnings sections are mined
+    in full (Pass 1 / Pass 3 semantics — warnings acceptance stays hard-trigger-only at
+    classification time).
+
+    Returns ``(work_items, subjects, counters)``: ``subjects`` maps each ``smpc:``-prefixed
+    set id to its single ``(substance, "")`` subject; ``counters`` feeds the stats line.
+    """
+    items: list[ContraWorkItem] = []
+    subjects: dict[str, tuple[str, str]] = {}
+    counters = {"sections": 0, "skipped_multi_substance": 0, "skipped_unmapped": 0}
+    sections = find_table(inputs, _SMPC_SECTIONS_FILENAME)
+    registry = find_table(inputs, _EMA_REGISTRY_FILENAME)
+    if sections is None or registry is None or sections.is_empty():
+        return items, subjects, counters
+
+    substance_by_product = _smpc_subjects(registry)
+    seen: set[tuple[str, str, str]] = set()
+    for rec in sections.iter_rows(named=True):
+        product = str(rec.get("ema_product_number") or "").strip()
+        kind = _SMPC_SECTION_KINDS.get(str(rec.get("section_kind") or "").strip())
+        text = str(rec.get("section_text") or "")
+        url = str(rec.get("document_url") or "").strip()
+        if not product or kind is None or not text.strip() or not url:
+            continue
+        dedup_key = (product, url, kind)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        substance = substance_by_product.get(product)
+        if substance is None:
+            counters["skipped_unmapped"] += 1
+            continue  # not in the authorised-medicines registry: no resolvable subject
+        substances = _split_semicolons(substance)
+        if len(substances) != 1:
+            counters["skipped_multi_substance"] += 1
+            continue  # combination product: no single attributable subject (singleton rule)
+        set_id = f"{_SMPC_SET_PREFIX}{product}"
+        subjects.setdefault(set_id, (substances[0], ""))
+        if kind == "indication":
+            item_text, mappings = _filtered_evidence(text, keywords)
+            if not item_text.strip():
+                continue
+        else:
+            item_text = text
+            source_spans = _sentence_spans(text)
+            mappings = tuple(
+                EvidenceSpan(span.start, span.end, span.start, span.end, span.text)
+                for span in source_spans
+            )
+        items.append(ContraWorkItem(set_id, url, item_text, text, mappings, kind))
+        counters["sections"] += 1
+    return items, subjects, counters
+
+
+def _resolve_keywords(ctx: TaskContext) -> re.Pattern[str]:
+    """The contraindication keyword pattern: ``ctx.params["contraindication_keywords"]`` or default.
+
+    Accepts a raw string (compiled case-insensitively) or a pre-compiled ``re.Pattern``.
+    Returns :data:`DEFAULT_CONTRA_KEYWORDS` when the param is absent.
+    """
+    raw = ctx.params.get("contraindication_keywords")
+    if raw is None:
+        return DEFAULT_CONTRA_KEYWORDS
+    if isinstance(raw, re.Pattern):
+        return raw
+    return re.compile(raw, re.IGNORECASE)
+
+
+class ContraindicationsShaper:
+    def transform(self, inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
+        with step(logger, "shape_contraindications"):
+            ner_param = ctx.params.get("ner")
+            ner = ner_param if isinstance(ner_param, DiseaseNER) else default_ner(ctx.fixture_root)
+            devices = _resolve_devices(ner)
+            keywords = _resolve_keywords(ctx)
+            if devices:
+                stats(logger, "shape_contraindications", dispatch_gpus=len(devices))
+            with MentionCache(ctx.workdir) as cache:
+                rows = build_contraindication_rows(
+                    inputs, ner, devices=devices, keywords=keywords, cache=cache, ctx=ctx
+                )
+            return write_assertion_table(
+                _TABLE, rows, inputs, ctx, operation="shape_contraindications"
+            )
+
+
+def build_contraindication_rows(
+    inputs: Iterable[ArtifactRef],
+    ner: DiseaseNER,
+    *,
+    devices: Sequence[str] | None = None,
+    keywords: re.Pattern[str] | None = None,
+    cache: MentionCache | None = None,
+    ctx: TaskContext | None = None,
+) -> list[dict[str, str]]:
+    """Mine DailyMed contraindication + indication + warning sections into assertion rows (deterministic).
+
+    **Pass 1:** For each singleton-ingredient SPL set with a contraindication section (LOINC
+    ``34070-3``), extract disease/phenotype mentions from the full section text.
+
+    **Pass 2:** For each singleton-ingredient SPL set with an indication section (LOINC
+    ``34067-9``), filter the text
+    to contraindication-context sentences (via ``keywords`` or :data:`DEFAULT_CONTRA_KEYWORDS`)
+    and extract mentions from the filtered text only. This catches contraindications embedded
+    in the indication section while avoiding false positives from indication-context diseases.
+
+    **Pass 3:** For each singleton-ingredient SPL set with a boxed-warning section (LOINC
+    ``34066-1``) or a warnings/precautions section (``43685-7``, ``34071-1``, ``42232-9``),
+    extract mentions from the full section text. Acceptance is hard-trigger-only: a warning
+    section's caution prose supplies no section-level contraindication context, so mentions
+    become edges only when their sentence carries hard prohibition language.
+
+    Mentions from all passes are paired with the set's single active ingredient and aggregated by
+    ``(subject_text, object_text, disease_context_text, species)``. Every DailyMed row carries
+    the species the contraindication occurred in, derived per
+    :mod:`~dakp_pipeline.assertions.species`: the row's evidence sentence first, the label's
+    mined sections as fallback, the human taxon for every human label, and an animal row (an
+    animal document type OR a NADA/ANADA/CNADA approval on the set) naming
+    no species anywhere is DROPPED (``dropped_unattributable_species``) rather than defaulted
+    to human. Approval citations are expanded per edge: an animal set cites the animal form of
+    a shared application number, a human set never cites an animal form. SmPC rows are human
+    by construction. When ``devices`` is provided
+    (production multi-device), work items from ALL passes are dispatched through ONE run-scoped
+    :class:`~dakp_pipeline.assertions.ner_dispatch.MiningPool` across those devices - every pass
+    shares this backend profile, and a per-pass device split would pin the dominant warnings
+    pass to a single GPU while the other GPUs idle. When ``cache`` (a
+    persistent mention cache) is given, previously mined section texts are served from it via
+    :func:`~dakp_pipeline.assertions.ner_dispatch.mine_with_cache` — it only changes WHERE
+    mentions come from, never their content. Output is byte-identical regardless of dispatch
+    mode or cache state. When ``ctx`` is given, the DailyMed evidence index is served from the
+    store when another shape task already built it this run
+    (:func:`~dakp_pipeline.assertions.evidence.load_or_build_dailymed_evidence`).
+    """
+    # Per-phase timers (US-007): the shaper is the DAG's long pole; these separate the fixed
+    # costs (evidence index), the GPU pool (mining), and the CPU tail (merge/aggregation) so a
+    # profile targets the right phase instead of guessing from one task-level number.
+    with step(logger, "shape_contraindications.evidence"):
+        evidence = load_or_build_dailymed_evidence(inputs, ctx)
+        approvals = build_fda_approval_index(inputs)
+        kw = keywords or DEFAULT_CONTRA_KEYWORDS
+        smpc_items, smpc_subjects, smpc_counters = _smpc_work_items(inputs, kw)
+
+    # Pass 1 work items: contraindication sections (all text is relevant), retaining the
+    # original sentence spans for local evidence recovery.
+    work_items_p1: list[ContraWorkItem] = []
+    skipped_multi_ingredient = 0
+    for set_id in sorted(evidence.contraindication_docs):
+        ingredients = evidence.active_ingredients_by_set.get(set_id, [])
+        if not ingredients:
+            continue
+        if len(ingredients) > 1:
+            skipped_multi_ingredient += 1
+            continue  # combination product: no single attributable subject (singleton rule)
+        for doc_id, text in evidence.contraindication_docs[set_id]:
+            source_spans = _sentence_spans(text)
+            mappings = tuple(
+                EvidenceSpan(span.start, span.end, span.start, span.end, span.text)
+                for span in source_spans
+            )
+            work_items_p1.append(
+                ContraWorkItem(set_id, doc_id, text, text, mappings, "contraindications")
+            )
+
+    # Pass 2 work items: indication sections filtered to contraindication-context sentences.
+    # The mapping prevents the joined filtered text from destroying source offsets.
+    work_items_p2: list[ContraWorkItem] = []
+    for set_id in sorted(evidence.indication_docs):
+        ingredients = evidence.active_ingredients_by_set.get(set_id, [])
+        if not ingredients:
+            continue
+        if len(ingredients) > 1:
+            skipped_multi_ingredient += 1
+            continue  # combination product: no single attributable subject (singleton rule)
+        for doc_id, text in evidence.indication_docs[set_id]:
+            filtered, mappings = _filtered_evidence(text, kw)
+            if filtered.strip():
+                work_items_p2.append(
+                    ContraWorkItem(set_id, doc_id, filtered, text, mappings, "indications")
+                )
+
+    # Pass 3 work items: boxed-warning + warnings/precautions sections (full text, hard-trigger-only
+    # acceptance), with the same singleton-ingredient rule and full-text identity mappings as Pass 1.
+    work_items_p3: list[ContraWorkItem] = []
+    for section_kind, docs in (
+        ("boxed_warning", evidence.boxed_warning_docs),
+        ("warnings", evidence.warning_docs),
+    ):
+        for set_id in sorted(docs):
+            ingredients = evidence.active_ingredients_by_set.get(set_id, [])
+            if not ingredients:
+                continue
+            if len(ingredients) > 1:
+                skipped_multi_ingredient += 1
+                continue  # combination product: no single attributable subject (singleton rule)
+            for doc_id, text in docs[set_id]:
+                source_spans = _sentence_spans(text)
+                mappings = tuple(
+                    EvidenceSpan(span.start, span.end, span.start, span.end, span.text)
+                    for span in source_spans
+                )
+                work_items_p3.append(
+                    ContraWorkItem(set_id, doc_id, text, text, mappings, section_kind)
+                )
+
+    # Pass 4 (EU SmPC) work items join the same pool: one LPT-balanced dispatch covers FDA and
+    # EMA sections alike, and the mention cache deduplicates across both label worlds.
+    all_work_items = [*work_items_p1, *work_items_p2, *work_items_p3, *smpc_items]
+    stats(
+        logger,
+        "shape_contraindications",
+        contraindication_sets=len(evidence.contraindication_docs),
+        indication_sets=len(evidence.indication_docs),
+        skipped_multi_ingredient_sets=skipped_multi_ingredient,
+        pass1_sections=len(work_items_p1),
+        pass2_sections=len(work_items_p2),
+        pass3_sections=len(work_items_p3),
+        smpc_sections=smpc_counters["sections"],
+        smpc_skipped_multi_substance=smpc_counters["skipped_multi_substance"],
+        smpc_skipped_unmapped=smpc_counters["skipped_unmapped"],
+        sections_to_mine=len(all_work_items),
+    )
+
+    # Extract mentions: pooled multi-device dispatch when devices given + production NER + >1 item;
+    # else sequential (with periodic progress narration - GLiNER mining is the slow step). ONE pool
+    # spans the whole mining region: each device loads its model once per RUN instead of once per
+    # cache-put batch, which is how many times mine_with_cache calls `mine` (it slices the misses into
+    # batches of DAKP_NERCACHE_PUT_BATCH, 512 by default). mine_by_position fronts the block with the
+    # persistent mention cache: hits never reach the miners, only misses are dispatched, and results
+    # come back ALIGNED WITH all_work_items (see its docstring - one SPL document contributes several
+    # sections, so (set_id, doc_id) cannot key them). All passes share ONE backend profile, so their
+    # misses go to the devices as a single LPT-balanced pool - the largest pass (full warnings text)
+    # otherwise dominated wall time alone on one GPU.
+    with dispatch_pool(ner, devices) as pool:
+
+        def mine(items: Sequence[Any]) -> dict[tuple[str, str], Any]:
+            # EVERY batch goes through the open pool, singletons included. Mining one text in the
+            # parent instead would load a second model on a 16 GB card that a live worker already
+            # holds, without the expandable-segments allocator env only the worker sets, and then
+            # block on cuda-0.lock: the parent resolves device=None to bare "cuda", whose lock file
+            # is the same one slot cuda:0 holds for its whole process life, and the per-process
+            # self-reuse guard cannot see a child's fd. It would poll for an hour and die.
+            if pool is not None and items:
+                return pool.mine(list(items))
+            mined_seq: dict[tuple[str, str], Any] = {}
+            for done, item in enumerate(items, start=1):
+                set_id, doc_id, text = _work_item_parts(item)
+                # Production returns RAW SPANS (Tier B cacheable, merged parent-side by
+                # mine_with_cache); offline returns final mentions (never cached). Both normalize
+                # to mention lists at the cache seam, so the shaper below sees identical values
+                # regardless of dispatch mode.
+                mined_seq[(set_id, doc_id)] = (
+                    ner.extract_spans(text)
+                    if not ner._offline
+                    else extract_contraindication_diseases(text, ner)
+                )
+                progress(
+                    logger,
+                    "shape_contraindications",
+                    done,
+                    len(items),
+                    every=_MINING_PROGRESS_EVERY,
+                )
+            return mined_seq
+
+        with step(logger, "shape_contraindications.mine"):
+            mined = mine_by_position(all_work_items, ner, mine, cache)
+
+    # Aggregate mentions into assertion rows keyed by (subject, object, disease context).
+    # Work items are singleton-only, so each set contributes exactly one subject ingredient;
+    # the local source sentence is retained on the aggregate for the evidence column.
+    with step(logger, "shape_contraindications.aggregate"):
+        aggregated: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+        mentions_mined = 0
+        dropped_unattributable_species = 0
+        for index, item in enumerate(all_work_items):
+            set_id, doc_id, _text = _work_item_parts(item)
+            ingredients: list[tuple[str, str]]
+            row_approvals: list[str]
+            source: str
+            if set_id.startswith(_SMPC_SET_PREFIX):
+                # EMA row: subject from the registry join, the product number doubles as the
+                # regulatory-approval id, and provenance rides the infores:epar chain.
+                ingredients = [smpc_subjects[set_id]]
+                row_approvals = [set_id[len(_SMPC_SET_PREFIX) :]]
+                source = _SOURCE_SMPC
+            else:
+                ingredients = evidence.active_ingredients_by_set.get(set_id, [])
+                # Per-edge prefix choice: an animal set (document type or NADA/ANADA/CNADA
+                # approval) cites the animal form of a shared number, a human set never does.
+                row_approvals = approvals.expand_all_for_edge(
+                    evidence.approval_ids_for_sets([set_id]),
+                    animal_edge=evidence.is_animal_set(set_id),
+                )
+                source = _SOURCE_DAILYMED
+            all_mentions = mined[index]
+            mentions = object_mentions(all_mentions)
+            # One span memo per item: classification, object localization, and qualifier
+            # localization share a single evidence-span scan per distinct mention value.
+            item_spans: dict[Mention, EvidenceSpan | None] | None = (
+                {} if isinstance(item, ContraWorkItem) else None
+            )
+            decisions = _classify_mentions(item, mentions, item_spans)
+            qualifier_fields: dict[int, dict[str, str]] = {}
+            qualifier_scores: dict[int, dict[str, tuple[float, str]]] = {}
+            localized_objects: list[tuple[int, Mention, str]] = []
+            localized_qualifiers: list[tuple[Mention, str]] = []
+            # Mention is a frozen, value-hashable dataclass: set membership replaces the
+            # O(objects) linear scan per qualifier mention.
+            mention_objects = frozenset(mentions)
+            for object_index, mention in enumerate(mentions):
+                mapped = (
+                    _mention_local_span(item, mention, item_spans)
+                    if isinstance(item, ContraWorkItem)
+                    else None
+                )
+                if mapped is None:
+                    localized_objects.append((object_index, mention, _offset_space(item)))
+                else:
+                    sentence, start, end, _source_start = mapped
+                    localized_objects.append(
+                        (
+                            object_index,
+                            replace(mention, start=start, end=end, text=sentence[start:end]),
+                            sentence,
+                        )
+                    )
+            for mention in all_mentions:
+                if mention in mention_objects:
+                    continue
+                mapped = (
+                    _mention_local_span(item, mention, item_spans)
+                    if isinstance(item, ContraWorkItem)
+                    else None
+                )
+                if mapped is None:
+                    localized_qualifiers.append((mention, _offset_space(item)))
+                else:
+                    sentence, start, end, _source_start = mapped
+                    localized_qualifiers.append(
+                        (replace(mention, start=start, end=end, text=sentence[start:end]), sentence)
+                    )
+            # Group objects and qualifiers by sentence in one pass instead of rescanning both
+            # lists once per distinct sentence. Sentence groups partition the mentions, so the
+            # per-mention-index qualifier assignment below cannot depend on group order.
+            objects_by_sentence: dict[str, list[tuple[int, Mention]]] = {}
+            for object_index, mention, sentence in localized_objects:
+                objects_by_sentence.setdefault(sentence, []).append((object_index, mention))
+            qualifiers_by_sentence: dict[str, list[Mention]] = {}
+            for mention, sentence in localized_qualifiers:
+                qualifiers_by_sentence.setdefault(sentence, []).append(mention)
+            for sentence, object_group in objects_by_sentence.items():
+                qualifier_group = qualifiers_by_sentence.get(sentence, [])
+                attached, scores = attach_qualifiers_with_scores(
+                    [mention for _index, mention in object_group],
+                    qualifier_group,
+                    lambda _mention, value=sentence: value,
+                )
+                for local_index, fields in attached.items():
+                    mention_index = object_group[local_index][0]
+                    qualifier_fields[mention_index] = fields
+                    qualifier_scores[mention_index] = {
+                        field: scores[(local_index, field)] for field in fields
+                    }
+            for mention_index, (mention, decision) in enumerate(
+                zip(mentions, decisions, strict=True)
+            ):
+                mentions_mined += 1
+                # Canonicalize the mined mention (lowercase / strip punctuation) so case variants
+                # (asthma / Asthma / ASTHMA) aggregate to one object instead of fragmenting the rows.
+                object_text = normalize_text(mention.text)
+                if not object_text or not decision.accepted:
+                    continue
+                # Species context: SmPC is human by construction; a DailyMed row takes its
+                # species from its evidence sentence, else the label's mined sections. An
+                # animal row naming no species anywhere is unattributable and dropped --
+                # defaulting it to the human taxon would put an animal edge on the human row.
+                if source == _SOURCE_SMPC:
+                    species_tuple: tuple[str, ...] = (HUMAN_TAXON,)
+                else:
+                    species_tuple = evidence.species_context_for(set_id, decision.evidence_text)
+                    if not species_tuple:
+                        dropped_unattributable_species += 1
+                        continue
+                for species_curie in species_tuple:
+                    for ingredient_name, ingredient_unii in ingredients:
+                        _accumulate(
+                            aggregated,
+                            set_id,
+                            doc_id,
+                            ingredient_name,
+                            ingredient_unii,
+                            object_text,
+                            mention,
+                            decision.evidence_text,
+                            decision.context_text,
+                            row_approvals,
+                            qualifier_fields.get(mention_index, {}),
+                            qualifier_scores.get(mention_index, {}),
+                            source,
+                            species_curie,
+                        )
+
+    stats(
+        logger,
+        "shape_contraindications",
+        mentions_mined=mentions_mined,
+        dropped_unattributable_species=dropped_unattributable_species,
+        assertions=len(aggregated),
+    )
+    return [_finalize_row(agg) for _key, agg in sorted(aggregated.items())]
+
+
+def _accumulate(
+    aggregated: dict[tuple[str, str, str, str, str], dict[str, Any]],
+    set_id: str,
+    doc_id: str,
+    ingredient_name: str,
+    ingredient_unii: str,
+    object_text: str,
+    mention: Mention,
+    evidence_text: str = "",
+    context_text: str = "",
+    approvals: Iterable[str] = (),
+    qualifier_fields: Mapping[str, str] | None = None,
+    qualifier_scores: Mapping[str, tuple[float, str]] | None = None,
+    source: str = _SOURCE_DAILYMED,
+    species_context_text: str = HUMAN_TAXON,
+) -> None:
+    """Add one observation to the ``(source, subject, object, disease-context, species)`` aggregate.
+
+    The subject carries the label-provided ingredient text + UNII ("" for EMA rows); the object
+    and optional context are mined mention text with CURIE/name/category left empty for
+    Tablassert/fullmap to resolve. ``source`` partitions DailyMed rows from EU SmPC rows: the
+    two carry different upstream chains (``infores:dailymed`` vs ``infores:epar``), so the same
+    (subject, object, context) observed in both must aggregate into two honest rows, not one
+    mixed-provenance row.
+    """
+    # Context is part of the semantic identity: unconditional evidence must never inherit a
+    # conditional qualifier (or vice versa) merely because subject/object are equal. Context and
+    # evidence carry raw label prose (``|`` bullets, line breaks), so they are sanitized before
+    # they enter pipe-encoded TSV cells — and before keying, so delimiter-only variants aggregate
+    # together instead of fragmenting rows.
+    context = pipe_safe_text(context_text)
+    key = (source, ingredient_name, object_text, context, species_context_text)
+    agg = aggregated.setdefault(
+        key,
+        {
+            "source": source,
+            "subject_text": ingredient_name,
+            "subject_curie": ingredient_unii,
+            "subject_name": ingredient_name,
+            "object_text": object_text,
+            "object_curie": "",
+            "object_name": "",
+            "object_category": "",
+            "disease_context_text": context,
+            "species_context_text": species_context_text,
+            "sets": [],
+            "docs": [],
+            "FDA_regulatory_approvals": [],
+            "scores": [],
+            "evidence_texts": [],
+            "qualifiers": {},
+            "qualifier_scores": {},
+        },
+    )
+    agg["sets"].append(set_id)
+    agg["docs"].append(doc_id)
+    agg["FDA_regulatory_approvals"].extend(approvals)
+    agg["scores"].append(mention.score)
+    evidence = pipe_safe_text(evidence_text)
+    if evidence:
+        agg["evidence_texts"].append(evidence)
+    for field, value in (qualifier_fields or {}).items():
+        if field == "species_context_text":
+            # CURIE-valued column: the derived NCBITaxon CURIE above wins, never mention text.
+            continue
+        score = (qualifier_scores or {}).get(field, (0.0, value))
+        previous = agg["qualifier_scores"].get(field)
+        if previous is None or score > previous:
+            agg["qualifier_scores"][field] = score
+            agg["qualifiers"][field] = value
+
+
+def _finalize_row(agg: dict[str, Any]) -> dict[str, str]:
+    if agg.get("source", _SOURCE_DAILYMED) == _SOURCE_SMPC:
+        return _finalize_smpc_row(agg)
+    # Computed once per row: the three consumers used to re-run the pipe each (3x per row).
+    set_evidence = spl_evidence_pipe(agg["sets"], agg["docs"])
+    return row_for(
+        _TABLE,
+        subject_text=agg["subject_text"],
+        subject_curie=agg["subject_curie"],
+        subject_name=agg["subject_name"],
+        subject_category="ChemicalEntity",
+        predicate=_PREDICATE,
+        object_text=agg["object_text"],
+        object_curie=agg["object_curie"],
+        object_name=agg["object_name"],
+        object_category=agg["object_category"],
+        disease_context_text=agg.get("disease_context_text", ""),
+        assertion_context="contraindication",
+        evidence_text=sorted_pipe(agg.get("evidence_texts", [])),
+        species_context_text=agg.get("species_context_text", HUMAN_TAXON),
+        **agg.get("qualifiers", {}),
+        supporting_spl_sets=sorted_pipe(dailymed_set_url(set_id) for set_id in agg["sets"]),
+        supporting_spl_documents=sorted_pipe(
+            dailymed_document_url(doc_id) for doc_id in agg["docs"]
+        ),
+        supporting_spl_evidence=set_evidence,
+        FDA_regulatory_approvals=sorted_pipe(agg.get("FDA_regulatory_approvals", [])),
+        edge_evidence=edge_evidence_pipe(set_evidence.split("|") if set_evidence else []),
+        ner_confidence_score=_max_score(agg["scores"]),
+        knowledge_level=KL_ASSERTION,
+        agent_type=AT_MANUAL,
+        primary_knowledge_source=INFORES_DAKP,
+        upstream_resource_ids=INFORES_DAILYMED,
+    )
+
+
+def _finalize_smpc_row(agg: dict[str, Any]) -> dict[str, str]:
+    """EMA SmPC aggregate -> assertion row, following the approved-treats EMA conventions.
+
+    The EMA product number rides ``FDA_regulatory_approvals`` and the SmPC document URL stays
+    in ``supporting_spl_documents``; there is no SPL set, so the DailyMed-shaped set/evidence
+    columns stay empty — including ``edge_evidence``, whose ``dailymed:`` CURIE prefix would
+    mislabel an EU document. Upstream provenance is ``infores:epar`` (the centralised
+    product-information corpus the SmPCs belong to).
+    """
+    return row_for(
+        _TABLE,
+        subject_text=agg["subject_text"],
+        subject_curie=agg["subject_curie"],
+        subject_name=agg["subject_name"],
+        subject_category="ChemicalEntity",
+        predicate=_PREDICATE,
+        object_text=agg["object_text"],
+        object_curie=agg["object_curie"],
+        object_name=agg["object_name"],
+        object_category=agg["object_category"],
+        disease_context_text=agg.get("disease_context_text", ""),
+        assertion_context="contraindication",
+        evidence_text=sorted_pipe(agg.get("evidence_texts", [])),
+        species_context_text=HUMAN_TAXON,
+        **agg.get("qualifiers", {}),
+        supporting_spl_documents=sorted_pipe(agg["docs"]),
+        FDA_regulatory_approvals=sorted_pipe(agg.get("FDA_regulatory_approvals", [])),
+        ner_confidence_score=_max_score(agg["scores"]),
+        knowledge_level=KL_ASSERTION,
+        agent_type=AT_MANUAL,
+        primary_knowledge_source=INFORES_DAKP,
+        upstream_resource_ids=INFORES_EPAR,
+    )
+
+
+def _max_score(scores: list[float]) -> str:
+    """Highest NER span score as a deterministic string ("" if none)."""
+    if not scores:
+        return ""
+    return f"{max(scores):g}"
+
+
+transform = ContraindicationsShaper().transform
+
+__all__ = [
+    "CONTRAINDICATION_GPUS",
+    "DEFAULT_CONTRA_KEYWORDS",
+    "ContraWorkItem",
+    "ContraindicationsShaper",
+    "EvidenceSpan",
+    "MentionDecision",
+    "SentenceSpan",
+    "build_contraindication_rows",
+    "default_ner",
+    "transform",
+]
