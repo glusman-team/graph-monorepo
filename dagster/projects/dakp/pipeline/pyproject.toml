@@ -20,6 +20,10 @@ dependencies = [
   # Tablassert graph/table config validation (the emitter stays custom; pyyaml
   # validates it round-trips and replaces the fragile graph-stem line scan)
   "pyyaml>=6.0",
+  # NER training export (canonical avro schema for the HF dataset split): a production
+  # stage, so these are runtime deps, not dev-only.
+  "dataclasses-avroschema[pydantic]>=0.71,<1",
+  "fastavro>=1.12,<2",
 ]
 
 [dependency-groups]
@@ -27,10 +31,6 @@ dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.8",
   "ruff>=0.16.0",
-  # NER training export (canonical avro schema for the HF dataset split); light
-  # deps that the test suite covers, kept here so `uv sync` (dev default) has them
-  "dataclasses-avroschema[pydantic]>=0.71,<1",
-  "fastavro>=1.12,<2",
 ]
 # Production NER backend (GPU mining): install with `uv sync --group ner`.
 # Deliberately NOT in the default groups: torch + gliner2 pull gigabytes and

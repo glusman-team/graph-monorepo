@@ -1,0 +1,24 @@
+{
+  "$schema": "../../../../../node_modules/nx/schemas/project-schema.json",
+  "name": "dakp-pipeline",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run pytest -q",
+        "cwd": "dagster/projects/dakp/pipeline"
+      },
+      "cache": true,
+      "inputs": ["pythonInputs"]
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check . && uv run ruff format --check .",
+        "cwd": "dagster/projects/dakp/pipeline"
+      },
+      "cache": true,
+      "inputs": ["pythonInputs"]
+    }
+  }
+}

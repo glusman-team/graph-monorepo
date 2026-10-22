@@ -249,6 +249,8 @@ source = { editable = "." }
 dependencies = [
     { name = "aria2" },
     { name = "blake3" },
+    { name = "dataclasses-avroschema", extra = ["pydantic"] },
+    { name = "fastavro" },
     { name = "fastexcel" },
     { name = "loguru" },
     { name = "polars" },
@@ -259,8 +261,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "dataclasses-avroschema", extra = ["pydantic"] },
-    { name = "fastavro" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
@@ -276,6 +276,8 @@ ner = [
 requires-dist = [
     { name = "aria2", specifier = ">=0.0.1b0" },
     { name = "blake3", specifier = ">=1.0.0" },
+    { name = "dataclasses-avroschema", extras = ["pydantic"], specifier = ">=0.71,<1" },
+    { name = "fastavro", specifier = ">=1.12,<2" },
     { name = "fastexcel", specifier = ">=0.21.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "polars", specifier = ">=2.0.0rc2,<3" },
@@ -286,8 +288,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "dataclasses-avroschema", extras = ["pydantic"], specifier = ">=0.71,<1" },
-    { name = "fastavro", specifier = ">=1.12,<2" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-xdist", specifier = ">=3.8" },
     { name = "ruff", specifier = ">=0.16.0" },

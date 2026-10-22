@@ -10,9 +10,19 @@
       },
       "cache": true,
       "inputs": [
-        "default",
-        "{workspaceRoot}/dagster/libs/**"
+        "pythonInputs",
+        "{workspaceRoot}/dagster/projects/dakp/pipeline/**/*.py",
+        "{workspaceRoot}/dagster/projects/dakp/pipeline/pyproject.toml"
       ]
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check src tests && uv run ruff format --check src tests",
+        "cwd": "dagster/projects/dakp"
+      },
+      "cache": true,
+      "inputs": ["pythonInputs"]
     }
   }
 }

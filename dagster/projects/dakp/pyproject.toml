@@ -2,9 +2,10 @@
 name = "dakp-dag"
 version = "0.1.0"
 description = "Dagster code location: DAKP pipeline (phase 1 scaffold; code migration from ISB/DAKP is phase 2)"
-requires-python = ">=3.10,<3.15"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "dagster==1.13.24",
+  "dakp-pipeline",
   "mo-core",
   "mo-kg",
   "mo-dagster",
@@ -25,6 +26,7 @@ build-backend = "hatchling.build"
 packages = ["src/dakp_dag"]
 
 [tool.uv.sources]
+dakp-pipeline = { path = "pipeline", editable = true }
 mo-core = { path = "../../libs/mo-core", editable = true }
 mo-kg = { path = "../../libs/mo-kg", editable = true }
 mo-dagster = { path = "../../libs/mo-dagster", editable = true }
