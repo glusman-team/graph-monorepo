@@ -1,0 +1,22 @@
+# Lint config for the DAKP Go workers (ported from ISB/DAKP v1.25.0).
+#
+# errcheck is disabled: the ported parsing code deliberately ignores close
+# errors on read-side handles (defer f.Close() on readers), the established
+# DAKP style; rewriting 46 proven sites would be churn without a correctness
+# gain. Write-side close errors ARE checked there (see extractor code).
+# The parquet.Writer deprecation is excluded: the generic all-string writer
+# is the design, and the typed-schema replacement changes output bytes.
+version: "2"
+
+linters:
+  default: standard
+  disable:
+    - errcheck
+  exclusions:
+    rules:
+      - linters: [staticcheck]
+        text: "SA1019: github.com/parquet-go/parquet-go.Writer is deprecated"
+
+formatters:
+  enable:
+    - gofmt

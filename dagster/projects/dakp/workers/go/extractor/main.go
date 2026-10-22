@@ -25,7 +25,7 @@ import (
 
 	dagsterpipes "github.com/hupe1980/dagster-pipes-go"
 
-	"github.com/glusman-team/graph-monorepo/dagster/projects/dakp/workers/go/internal/pipesutil"
+	"github.com/glusman-team/dakp/go/internal/pipesutil"
 )
 
 func run(ctx *dagsterpipes.Context[map[string]any]) error {

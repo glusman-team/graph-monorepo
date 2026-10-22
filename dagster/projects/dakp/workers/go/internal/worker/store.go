@@ -1,0 +1,137 @@
+package worker
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/glusman-team/dakp/go/internal/blake3store"
+)
+
+// ParquetMediaType is the media type for interim parquet tables (matches Python
+// schemas.PARQUET_MEDIA_TYPE).
+const ParquetMediaType = "application/vnd.apache.parquet"
+
+// SchemaFingerprint computes the deterministic b3:<hex> fingerprint of an ordered column list
+// (matches Python schemas.schema_fingerprint: BLAKE3 of the tab-joined columns). Captured in
+// artifact manifests so schema drift is detectable by hash.
+func SchemaFingerprint(columns []string) string {
+	return blake3store.HashBytes([]byte(strings.Join(columns, "\t")))
+}
+
+// TSVMediaType is the media type for uncompressed Tablassert-handoff TSV tables (matches Python
+// schemas.TSV_MEDIA_TYPE).
+const TSVMediaType = "text/tab-separated-values"
+
+// RegisterInput describes one in-place workdir output to register.
+type RegisterInput struct {
+	Path              string
+	MediaType         string
+	Rows              int64
+	SchemaFingerprint string
+	Inputs            []string // provenance chain: the input artifact ids
+	Warnings          int64
+	Operation         string // operation-block name ("" omits the operation block)
+}
+
+// Store is the Go mirror of Python io/artifact_store.ArtifactStore, bound to a workdir root. It
+// registers workdir outputs (interim parquet) in place: hash + sidecar manifest, no copy. The
+// directory layout mirrors Python paths.Workdir (interim, manifests, raw/by-hash).
+type Store struct {
+	Workdir string
+}
+
+// InterimDir returns the partitioned interim-table root (interim).
+func (s Store) InterimDir() string { return filepath.Join(s.Workdir, "interim") }
+
+// TabularDir returns the uncompressed Tablassert-handoff TSV root (tabular).
+func (s Store) TabularDir() string { return filepath.Join(s.Workdir, "tabular") }
+
+// ManifestsDir returns the per-artifact manifest root (manifests).
+func (s Store) ManifestsDir() string { return filepath.Join(s.Workdir, "manifests") }
+
+// ManifestPath returns the sidecar manifest path for an artifact id (manifests/<hex>.json),
+// mirroring ArtifactStore.manifest_path.
+func (s Store) ManifestPath(id string) string {
+	return filepath.Join(s.ManifestsDir(), blake3store.DigestDirname(id)+".json")
+}
+
+// Register mirrors ArtifactStore.register for an in-place workdir output: hashes the file, writes
+// the sidecar manifest at manifests/<hex>.json, and returns an ArtifactRef whose URI is the path.
+// The manifest's table block carries rows/schema_fingerprint/warnings; the operation block (when
+// named) records the producing stage. The returned ref's uri/blake3/media_type/rows/
+// schema_fingerprint/manifest are what the downstream shaping stage consumes.
+func (s Store) Register(in RegisterInput) (ArtifactRef, error) {
+	id, sri, err := blake3store.HashFileWithSRI(in.Path) // one read of the file
+	if err != nil {
+		return ArtifactRef{}, err
+	}
+	return s.registerWithHashes(in, id, sri)
+}
+
+// RegisterMany registers many in-place workdir outputs: it hashes every input path
+// concurrently (bounded by runtime.NumCPU) via blake3store.HashFilesWithSRI - one read per
+// file - then writes the sidecar manifests and builds the refs sequentially in input
+// order. The manifests, refs, and debug log lines are exactly those of N sequential
+// Register calls.
+func (s Store) RegisterMany(ctx context.Context, inputs []RegisterInput) ([]ArtifactRef, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	paths := make([]string, len(inputs))
+	for i, in := range inputs {
+		paths[i] = in.Path
+	}
+	hashes, err := blake3store.HashFilesWithSRI(ctx, paths, runtime.NumCPU())
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]ArtifactRef, 0, len(inputs))
+	for _, in := range inputs {
+		pair := hashes[in.Path]
+		ref, err := s.registerWithHashes(in, pair[0], pair[1])
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
+// registerWithHashes is the shared tail of Register/RegisterMany: the hashes are already
+// computed, so it writes the sidecar manifest at manifests/<hex>.json, logs, and returns
+// the ArtifactRef whose URI is the path.
+func (s Store) registerWithHashes(in RegisterInput, id, sri string) (ArtifactRef, error) {
+	m := blake3store.NewArtifactManifest(id, in.Path, in.MediaType)
+	m.Hash.File = blake3store.StringPtr(id)
+	m.Hash.SHA256SRI = blake3store.StringPtr(sri)
+	if in.Inputs != nil {
+		m.Inputs = in.Inputs
+	}
+	if in.Operation != "" {
+		m.Operation = &blake3store.OperationBlock{Name: in.Operation}
+	}
+	m.Table.Rows = blake3store.IntPtr(in.Rows)
+	m.Table.SchemaFingerprint = blake3store.StringPtr(in.SchemaFingerprint)
+	m.Table.Warnings = blake3store.IntPtr(in.Warnings)
+
+	mpath := s.ManifestPath(id)
+	if err := blake3store.WriteManifest(mpath, m); err != nil {
+		return ArtifactRef{}, err
+	}
+	// Per-artifact detail stays DEBUG; the extractors narrate their own outputs at INFO.
+	slog.Debug("store register: path = " + in.Path)
+	slog.Debug("store register: blake3 = " + id)
+	slog.Debug(fmt.Sprintf("store register: rows = %d", in.Rows))
+	return ArtifactRef{
+		URI:               in.Path,
+		Blake3:            id,
+		MediaType:         in.MediaType,
+		Rows:              blake3store.IntPtr(in.Rows),
+		SchemaFingerprint: blake3store.StringPtr(in.SchemaFingerprint),
+		Manifest:          blake3store.StringPtr(mpath),
+	}, nil
+}

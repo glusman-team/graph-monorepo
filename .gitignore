@@ -32,3 +32,4 @@ dagster/projects/*/workers/go/bin/
 dagster/published/
 dagster/projects/*/published/
 .ralph/
+.pi-wt/
