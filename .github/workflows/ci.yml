@@ -25,7 +25,9 @@ jobs:
       - name: sync + test
         run: |
           set -e
-          for dir in dagster/libs/*/ dagster/projects/*/; do
+          # nested globs cover packages inside a project (e.g. projects/dakp/pipeline);
+          # dirs without a pyproject.toml are skipped by the guard.
+          for dir in dagster/libs/*/ dagster/projects/*/ dagster/projects/*/*/; do
             [ -f "$dir/pyproject.toml" ] || continue
             echo "::group::uv lock --check: $dir"
             (cd "$dir" && uv lock --check)
@@ -33,6 +35,11 @@ jobs:
             (cd "$dir" && uv sync --group dev --quiet && uv run pytest -q)
             echo "::endgroup::"
           done
+      - name: dg check defs (every code location loads)
+        run: |
+          cd dagster/deployments/local
+          uv sync --quiet
+          uv run dg check defs
 
   go:
     runs-on: ubuntu-latest
