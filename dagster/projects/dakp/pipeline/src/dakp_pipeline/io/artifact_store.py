@@ -48,7 +48,7 @@ from dakp_pipeline.paths import Workdir
 OP_INDEX_FILENAME = "_index.json"
 
 #: Shared Python/Go operation-index key spec (mirrored byte-for-byte by
-#: ``go/internal/airflow/opindex.go`` — keep the two in lockstep):
+#: ``go/internal/worker/opindex.go`` - keep the two in lockstep):
 #:
 #: * ``canonical = operation + "|" + "|".join(sorted(inputs))`` (UTF-8; ``sorted`` is Unicode
 #:   code-point order, which matches Go's byte-wise ``sort.Strings`` for these ASCII ids);

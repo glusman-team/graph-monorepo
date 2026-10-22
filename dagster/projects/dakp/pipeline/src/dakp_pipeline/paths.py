@@ -1,7 +1,7 @@
 """Configurable workdir layout. No absolute paths anywhere in the pipeline.
 
 All paths are derived from a single workdir root, which is supplied by the caller
-(CLI ``--workdir``, Airflow DAG param ``workdir``, or ``tmp_path`` in tests). The
+(CLI ``--workdir``, a stage param ``workdir``, or ``tmp_path`` in tests). The
 layout mirrors the directory tree the pipeline writes under that root.
 """
 

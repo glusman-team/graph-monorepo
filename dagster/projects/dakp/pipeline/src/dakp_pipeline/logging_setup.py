@@ -20,6 +20,7 @@ prevention).
 
 from __future__ import annotations
 
+import importlib.machinery
 import logging
 import os
 import re
@@ -108,7 +109,7 @@ WORKER_LOG_SUBDIR = Path("logs") / "workers"
 #: Level for the worker's own (DAKP) records once its stderr is a private file: keep it verbose.
 _WORKER_SINK_LEVEL = "DEBUG"
 
-#: Level for the worker's records when stderr is still Airflow's (no worker file): real problems
+#: Level for the worker's records when stderr is still the inherited one (no worker file): real problems
 #: only. An ERROR genuinely belongs in the task log; INFO/DEBUG is the noise this module removes.
 _WORKER_FALLBACK_LEVEL = "ERROR"
 
@@ -145,7 +146,7 @@ def configure_worker_logging(workdir: Path | str | None, name: str) -> None:
     """Configure logging inside a ``spawn``-started child process (the per-GPU NER workers).
 
     A spawned child is a fresh interpreter: loguru starts with its DEFAULT sink (``sys.stderr``,
-    level DEBUG) and stdlib ``logging`` has no handler. Airflow captures a task subprocess's
+    level DEBUG) and stdlib ``logging`` has no handler. A parent process may capture a subprocess's
     stderr as generic noise.
 
     The capture point is the stderr FILE DESCRIPTOR, not ``sys.stderr`` or the root logger:
@@ -304,6 +305,37 @@ def progress(log: Any, event: str, done: int, total: int, *, every: int) -> None
         log.opt(depth=1).info("{}: progress = {}/{}", event, done, total)
 
 
+#: Module spawned workers re-import instead of the parent's ``__main__`` script (see
+#: :func:`spawn_safe_main`). Must import with zero side effects. A plain MODULE, not the
+#: package itself - ``runpy.run_module`` cannot directly execute a package without a
+#: ``__main__.py``.
+_SPAWN_SAFE_MAIN_MODULE = "dakp_pipeline.logging_setup"
+
+
+@contextmanager
+def spawn_safe_main() -> Iterator[None]:
+    """Keep spawn children from re-executing the parent's ``__main__`` script.
+
+    The spawn start method re-initializes ``__main__`` in every child: when
+    ``__main__.__spec__`` exists it imports that module by name, otherwise it RE-EXECUTES
+    ``__main__.__file__``. When the parent runs as a plain script with no spec (a CLI, an
+    orchestrator's entrypoint), each spawned worker would re-execute that script and die
+    initializing whatever it needs (observed as ``BrokenProcessPool`` before the first
+    task). For the pool's lifetime, point spawn at a side-effect-free module; the worker
+    callable itself is unpickled via its own module, and the original ``__main__`` spec is
+    restored on exit.
+    """
+    main = sys.modules["__main__"]
+    if getattr(main, "__spec__", None) is not None:
+        yield  # module context (python -m / console scripts with a spec): spawn imports by name
+        return
+    main.__spec__ = importlib.machinery.ModuleSpec(_SPAWN_SAFE_MAIN_MODULE, loader=None)
+    try:
+        yield
+    finally:
+        main.__spec__ = None
+
+
 __all__ = [
     "FROM_LOGURU_ATTR",
     "WORKER_LOG_MAX_AGE_S",
@@ -315,6 +347,7 @@ __all__ = [
     "logger",
     "progress",
     "prune_worker_logs",
+    "spawn_safe_main",
     "stats",
     "step",
 ]
