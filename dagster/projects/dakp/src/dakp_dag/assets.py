@@ -243,6 +243,8 @@ def _run_go_extract(
         extras["memory_budget_gb"] = config.memory_budget_gb
     if config.quarter_limit:
         extras["quarter_limit"] = config.quarter_limit
+    if config.release_limit:
+        extras["release_limit"] = config.release_limit
 
     invocation = mo_pipes.launch_worker(context, str(config.worker_bin), extras=extras)
     worker_result = invocation.get_materialize_result()
@@ -252,9 +254,11 @@ def _run_go_extract(
         raise RuntimeError(msg)
     out_refs = refs_from_file(output_path)
     refsio.publish_refs(config, stage, out_refs)
+    # The worker's own report wins (it knows the real row counts and cache state); the
+    # published-refs count is added, and the dag stage name only fills a gap.
     metadata = dict(worker_result.metadata or {})
-    metadata.update(refsio.refs_metadata(out_refs))
-    # The worker echoes its own stage vocabulary ("dailymed"); do not clobber it.
+    metadata.setdefault("rows", sum(ref.rows or 0 for ref in out_refs))
+    metadata["refs"] = len(out_refs)
     metadata.setdefault("stage", stage)
     return dg.MaterializeResult(metadata=metadata)
 

@@ -1,7 +1,7 @@
 [project]
 name = "dakp-dag"
 version = "0.1.0"
-description = "Dagster code location: DAKP pipeline (phase 1 scaffold; code migration from ISB/DAKP is phase 2)"
+description = "Dagster code location for the DAKP knowledge graph: asset graph, narrow per-stage jobs, env-driven run config"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "dagster==1.13.24",

@@ -13,13 +13,15 @@ Long-term design + review history in [PLAN.md](PLAN.md).
 ```
 dagster/
   projects/<name>/    one DAG = one code location = one self-contained workspace
-    src/              dagster defs + pipeline code
+    src/              dagster defs (assets, jobs, run config)
+    pipeline/         the dagster-free python package the assets call (own venv + tests)
     workers/<lang>/   go workers today (own go.mod), scala later (mill)
-    project.json      cached nx test target
+    project.json      cached nx test target (pipeline/ and workers/ have their own)
   libs/
     mo-core/          pydantic models, canonical for Go codegen (no dagster dep)
     mo-kg/            KGX ndjson writer + QC (the only sink)
     mo-dagster/       pipes helpers (only lib importing dagster)
+  deployments/local/  dg / dagster-webserver environment for the whole workspace
 nix/modules/          devshell.nix (all tools), dagster.nix (runtime apps)
 ```
 
@@ -36,20 +38,24 @@ First-time worker build (fetches deps, then cached):
 
 ```sh
 cd dagster/projects/dakp/workers/go
-go get github.com/hupe1980/dagster-pipes-go github.com/zeebo/blake3
-go build -o bin/extractor ./extractor && go test ./...
+go mod download
+go build -o bin/dakp-extract ./cmd/dakp-extract && go test ./...
 ```
 
 Then `make dev`, pick the `dakp` location, launch `dakp_build` for the whole
 DAG (or a `dakp_build_<stage>` job for one output), and find the per-stage
-artifacts in `dagster/projects/dakp/published/dakp/`.
+artifacts in `dagster/projects/dakp/published/dakp/` (or wherever
+`$MO_PUBLISHED_ROOT` points).
 
 ## Build one output
 
 Each stage publishes its own artifact and each stage gets a narrow job, so a
 single output can be rebuilt without running any of the others. From
-`dagster/projects/dakp` (stages: acquisition, extraction, ner, assertions,
-kg_build):
+`dagster/projects/dakp` (stages: `acquire_<source>` for dailymed, faers,
+drugsfda, ema, ema_smpc, canada_vigilance and `acquire_ner_models`;
+`extract_<source>`; `shape_approved_treats`, `shape_faers_uses`,
+`shape_contraindications`; `ner_training_export`; `tablassert_configs`;
+`kg_build`, `kg_qc`, `legacy_tsv_export`):
 
 ```sh
 uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions    # only kg_build
@@ -58,11 +64,20 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
 ```
 
 In the UI it is Launch run on `dakp_build_<stage>`, or Materialize on a single
-asset node. Stages hand off through files under `$MO_PUBLISHED_ROOT` and
-declare lineage-only `deps` (no value inputs), so a narrow run reads upstream
-artifacts instead of rebuilding them and fails with `upstream artifact
-missing` when one has not been published yet. `dakp_build` still runs the
-whole DAG, and `tests/test_single_output.py` pins both properties.
+asset node. Stages hand off through files under `$MO_PUBLISHED_ROOT` (each
+stage's ArtifactRef list at `dakp/refs/<stage>.refs.json`, the KGX pair at
+`dakp/kg/`) and declare lineage-only `deps` (no value inputs), so a narrow run
+reads upstream artifacts instead of rebuilding them and fails with `upstream
+artifact missing` when one has not been published yet. `dakp_build` still runs
+the whole DAG, and `tests/test_single_output.py` pins both properties.
+
+Run knobs are environment variables read at materialization time
+(`src/dakp_dag/config.py`): `MO_PUBLISHED_ROOT`, `DAKP_WORKDIR` (BLAKE3 CAS +
+op index, the cache), `DAKP_EXTRACT_WORKER_BIN`, `DAKP_FULLMAP` (without it the
+Tablassert handoff is deferred and reported, not failed), `DAKP_FORCE` (bypass
+the op-index skip), `DAKP_NER_OFFLINE=1` (gazetteer-only NER, torch-free),
+`DAKP_THREADS`, `DAKP_MEMORY_BUDGET_GB`, `DAKP_QUARTER_LIMIT`,
+`DAKP_RELEASE_LIMIT`, `DAKP_PUBLICATION_VERSION`.
 
 ## Commands
 
@@ -88,6 +103,7 @@ BLAKE3 cache via `internal/pipesutil`, bump `WorkerVersion` on behavior change.
 
 ## CI
 
-`.github/workflows/ci.yml`: python matrix (uv lock check + sync + pytest per
-package), go (build/test/golangci-lint per workers module), `nix flake check`.
-Issue templates in `.github/ISSUE_TEMPLATE/`.
+`.github/workflows/ci.yml`: python (uv lock check + sync + pytest per package,
+including packages nested inside a project, then `dg check defs` so every code
+location must load), go (build/test/golangci-lint per workers module),
+`nix flake check`. Issue templates in `.github/ISSUE_TEMPLATE/`.

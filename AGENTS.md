@@ -21,7 +21,8 @@ Monorepo for ISB multiomics knowledge-graph pipelines:
 | Path | What | Rule |
 |---|---|---|
 | `dagster/projects/<name>/` | one DAG = one code location = one self-contained workspace | never import across projects |
-| `dagster/projects/<name>/src/` | dagster defs + that DAG's pipeline code | assets named for DAKP-style stages, one published artifact per stage |
+| `dagster/projects/<name>/src/` | dagster defs: assets, jobs, run config | assets named for DAKP-style stages, one published artifact per stage |
+| `dagster/projects/<name>/pipeline/` | that DAG's dagster-free python package (own venv, own nx project) | imports no dagster; assets call it in process |
 | `dagster/projects/<name>/workers/<lang>/` | non-python workers, one dir per language (`go/` today, `scala/` later), own go.mod | no repo-wide go.work; never mix languages in one dir |
 | `dagster/libs/mo-core` | pydantic domain models, canonical for Go codegen | imports no dagster |
 | `dagster/libs/mo-kg` | KGX ndjson writer + QC (only sink) | imports no dagster |
@@ -38,6 +39,12 @@ Monorepo for ISB multiomics knowledge-graph pipelines:
 - Plain ASCII in all user-facing text. No em dashes, no unicode arrows/bullets.
 - Env vars only (see `nix/modules/devshell.nix`); no hardcoded paths or keys.
   Values live in untracked `dagster/.env` / machine config, never in git.
+  dakp run knobs are resolved in `projects/dakp/src/dakp_dag/config.py`:
+  `MO_PUBLISHED_ROOT`, `DAKP_WORKDIR` (BLAKE3 CAS + op index = the cache),
+  `DAKP_EXTRACT_WORKER_BIN`, `DAKP_FULLMAP` (absent => deferred Tablassert
+  handoff, reported not failed), `DAKP_FORCE`, `DAKP_NER_OFFLINE`,
+  `DAKP_THREADS`, `DAKP_MEMORY_BUDGET_GB`, `DAKP_QUARTER_LIMIT`,
+  `DAKP_RELEASE_LIMIT`, `DAKP_PUBLICATION_VERSION`.
 - Every python package has a cached nx `test` target (`project.json`);
   run tests with `npx nx affected -t test`, never bare pytest loops.
 - Stage-to-stage handoff is the published artifact under `$MO_PUBLISHED_ROOT`,
@@ -57,7 +64,7 @@ make test           # nx run-many -t test (python + go, cached)
 make lint / fmt / hooks
 npx nx affected -t test          # fast loop: only what changed
 cd dagster && uvx dg list project
-go build -o bin/extractor ./extractor   # inside projects/dakp/workers/go (after `go get`)
+go build -o bin/dakp-extract ./cmd/dakp-extract   # inside projects/dakp/workers/go
 uv run dg check defs                    # inside dagster/deployments/local (loads every location)
 # one output only, no other stage runs (inside dagster/projects/dakp):
 uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions
@@ -72,6 +79,14 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
   (nx test), dg.toml gains the project automatically. Mirror the dakp output
   contract: published artifact per stage, lineage-only `deps`, one narrow
   `<dag>_build_<stage>` job per output (see `projects/dakp/src/dakp_dag/assets.py`).
+- **New source**: one `Source` entry in `projects/dakp/src/dakp_dag/assets.py`
+  (key, acquire function, `go:<stage>` or `py:<module>` extractor) plus the
+  pipeline-side fetcher/extractor; the acquire/extract assets, their narrow
+  jobs, and the published refs appear from the table.
+- **New edge predicate**: one `EdgeFamily` in
+  `projects/dakp/pipeline/src/dakp_pipeline/families.py` (table, predicate,
+  knowledge level, agent type, NER profile, shaper class) plus a thin
+  `_run_shape(...)` asset; Tablassert configs and QC read the registry.
 - **Go worker**: new cmd under `workers/go/`, use `internal/pipesutil`
   (session + BLAKE3 cache reporting), bump `pipesutil.WorkerVersion` when
   behavior changes. gonx picks up targets automatically.
@@ -80,7 +95,11 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
 
 ## Migration status
 
-`projects/dakp` is the phase-1 scaffold of the DAKP port (assets mirror DAKP
-stages; demo bodies). Phase 2 moves the real pipeline code from ISB/DAKP into
-`projects/dakp/src/` + `workers/go/` and retires the Airflow DAG. CTKP follows
-(requires repo privacy decision). Details in PLAN.md.
+`projects/dakp` carries the DAKP v1.25.0 port: `pipeline/` is the dagster-free
+python package (io/CAS + op index, sources, extractors, NER, assertion shapers
+behind the `families` registry, Tablassert handoff, legacy TSV export),
+`workers/go/` holds the ported parsers plus the `cmd/dakp-extract` pipes worker,
+and `src/dakp_dag/` is the asset graph (21 assets, `dakp_build` + one narrow job
+per stage). Airflow is gone: no DAG/task/XCom code remains, and release-tag
+versioning is replaced by explicit publication parameters. CTKP follows
+(requires repo privacy decision).
