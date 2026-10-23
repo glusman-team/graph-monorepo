@@ -164,6 +164,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -2060,13 +2061,18 @@ def _command_prefix(tablassert_dir: str | None) -> list[str]:
     """argv prefix that launches the ``tablassert`` CLI.
 
     Editable override (dev against a local checkout): ``uv run --with-editable <dir> tablassert``;
-    installed package: the venv ``tablassert`` binary when it is on ``PATH``, otherwise
-    ``uv run tablassert`` (uv materializes the console script for the rare importable-but-no-PATH
-    case; the availability guard in ``TablassertRunner.run`` has already confirmed ``tablassert``
-    is importable before this fallback is reachable).
+    installed package: the console script beside the running interpreter (the venv's own
+    ``bin/tablassert``, found even when the venv is not activated, e.g. ``.venv/bin/dagster``
+    launched directly), then a ``tablassert`` on ``PATH``, otherwise ``uv run tablassert`` (the
+    availability guard in ``TablassertRunner.run`` has already confirmed ``tablassert`` is
+    importable before this fallback is reachable). The subprocess runs with the workdir as cwd,
+    which holds no uv project, so the bare ``uv run`` fallback is a last resort.
     """
     if tablassert_dir:
         return ["uv", "run", "--with-editable", tablassert_dir, "tablassert"]
+    sibling = Path(sys.executable).parent / "tablassert"
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        return [str(sibling)]
     binary = shutil.which("tablassert")
     if binary is not None:
         return [binary]
