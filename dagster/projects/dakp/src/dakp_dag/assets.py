@@ -95,6 +95,15 @@ SOURCES: tuple[Source, ...] = (
         extractor="py:canada_vigilance",
         doc="Health Canada Vigilance adverse-reaction extract (observed-use evidence).",
     ),
+    Source(
+        key="icd10cm",
+        acquire="acquire_icd10cm",
+        extractor="py:icd10cm",
+        doc=(
+            "CDC/NCHS ICD-10-CM Table of Drugs and Chemicals release ZIP (the non-therapeutic "
+            "subject screen behind the observed-use denylist; release-pinned, no age gate)."
+        ),
+    ),
 )
 
 SOURCE_BY_KEY: dict[str, Source] = {source.key: source for source in SOURCES}

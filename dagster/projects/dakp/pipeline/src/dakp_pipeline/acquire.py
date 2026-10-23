@@ -34,6 +34,7 @@ from dakp_pipeline.sources import (
     ema_documents,
     ema_smpc,
     faers,
+    icd10cm,
 )
 
 #: Media type for a cached NER model directory (a tree artifact, not a single file).
@@ -80,6 +81,11 @@ def acquire_ema_smpc(ctx: TaskContext) -> list[ArtifactRef]:
 def acquire_canada_vigilance(ctx: TaskContext) -> list[ArtifactRef]:
     """Acquire Health Canada's Canada Vigilance data-extract ZIP over the network."""
     return canada_vigilance.fetch(ctx)
+
+
+def acquire_icd10cm(ctx: TaskContext) -> list[ArtifactRef]:
+    """Acquire the CDC/NCHS ICD-10-CM Table of Drugs and Chemicals release ZIP over the network."""
+    return icd10cm.fetch(ctx)
 
 
 # --- NER model acquisition ------------------------------------------------------

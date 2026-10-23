@@ -1,4 +1,6 @@
-"""Source fetchers for DailyMed, FAERS, Drugs@FDA, and the EMA medicines registry.
+"""Source fetchers: DailyMed, FAERS, Drugs@FDA, the EMA medicines registry, EMA EPAR
+documents, EMA SmPCs, Health Canada Vigilance, and the CDC/NCHS ICD-10-CM Table of
+Drugs and Chemicals (the non-therapeutic subject screen behind the observed-use denylist).
 
 Each source module exposes a module-level :func:`fetch` (the default instance method) so tests
 can ``monkeypatch.setattr(dailymed, "fetch", ...)`` and the pipeline can call

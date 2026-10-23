@@ -63,7 +63,8 @@ The real runner (:class:`TablassertRunner`) shells out to the installed ``tablas
 (a CORE dependency installed by the single ``uv sync``) and captures stdout / exit code into
 a handoff report; the deferred runner (:class:`DeferredTablassertRunner`) writes a
 deferred-handoff report without ever touching Tablassert (used when no fullmap triggers the
-real handoff, and in tests). DAKP requires Tablassert >= 19.7.0, the floor ``pyproject.toml`` pins;
+real handoff, and in tests). DAKP requires Tablassert >= 22.2.0, the floor ``pyproject.toml`` pins
+(the 22.2.0 floor is what ships the subject denylist's ``antijoin`` membership filter);
 the releases that built it, oldest first: the graph config carries the
 fullmap path (the ``build-kg --fullmap`` flag was removed in Tablassert 8.1), the 8.2
 Biolink-valid KGX modeling (``sources[]`` retrieval provenance, first-class evidence slots)
@@ -173,6 +174,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from dakp_pipeline import icd10cm_denylist
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
@@ -185,6 +187,7 @@ from dakp_pipeline.sources import drugsfda as drugsfda_source
 from dakp_pipeline.sources import ema as ema_source
 from dakp_pipeline.sources import ema_documents as ema_documents_source
 from dakp_pipeline.sources import faers as faers_source
+from dakp_pipeline.sources import icd10cm as icd10cm_source
 
 # --- Translator provenance constants (match dakp_pipeline.assertions + ../DINGO) ----
 
@@ -276,7 +279,9 @@ UUID_DOMAIN = INFORES_DAKP
 #: corpus (the EPAR documents JSON report that manifests the SmPC crawl); contraindication rows
 #: from DailyMed AND that same SmPC corpus; observed-use rows from the FAERS quarterly ASCII
 #: extracts (the FDA quarterly-data listing) AND Health Canada's Canada Vigilance data extract
-#: (the fixed-name monthly ZIP).
+#: (the fixed-name monthly ZIP), and every row of it also passed the ICD-10-CM Table of Drugs and
+#: Chemicals subject screen (the fiscal-year release ZIP), which is a real input to the table's
+#: content even though it contributes no assertion text.
 _TABLE_SOURCE_URLS: dict[str, tuple[str, ...]] = {
     "approved_treats_assertions": (
         dailymed_source.FULL_RELEASE_INDEX_URL,
@@ -286,6 +291,7 @@ _TABLE_SOURCE_URLS: dict[str, tuple[str, ...]] = {
     "faers_applied_to_treat_assertions": (
         faers_source.FDA_FAERS_INDEX_URL,
         canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL,
+        icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL,
     ),
     "contraindication_assertions": (
         dailymed_source.FULL_RELEASE_INDEX_URL,
@@ -361,14 +367,19 @@ RIG_DATA_VERSIONING_AND_RELEASES = (
     "the upstream cadence: FAERS quarterly ASCII extracts, DailyMed SPL releases, and the "
     "nightly-regenerated EMA medicines export. DailyMed, Drugs@FDA, and EMA re-downloads are "
     "freshness-gated to a 7-day cache window; FAERS downloads "
-    "are content-addressed and cache-first, with no age gate. Each version's generated KGX pair "
+    "are content-addressed and cache-first, with no age gate. The ICD-10-CM Table of Drugs and "
+    "Chemicals release is pinned by fiscal year in its URL, so a cached copy is canonical and "
+    "only a new release (a bumped URL constant) re-acquires it. Each version's generated KGX pair "
     "and RIG are published to the Hugging Face dataset SkyeAv/drug-approvals-kp under a "
     "per-version directory (<version>/DRUG_APPROVALS_KP_<version>.{nodes,edges}.ndjson), and "
     "every earlier version remains available there."
 )
 #: RIG ``supporting_data_source_info``: the upstream data sources a DAKP graph derives its
-#: knowledge from. Exactly the EDGE-BACKED upstreams (four today: DailyMed, FAERS, EMA,
-#: Canada Vigilance), adapted from the DINGO-reviewed
+#: knowledge from. Exactly the EDGE-BACKED upstreams (five today: DailyMed, FAERS, EMA,
+#: Canada Vigilance, and the ICD-10-CM Table of Drugs and Chemicals), adapted from the DINGO-reviewed
+#: ICD-10-CM IS listed, and its case differs from Drugs@FDA: it contributes no assertion text,
+#: but every released observed-use edge survived its subject screen, so it is edge-backed in the
+#: set-defining sense (see ``RIG_FILTERED_CONTENT`` and :data:`_TABLE_SOURCES`).
 #: ``supporting_data_source_info`` of the upstream ``NCATSTranslator/translator-ingests`` DAKP
 #: RIG (names, descriptions, public-domain terms assessments), with each ``relevant_files[0]``
 #: location swapped for the URL constant DAKP's acquisition layer actually downloads, so the
@@ -469,6 +480,33 @@ RIG_SUPPORTING_DATA_SOURCES: tuple[dict[str, Any], ...] = (
             }
         ],
     },
+    {
+        "infores_id": "infores:icd10cm",
+        "name": "ICD-10-CM Table of Drugs and Chemicals",
+        "description": (
+            "CDC/NCHS's indexing reference for drugs, chemicals and noxious substances, coding each "
+            "substance by poisoning, adverse-effect and underdosing code. DAKP uses its Adverse-effect "
+            "column as the non-therapeutic subject screen for observed-use edges: an entry with no "
+            "Adverse-effect code asserts no use under proper administration (FY Official Guidelines "
+            "section I.C.19.e), so a subject matching one is dropped from the applied-to-treat table "
+            "unless DAKP's own label corpus already names it as a medicine. It contributes no assertion "
+            "text; every released observed-use edge is a claim that survived this screen."
+        ),
+        "terms_of_use_info": {
+            "terms_of_use_url": icd10cm_source.ICD10CM_TABLES_URL,
+            "terms_of_use_description": (
+                "ICD-10-CM classifications and indexing files are published by a U.S. federal agency and "
+                "are not subject to copyright; NCHS asks that the source be acknowledged."
+            ),
+        },
+        "relevant_files": [
+            {
+                "file_name": f"ICD-10-CM Table of Drugs and Chemicals ({icd10cm_source.ICD10CM_RELEASE})",
+                "location": icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL,
+                "description": "Release archive whose icd10cm-drug XML carries each substance's poisoning / adverse-effect codes",
+            }
+        ],
+    },
 )
 #: RIG ``ingest_info.included_content``: the upstream record types DAKP pulls into the graph.
 #: ``fields_used`` names exactly what the assertion tables consume from SPL — the four mined
@@ -542,6 +580,22 @@ RIG_FILTERED_CONTENT: tuple[dict[str, str], ...] = (
             "boxed warnings (LOINC 34066-1), and warnings/precautions (LOINC 43685-7, legacy 34071-1/42232-9)"
         ),
         "rationale": "the remaining sections carry no treatment or contraindication evidence",
+    },
+    {
+        "file_name": "FAERS and Canada Vigilance observed-use subjects",
+        "filtered_records": (
+            f"rows whose subject name matches an ICD-10-CM Table of Drugs and Chemicals ({icd10cm_source.ICD10CM_RELEASE}) "
+            "entry with no Adverse-effect code, in the T51-T65 toxic-effect range or the T36-T50 drug range "
+            "(extract/icd10cm tiers toxic_effect / no_accepted_medical_use), unless the same name occurs inside a "
+            "DAKP approved-treats subject or a Drugs@FDA active-ingredient name"
+        ),
+        "rationale": (
+            "the empty Adverse-effect column is the coding authority's assertion that the substance has no use "
+            "under proper administration, so it must not carry a biolink:applied_to_treat claim; the label-backed "
+            "exemption keeps substances whose poison and medicine identities coexist (lithium, zinc, alcohol, "
+            "permethrin), and only observed-use rows are screened because approved-treats and contraindication "
+            "subjects are label ingredients by construction"
+        ),
     },
 )
 #: RIG ingest-level ``future_considerations``: content DAKP deliberately defers, each grounded in
@@ -637,6 +691,10 @@ RIG_TARGET_FUTURE_CONSIDERATIONS: tuple[dict[str, str], ...] = (
 #: longer open questions (native slot coverage on the pinned Biolink classes).
 RIG_TARGET_ADDITIONAL_NOTES: tuple[str, ...] = (
     "Node and edge type summaries are generated by Tablassert from the observed build, not authored in this configuration.",
+    "Biolink compliance is validated against biolink-model 4.4.6, the release the pinned "
+    "Tablassert (>= 22.2.0) ships: every node category, association class, qualifier slot, and "
+    "infores CURIE in the emitted KGX is checked against it (tablassert validate-kgx) before a "
+    "build is released.",
     "FDA application numbers are emitted on the canonical regulatory_approvals edge slot, which "
     "the pinned biolink-model (>= 4.4.5) declares natively on EntityToDiseaseAssociation and "
     "EntityToPhenotypicFeatureAssociation; every edge pins one of those classes by object "
@@ -701,6 +759,11 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
             "location": ema_documents_source.EMA_DOCUMENTS_URL,
             "description": "EMA EPAR documents bulk export; manifests the SmPC product-information PDFs mined for contraindication edges.",
         },
+        {
+            "file_name": f"ICD-10-CM Table of Drugs and Chemicals ({icd10cm_source.ICD10CM_RELEASE})",
+            "location": icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL,
+            "description": "CDC/NCHS release archive; its drug-table XML screens the observed-use subjects DAKP is willing to assert.",
+        },
         # No Drugs@FDA entry: no assertion table declares it as a section source (it is joined
         # in upstream, at assertion-build time), so the RIG audit would reject it.
         # REJECTED from the upstream ``NCATSTranslator/translator-ingests`` DAKP RIG: its legacy
@@ -734,6 +797,7 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
                 f"Drugs@FDA data files - {drugsfda_source.DRUGSFDA_DATA_FILES_URL}",
                 f"EMA medicines report - {ema_source.EMA_MEDICINES_URL}",
                 f"EMA EPAR documents report - {ema_documents_source.EMA_DOCUMENTS_URL}",
+                f"ICD-10-CM Table of Drugs and Chemicals - {icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL}",
             ],
             "data_provision_mechanisms": ["file_download"],
             "data_formats": ["kgx"],
@@ -792,18 +856,37 @@ _TABLE_ORDER = (
     "contraindication_assertions",
 )
 
-# assertion table -> subject_text row exclusions, emitted as ``source.reindex`` ``ne`` filters so
-# the rows are dropped at Tablassert LOAD time and can never reach the final KGX output. The FAERS
+# assertion table -> subject_text row exclusions, emitted as ONE ``source.reindex`` ``antijoin``
+# membership filter (Tablassert >= 22.2.0) so the rows are dropped at Tablassert LOAD time and can
+# never reach the final KGX output. The FAERS
 # off-label table aggregates methanol poison-exposure reports where the chemical is the EXPOSURE,
 # not a treatment — an ``applied_to_treat`` edge for it is semantically wrong ("METHYL ALCHOL" is
 # FAERS's own spelling of the ingredient). "GENERIC DRUG"/"GENERIC DRUGS" are FAERS verbatim
 # drug-name placeholders that name no real substance, and "PLACEBO" is the control arm: by
 # definition it treats nothing — FAERS prefixes a bare ``*`` onto some reporter-entered names, and
 # "*PLACEBO" is that spelling's survivor in the deployed 1.11.2 KG. Entries are written in their
-# canonical uppercase form and matched case-insensitively (see :func:`_casing_variants`). Reindex
-# conditions AND together: a row survives only when its subject_text matches no denylist entry in
-# any emitted casing.
+# canonical uppercase form and matched case-insensitively (see :func:`_casing_variants`): the
+# antijoin hash-joins the raw cell value against every casing rendering, so a row survives only
+# when its subject_text matches no denylist entry in any spelling.
+#
+# Beyond the hand-written junk names, the table denies every subject the ICD-10-CM Table of Drugs and
+# Chemicals screens as non-therapeutic (``icd10cm_denylist.SUBJECT_DENYLIST``: release entries in the
+# T36-T50 / T51-T65 ranges with an empty Adverse-effect column, minus the label-backed exemptions).
+# That list arrives from a generated snapshot rather than a live join, so it stays reviewable inside
+# ``tables/faers_applied_to_treat.yaml`` and editing it costs a config regeneration instead of a
+# re-shape. The 746 screened substances expand to 1,498 entries whose casing renderings deduplicate
+# to 2,538 distinct comparators, shipped as ONE ``antijoin`` membership filter (Tablassert >= 22.2.0):
+# a polars anti hash join against the whole deny set, sub-second on a 1,705,626-row subject_text
+# column (wenceslaus) where the 2,700 sequential literal ``ne`` compares it replaces measured 13.9 s.
 _TABLE_SUBJECT_DENYLIST: dict[str, tuple[str, ...]] = {
+    # v1.24.1 audit additions beyond the placeholders: "WATER PILL"/"WATER PILLS" are FAERS
+    # reporter wordings for an UNNAMED diuretic (UMLS:C0012798 Diuretics, 2 edges in 1.24.1) --
+    # the class CURIE itself is legitimate ("diuretic" resolves to it and CHEBI:35498), so the
+    # wording is denied at load rather than the CURIE excluded. "EYE" and "CLEAR" (bare-eye
+    # subjects occur twice in the FAERS drugname channel) are load-time insurance: the 2026jul22
+    # fullmap ties them only to anatomy/ICE concepts (UBERON:0000970, UMLS:C1550003/C2963144)
+    # that the subject category allow-list already drops, and the filters guard against fullmap
+    # source churn re-ranking them into an allowed category.
     "faers_applied_to_treat_assertions": (
         "METHYL ALCHOL",
         "METHANOL",
@@ -811,6 +894,11 @@ _TABLE_SUBJECT_DENYLIST: dict[str, tuple[str, ...]] = {
         "GENERIC DRUGS",
         "PLACEBO",
         "*PLACEBO",
+        "WATER PILL",
+        "WATER PILLS",
+        "EYE",
+        "CLEAR",
+        *icd10cm_denylist.SUBJECT_DENYLIST,
     )
 }
 
@@ -938,6 +1026,34 @@ _TABLE_OBJECT_DENYLIST: tuple[str, ...] = (
     # allow-lists happened to drop all of those, and the emitted KG carries 0 crying objects.
     # Denying the wording at load keeps that guarantee against fullmap source churn.
     "CRYING",
+    # (5) BARE anatomy/finding strings (v1.24.1 audit, user request: deny "eye"/"eyes"/"clear"
+    #     only where one IS the whole original string): "eye"/"eyes" resolve to MONDO:0004659
+    #     (eye carcinoma in situ) AND MONDO:0005328 (eye disorder) and "clear" to NCIT:C48621
+    #     (Negative Surgical Margin) without naming a condition -- 20 eye/eyes + 3 clear
+    #     contraindicated_in edges in 1.24.1 -- while the very same MONDO:0005328 carries 1,309+
+    #     legitimate "Eye disorder" observed-use rows and NCIT:C48621 is a real oncology finding,
+    #     so the denial is wording-level ONLY; no CURIE is excluded and every QUALIFIED relative
+    #     ("Dry eye", "Eye pain", "Clear cell renal cell carcinoma", ...) keeps its own edges by
+    #     the exact whole-cell ``ne`` compare. Qualifier values are untouched by construction:
+    #     ``reindex`` filters the object_text column (F) alone, so an anatomical_context_qualifier
+    #     cell holding "eye" survives.
+    "EYE",
+    "EYES",
+    "CLEAR",
+    # (6) WATER-string object wordings (v1.24.1 audit, user request: nothing carrying the string
+    #     "water" survives): "water intoxication" (MONDO:0022007, 3 edges), "watery eyes"
+    #     (MONDO:0001793 excessive tearing, 1 edge), "blackwater fever" (MONDO:0005670, 2 edges)
+    #     and "Water-Electrolyte Imbalance" (UMLS:C0043065, 1 edge; the DISTINCT wording
+    #     "electrolyte imbalance" resolves to UMLS:C0342579 and is KEPT). Wording-level only:
+    #     these CURIEs are real diseases reachable through non-water synonyms ("excessive
+    #     tearing" -> MONDO:0001793 is kept), so a CURIE exclusion would over-reach.
+    #     "Waterhouse-Friderichsen syndrome" (MONDO:0006015, 12 FAERS rows) is deliberately KEPT:
+    #     a real named syndrome whose "Water" is an accidental substring, absent from the
+    #     1.24.1 graph, and not a water wording.
+    "WATER INTOXICATION",
+    "WATERY EYES",
+    "BLACKWATER FEVER",
+    "WATER-ELECTROLYTE IMBALANCE",
 )
 
 # CURIEs dropped from the OBJECT side during entity resolution via the object NodeEncoding's
@@ -970,7 +1086,38 @@ _OBJECT_EXCLUDE_REGEX: tuple[str, ...] = (r"^UMLS:C0812393$",)
 # unbacked approved_for_condition edge in the v1.13.1 build). Exact-CURIE anchors: the
 # concepts share wording with their ingredient, so no class-wide wording filter can express
 # "drop this CURIE, keep that one".
-_SUBJECT_EXCLUDE_REGEX: tuple[str, ...] = (r"^UMLS:C1314429$", r"^UMLS:C0812740$")
+# Two more families from the v1.24.1 audit (user request): the water-as-substance concepts --
+# FAERS excipient/solvent wordings ("water", "sterile water", "purified water", "water for
+# injection", "water, distilled", "water, mineral", ...) resolve into this family and nothing
+# else, so excluding every member leaves the wordings UNRESOLVED and the rows drop (verified
+# against the production 2026jul22 fullmap with ``tablassert quick-map``: every substance wording
+# resolves to a family CURIE only, and each member is included because it is some wording's
+# fall-through once the higher-PR members are excluded -- UMLS:C1550678 "Water Specimen" for
+# "water"/"WATER"/"Water", UMLS:C5981420 "Purified water (specimen)" for "purified water") -- and
+# the GHB/GBL pair mis-resolving the sodium oxybate subject family ("sodium oxybate" wordings
+# resolve to CHEBI:30830 ONLY, so those 14 of 17 v1.24.1 edges drop, while "4-HYDROXYBUTANOIC
+# ACID" falls through to UMLS:C0673093 (4-hydroxybutyric acid, biolink:Drug) and its 3 edges
+# survive under the correct identifier; CHEBI:42639 gamma-Butyrolactone shares the same wording
+# channel and never wins ranking today). NOT excluded: UMLS:C0012798 "Diuretics" (a real
+# drug-class CURIE whose "WATER PILL"/"WATER PILLS" wording is denied at load instead),
+# UMLS:C0719841 "Dextrose and Water" and the seawater concepts (UMLS:C0036499/C0939938/C1161329)
+# -- reached by wordings that resolve to real products, absent from the 1.24.1 graph.
+_SUBJECT_EXCLUDE_REGEX: tuple[str, ...] = (
+    r"^UMLS:C1314429$",
+    r"^UMLS:C0812740$",
+    # water-as-substance family (74 v1.24.1 subject edges across the family)
+    r"^CHEBI:15377$",
+    r"^UMLS:C0359299$",
+    r"^UMLS:C0790233$",
+    r"^UMLS:C0991883$",
+    r"^UMLS:C1163679$",
+    r"^UMLS:C5981420$",
+    r"^UMLS:C1550678$",
+    r"^MESH:D008900$",
+    # GHB/GBL identifiers mis-resolving sodium oxybate (17 v1.24.1 subject edges)
+    r"^CHEBI:30830$",
+    r"^CHEBI:42639$",
+)
 
 # Deliberately KEPT — the outcome/exposure relatives that name REAL conditions: "sensory loss"
 # (the real phenotype NCIT:C182234 wrongly also carries the procedure wording "anaesthesia"; its
@@ -1050,6 +1197,14 @@ _TABLE_SOURCES: dict[str, tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]
         # section source.url + the RIG, and per-report record ids stay in the assertion TSV's
         # supporting_faers_records debug column.
         ("infores:canada-vigilance", "supporting_data_source", (), ()),
+        # ICD-10-CM supporting entry: the non-therapeutic subject screen. It backs no assertion TEXT
+        # (and is therefore NOT an upstream of the DAKP primary entry - DAKP retrieved no knowledge
+        # from it), but it decides which subjects may be asserted at all, so every released
+        # observed-use edge passed it. The screen ships as this table's ``source.reindex``
+        # ``antijoin`` membership filter generated from icd10cm_denylist.SUBJECT_DENYLIST; see
+        # extract/icd10cm.py for the tiers and tests/eval/icd10cm_denylist.py for the derivation
+        # and its label-backed exemption.
+        ("infores:icd10cm", "supporting_data_source", (), ()),
     ),
     "contraindication_assertions": (
         (INFORES_DAKP, "primary_knowledge_source", ("infores:dailymed", "infores:epar"), ()),
@@ -1549,8 +1704,9 @@ def _casing_variants(name: str) -> tuple[str, ...]:
     space (see the deployed 1.11.2 KG, where "hypersensitivity", "HYPERSENSITIVITY",
     "Hypersensitivity" and "Drug hypersensitivity" all occur). Deduplicated (single-word entries
     collapse title into sentence case) and order-stable so the committed configs stay
-    byte-reproducible. Known gap: a mid-word oddity ("PLaCEBO") still slips through — closing it
-    needs a case-insensitive comparison in Tablassert itself.
+    byte-reproducible. Known gap: a mid-word oddity ("PLaCEBO") still slips through — the subject
+    denylist's ``antijoin`` and the object denylist's ``ne`` both compare raw cell values, so
+    neither closes a case-insensitive match on its own.
     """
     return tuple(dict.fromkeys((name.upper(), name.lower(), name.title(), name.capitalize())))
 
@@ -1584,9 +1740,10 @@ def table_config(table: str) -> dict[str, Any]:
     slots), while the type-ranged slots (``frequency_qualifier``, ``temporal_context_qualifier``)
     carry no guard. Every qualifier is ``nullable`` — sparse columns keep the edge when the cell
     is blank or unresolved, omitting only the qualifier. A table
-    with a :data:`_TABLE_SUBJECT_DENYLIST` entry additionally carries ``source.reindex`` ``ne``
-    filters — one per :func:`_casing_variants` rendering of each entry — that drop those
-    subject_text rows before entity resolution, and EVERY table carries the same ``ne`` filters for
+    with a :data:`_TABLE_SUBJECT_DENYLIST` entry additionally carries ONE ``source.reindex``
+    ``antijoin`` membership filter (Tablassert >= 22.2.0) whose comparator list is the deduplicated
+    :func:`_casing_variants` renderings of every entry — a hash join drops those subject_text rows
+    before entity resolution — and EVERY table carries the same ``ne`` filters for
     :data:`_TABLE_OBJECT_DENYLIST` on its object_text column plus the object NodeEncoding's
     :data:`_OBJECT_EXCLUDE_REGEX` CURIE exclusions.
     """
@@ -1661,12 +1818,20 @@ def table_config(table: str) -> dict[str, Any]:
     reindex: list[dict[str, Any]] = []
     subject_denylist = _TABLE_SUBJECT_DENYLIST.get(table)
     if subject_denylist:
+        # ONE antijoin membership filter, not one ``ne`` per casing rendering: Tablassert >= 22.2.0
+        # runs the deny set as a polars anti hash join over the raw cell values, so the comparator
+        # list must spell every casing FAERS reporter text arrives in (deduplicated: the ICD-10-CM
+        # snapshot ships two spellings per substance whose renderings mostly coincide). Null cells
+        # survive an antijoin exactly as they survived ``ne``.
         subject_letter = column_letter(table, SUBJECT_COLUMN)
-        reindex += [
-            {"column": subject_letter, "comparison": "ne", "comparator": variant}
-            for name in subject_denylist
-            for variant in _casing_variants(name)
-        ]
+        comparators = list(
+            dict.fromkeys(
+                variant for name in subject_denylist for variant in _casing_variants(name)
+            )
+        )
+        reindex.append(
+            {"column": subject_letter, "comparison": "antijoin", "comparator": comparators}
+        )
     object_letter = column_letter(table, OBJECT_COLUMN)
     reindex += [
         {"column": object_letter, "comparison": "ne", "comparator": variant}

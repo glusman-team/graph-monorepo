@@ -76,6 +76,8 @@ class RunConfig:
     release: bool = True
     qc: bool = True
     source_max_age_days: float | None = DEFAULT_SOURCE_MAX_AGE_DAYS
+    # ICD-10-CM release ZIP override; None keeps the fiscal-year-pinned URL constant.
+    icd10cm_url: str | None = None
 
     @property
     def refs_dir(self) -> Path:
@@ -108,6 +110,8 @@ class RunConfig:
         if self.publication_version:
             params["publication_version"] = self.publication_version
         params["release"] = self.release
+        if self.icd10cm_url:
+            params["icd10cm_url"] = self.icd10cm_url
         params["qc"] = self.qc
         if self.source_max_age_days is not None:
             for source in ("dailymed", "drugsfda", "ema"):
@@ -135,6 +139,8 @@ def run_config() -> RunConfig:
         force=_env_bool("DAKP_FORCE"),
         ner_offline=_env_bool("DAKP_NER_OFFLINE"),
         publication_version=version,
+        # Release-pinned source URL override (tests / a new fiscal year before a code bump).
+        icd10cm_url=os.environ.get("DAKP_ICD10CM_URL") or None,
         fixture_root=_env_path("DAKP_FIXTURE_ROOT", DEFAULT_FIXTURE_ROOT),
         release=_env_bool("DAKP_TABLASSERT_RELEASE", True),
         qc=_env_bool("DAKP_TABLASSERT_QC", True),
