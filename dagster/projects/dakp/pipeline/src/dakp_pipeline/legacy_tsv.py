@@ -4,9 +4,9 @@ An internal service still consumes the pre-rewrite ``druginfo`` TSV pair
 (``drug_approvals_kg_nodes_v0.5.3.tsv.gz`` / ``..._edges_...``) — three node columns
 (``id``/``name``/``category``) and twelve edge columns. DAKP's own compiler was retired
 (US-004); the graph now comes out of the Tablassert handoff as KGX ndjson
-(``data/DRUG_APPROVALS_KP_<version>.{nodes,edges}.ndjson``), so the old pair no longer exists. This stage
+(``kgx/DRUG_APPROVALS_KP_<version>.{nodes,edges}.ndjson``), so the old pair no longer exists. This stage
 converts that ndjson pair back into the legacy schema — same stem and directory, extension
-swapped: ``<workdir>/data/DRUG_APPROVALS_KP_<version>.nodes.tsv`` / ``.edges.tsv`` (plain TSV, like every
+swapped: ``<workdir>/kgx/DRUG_APPROVALS_KP_<version>.nodes.tsv`` / ``.edges.tsv`` (plain TSV, like every
 other DAKP tabular output).
 
 The conversion semantics are the ORIGINAL ones, recovered from the deleted legacy producer
@@ -198,7 +198,7 @@ def export(kgx_refs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
     returns): a deferred report means no ``build-kg`` ran and there is no ndjson to convert, so
     the stage returns an empty ref list — never an error, mirroring the deferred-handoff
     convention. A real (successful) handoff must have left the current graph/version pair
-    ``DRUG_APPROVALS_KP_<version>.nodes.ndjson`` and ``.edges.ndjson`` under ``<workdir>/data``.
+    ``DRUG_APPROVALS_KP_<version>.nodes.ndjson`` and ``.edges.ndjson`` under ``<workdir>/kgx``.
     Stale KGX files from an earlier graph/version are ignored; a missing current pair is a loud
     ``RuntimeError``.
 

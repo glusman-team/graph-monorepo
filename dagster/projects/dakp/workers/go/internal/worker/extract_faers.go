@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -201,20 +202,15 @@ func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]Arti
 	if err != nil {
 		return nil, err
 	}
-	// warnings.parquet is empty: the Go task records warnings in its log stream, not rows.
-	warningsPath := filepath.Join(faersDir, "warnings.parquet")
-	if _, err := WriteStringParquet(warningsPath, faersWarningsColumns, nil); err != nil {
-		return nil, fmt.Errorf("extract_faers: write warnings.parquet: %w", err)
+	// warnings.parquet: one row per collected warning (mirrors _Warnings.frame(): the five
+	// _WARNINGS_COLUMNS, sorted by quarter, family, code, message so repeated runs produce
+	// byte-identical output for the BLAKE3 op-index cache). The per-quarter parse runs in
+	// parallel, so Items() order is scheduling-dependent; the sort makes it deterministic.
+	warningsIn, err := writeFAERSAuditParquet(faersDir, "warnings", faersWarningsColumns, faersWarningRows(warn.Items()), inputIDs, warningsTotal)
+	if err != nil {
+		return nil, err
 	}
-	auditRefs, err := store.RegisterMany(ctx, []RegisterInput{
-		deleteIn,
-		dedupIn,
-		{
-			Path: warningsPath, MediaType: ParquetMediaType, Rows: 0,
-			SchemaFingerprint: SchemaFingerprint(faersWarningsColumns), Inputs: inputIDs,
-			Warnings: warningsTotal, Operation: "extract_faers_warnings",
-		},
-	})
+	auditRefs, err := store.RegisterMany(ctx, []RegisterInput{deleteIn, dedupIn, warningsIn})
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +223,31 @@ func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]Arti
 	Stat(ctx, faersEvent, "output_refs", len(refs))
 	store.RecordOperation(faersTaskOperation, upstreamIDs, refs)
 	return refs, nil
+}
+
+// faersWarningRows renders collected warnings as warnings.parquet rows: one per item, ordered
+// like faers_ascii._Warnings.frame() (sort by quarter, family, code, message). The count column
+// carries the decimal count (all-string parquet convention; consumers read columns by name).
+func faersWarningRows(items []faers.Warning) [][]string {
+	sorted := append([]faers.Warning(nil), items...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		switch {
+		case a.Quarter != b.Quarter:
+			return a.Quarter < b.Quarter
+		case a.Family != b.Family:
+			return a.Family < b.Family
+		case a.Code != b.Code:
+			return a.Code < b.Code
+		default:
+			return a.Message < b.Message
+		}
+	})
+	rows := make([][]string, 0, len(sorted))
+	for _, w := range sorted {
+		rows = append(rows, []string{w.Quarter, w.Family, w.Code, w.Message, strconv.Itoa(w.Count)})
+	}
+	return rows
 }
 
 // mergeFAERSOutputs k-way-merges the per-quarter sorted rich runs and streams the merged rows into

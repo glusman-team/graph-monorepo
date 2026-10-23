@@ -90,6 +90,39 @@ def test_gold_path_missing_is_loud(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         ner_export.gold_path()
 
 
+def test_gold_root_prefers_the_task_param(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An orchestrator passes the gold root explicitly; the env var is the fallback.
+
+    The layout convention (``Path(__file__).parents[2] / tests/eval``) only holds inside a
+    checkout, so a wheel-installed export must be told where the benchmark lives instead of
+    failing on a path that was never there.
+    """
+    monkeypatch.setenv("DAKP_NER_GOLD_ROOT", str(tmp_path / "from-env"))
+    ctx = TaskContext(
+        workdir=tmp_path, fixture_root=None, params={"ner_gold_root": tmp_path / "param"}
+    )
+    assert ner_export.gold_root(ctx) == tmp_path / "param"
+
+
+def test_gold_root_falls_back_to_the_env_then_the_layout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DAKP_NER_GOLD_ROOT", str(tmp_path / "from-env"))
+    ctx = TaskContext(workdir=tmp_path, fixture_root=None, params={})
+    assert ner_export.gold_root(ctx) == tmp_path / "from-env"
+
+    monkeypatch.delenv("DAKP_NER_GOLD_ROOT")
+    assert ner_export.gold_root(ctx) is None
+
+
+def test_gold_path_uses_an_explicit_root(tmp_path: Path) -> None:
+    root = tmp_path / "checkout"
+    (root / "tests" / "eval").mkdir(parents=True)
+    gold = root / "tests" / "eval" / ner_export.GOLD_FILENAME
+    gold.write_text("{}", encoding="utf-8")
+    assert ner_export.gold_path(root) == gold
+
+
 def _gold(tmp_path: Path, payload: dict[str, Any], name: str = "ner_gold.json") -> Path:
     path = tmp_path / name
     path.write_text(json.dumps(payload), encoding="utf-8")

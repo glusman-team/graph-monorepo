@@ -19,7 +19,10 @@ import (
 // behavior changes so content-addressed artifacts invalidate correctly.
 // It tracks the bytes written to the output artifact only: reporting or
 // logging changes do not invalidate anything, so they do not bump it.
-const WorkerVersion = "0.1.0"
+// 0.1.1: extract_faers warnings.parquet carries real rows (was empty) and
+// extract_drugsfda extract_warnings.jsonl carries one JSON line per parse
+// warning (was an empty file).
+const WorkerVersion = "0.1.1"
 
 // CacheInfo describes a content-addressed artifact decision.
 type CacheInfo struct {

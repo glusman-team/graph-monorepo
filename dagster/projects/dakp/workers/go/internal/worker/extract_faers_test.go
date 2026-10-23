@@ -104,10 +104,114 @@ func TestExtractFAERSParity(t *testing.T) {
 		}
 	}
 
-	// warnings.parquet is empty (0 rows).
-	_, wrows := readBack(t, got[4].URI)
-	if len(wrows) != 0 {
-		t.Errorf("warnings.parquet rows = %d, want 0", len(wrows))
+	// warnings.parquet: one row per collected warning (Python _WARNINGS_COLUMNS: quarter,
+	// family, code, message, count), sorted by (quarter, family, code, message). The 24Q3
+	// fixtures delete one DRUG row, so exactly one deleted_rows_dropped row is expected.
+	wcols, wrows := readBack(t, got[4].URI)
+	wantWarnings := [][]string{{"24Q3", "DRUG", "deleted_rows_dropped", "1 drug rows dropped (DELETE)", "1"}}
+	assertWarningRows(t, "warnings.parquet", wcols, wrows, faersWarningsColumns, wantWarnings)
+	if got[4].Rows == nil || int(*got[4].Rows) != len(wantWarnings) {
+		t.Errorf("warnings.parquet ref.Rows = %v, want %d", got[4].Rows, len(wantWarnings))
+	}
+}
+
+// assertWarningRows checks a warnings artifact against the expected rows: the column set must
+// equal wantCols (parquet physical order is alphabetical, so compare by name), and the rows
+// must match want row-by-row when cells are resolved by column name.
+func assertWarningRows(t *testing.T, what string, cols []string, rows [][]string, wantCols []string, want [][]string) {
+	t.Helper()
+	if len(cols) != len(wantCols) {
+		t.Fatalf("%s columns = %v, want set %v", what, cols, wantCols)
+	}
+	idx := make(map[string]int, len(cols))
+	for i, c := range cols {
+		idx[c] = i
+	}
+	for _, c := range wantCols {
+		if _, ok := idx[c]; !ok {
+			t.Fatalf("%s columns = %v, missing %q", what, cols, c)
+		}
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("%s rows = %d, want %d: %v", what, len(rows), len(want), rows)
+	}
+	for ri, wr := range want {
+		for ci, col := range wantCols {
+			if got := rows[ri][idx[col]]; got != wr[ci] {
+				t.Errorf("%s row %d %s = %q, want %q", what, ri, col, got, wr[ci])
+			}
+		}
+	}
+}
+
+// mustRefByBase returns the ref whose basename is base (fails when absent).
+func mustRefByBase(t *testing.T, refs []ArtifactRef, base string) ArtifactRef {
+	t.Helper()
+	for _, r := range refs {
+		if filepath.Base(r.URI) == base {
+			return r
+		}
+	}
+	t.Fatalf("no ref named %s in %v", base, refNames(refs))
+	return ArtifactRef{}
+}
+
+// TestExtractFAERSWarningRows proves the warnings.parquet parity fix: broken sources (missing
+// primaryid, empty file) produce one sorted row per collected warning across multiple quarters
+// (the per-family parse runs concurrently, so the sort by quarter/family/code/message is what
+// keeps repeated runs byte-identical).
+func TestExtractFAERSWarningRows(t *testing.T) {
+	dir := t.TempDir()
+	writeSrc := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSrc("REAC23Q1.txt", "RID$HLGT$\n1$2$\n")      // no primaryid/isr column
+	writeSrc("DEMO25Q1.txt", "DUMMY1$DUMMY2$\nx$y$\n") // no primaryid/isr column
+	writeSrc("RPSR25Q1.txt", "")                       // empty file
+	refs := faersFixtureRefs(t)
+	for _, name := range []string{"REAC23Q1.txt", "DEMO25Q1.txt", "RPSR25Q1.txt"} {
+		abs, _ := filepath.Abs(filepath.Join(dir, name))
+		id, err := blake3store.HashFile(abs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, ArtifactRef{URI: abs, Blake3: id, MediaType: "text/plain"})
+	}
+
+	cfg := Config{Workdir: t.TempDir(), Profile: "mock", Threads: 4}
+	got, err := ExtractFAERS(context.Background(), cfg, refs)
+	if err != nil {
+		t.Fatalf("ExtractFAERS: %v", err)
+	}
+	warningsRef := mustRefByBase(t, got, "warnings.parquet")
+	wcols, wrows := readBack(t, warningsRef.URI)
+	want := [][]string{
+		{"23Q1", "REAC", "missing_primaryid", "no primaryid/isr column", "1"},
+		{"24Q3", "DRUG", "deleted_rows_dropped", "1 drug rows dropped (DELETE)", "1"},
+		{"25Q1", "DEMO", "missing_primaryid", "no primaryid/isr column", "1"},
+		{"25Q1", "RPSR", "empty_file", "no data rows", "1"},
+	}
+	assertWarningRows(t, "warnings.parquet (broken fixtures)", wcols, wrows, faersWarningsColumns, want)
+	if warningsRef.Rows == nil || int(*warningsRef.Rows) != len(want) {
+		t.Errorf("warnings.parquet ref.Rows = %v, want %d", warningsRef.Rows, len(want))
+	}
+	// Re-running with Force must produce the same file bytes (deterministic sort => stable
+	// BLAKE3 for the op-index cache).
+	cfg2 := Config{Workdir: t.TempDir(), Profile: "mock", Threads: 4, Force: true}
+	got2, err := ExtractFAERS(context.Background(), cfg2, refs)
+	if err != nil {
+		t.Fatalf("ExtractFAERS(force): %v", err)
+	}
+	second := mustRefByBase(t, got2, "warnings.parquet")
+	b1, _ := os.ReadFile(warningsRef.URI)
+	b2, _ := os.ReadFile(second.URI)
+	if !bytes.Equal(b1, b2) {
+		t.Errorf("warnings.parquet differs across runs: %d vs %d bytes", len(b1), len(b2))
+	}
+	if second.Blake3 != warningsRef.Blake3 {
+		t.Errorf("warnings.parquet blake3 = %s, want %s", second.Blake3, warningsRef.Blake3)
 	}
 }
 

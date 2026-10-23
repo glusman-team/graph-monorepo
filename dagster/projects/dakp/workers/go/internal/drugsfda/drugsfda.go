@@ -553,6 +553,11 @@ func Extract(tables Tables) Result {
 	var res Result
 	applTypeMap := make(map[string]string)
 
+	// Mirrors the Python "not tables" record: nothing recognized in the inputs at all.
+	if tables.Products == nil && tables.Applications == nil && tables.Submissions == nil {
+		res.Warnings = append(res.Warnings, Warning{Table: "*", Message: "no Drugs@FDA tables recognized in inputs"})
+	}
+
 	if tables.Products != nil {
 		res.HaveProducts = true
 		res.Products, res.Warnings = BuildProducts(*tables.Products)

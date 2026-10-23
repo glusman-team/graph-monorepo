@@ -20,7 +20,7 @@ description: Add a Go pipes worker to an existing DAG's workers/go directory, fo
 5. Types: schemas come from mo-core (`dagster/libs/mo-core/scripts/export_json_schema.py`),
    generated via `go generate` into `gen/` (quicktype). Keep the fixture roundtrip test green.
 6. nx targets (`build`/`test`/`lint`) are inferred from go.mod by `@naxodev/gonx`:
-   `npx nx build dakp-workers-go` etc. work from the repo root.
+   `npx nx test dagster/projects/dakp/workers/go` etc. work from the repo root (gonx names the project by its path; `npx nx show projects` lists it).
 7. Point the launching dagster asset at the binary via env var (see
    `DAKP_WORKER_BIN` in `projects/dakp/src/dakp_dag/assets.py`), never a hardcoded path.
 

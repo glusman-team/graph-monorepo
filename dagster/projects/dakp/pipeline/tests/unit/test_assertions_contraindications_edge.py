@@ -762,6 +762,32 @@ def test_split_sentences_basic() -> None:
     assert _split_sentences("Trailing.") == ["Trailing."]
 
 
+def test_sentence_spans_never_emit_an_empty_chunk() -> None:
+    """No zero-length span, whatever the whitespace layout.
+
+    ``_SENTENCE_BOUNDARY`` is ``[.!?;](?:\\s+|$)``: it CONSUMES the trailing whitespace, so every
+    loop chunk contains its boundary punctuation and the tail (when there is one) always starts on
+    a non-whitespace char. That is the invariant the splitter's comment claims and the reason it
+    has no emptiness guard - an empty span would mine an empty text and cache a useless key. This
+    test pins it, so switching the boundary to a lookahead (which would leave whitespace-only
+    chunks) fails here instead of silently feeding "" to the NER backend.
+    """
+    for text in (
+        "  . x.  ",
+        "a.  ",
+        "a.\n\n",
+        "\n\nasthma.",
+        ".foo",
+        "First.\n\n  \nSecond;  Third!  ",
+        "   ",
+    ):
+        spans = _sentence_spans(text)
+        assert all(span.text for span in spans), f"empty span from {text!r}: {spans}"
+        assert all(span.start < span.end for span in spans), f"zero-width span from {text!r}"
+        # offsets address the source text exactly
+        assert all(text[span.start : span.end] == span.text for span in spans)
+
+
 def test_contraindication_sentences_keeps_only_keyword_sentences() -> None:
     """Only sentences matching contraindication keywords survive the filter."""
     text = "DrugX is indicated for hypertension. It is contraindicated in patients with asthma. DrugX is also indicated for diabetes."

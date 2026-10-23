@@ -3,8 +3,11 @@ package worker
 import (
 	"archive/zip"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -84,6 +87,147 @@ func TestExtractDrugsFDAParity(t *testing.T) {
 	}
 	if len(rows) != len(res.Products) {
 		t.Errorf("products.parquet rows = %d, want %d", len(rows), len(res.Products))
+	}
+
+	// extract_warnings.jsonl must carry exactly the canonical collector warnings (the clean
+	// fixture set yields none, but the file must exist and be referenced with rows == 0).
+	lines := readJSONLines(t, got[5].URI)
+	assertDrugsFDAWarningLines(t, lines, res.Warnings)
+	if got[5].Rows == nil || int(*got[5].Rows) != len(res.Warnings) {
+		t.Errorf("extract_warnings.jsonl ref.Rows = %v, want %d", got[5].Rows, len(res.Warnings))
+	}
+}
+
+// TestExtractDrugsFDAWarningRows proves the extract_warnings.jsonl parity fix: a products file
+// with one row missing every application-number column yields the row-level warning plus the
+// absent applications/submissions table warnings, one JSON line each in Python's
+// json.dumps(sort_keys=True) wire format (keys ascending, source_file only when present).
+func TestExtractDrugsFDAWarningRows(t *testing.T) {
+	fixture, err := os.ReadFile("../drugsfda/testdata/drugsfda_products.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(fixture)
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	header := strings.SplitN(body, "\n", 2)[0]
+	blank := strings.Repeat("\t", strings.Count(header, "\t"))
+	body += blank + "\n"
+	dataRows := strings.Count(strings.TrimSuffix(body, "\n"), "\n") // excluding header
+
+	dir := t.TempDir()
+	prodPath := filepath.Join(dir, "Products.txt")
+	if err := os.WriteFile(prodPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := blake3store.HashFile(prodPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Workdir: t.TempDir(), Profile: "mock", Threads: 4}
+	got, err := ExtractDrugsFDA(context.Background(), cfg, []ArtifactRef{{URI: prodPath, Blake3: id, MediaType: "text/tab-separated-values"}})
+	if err != nil {
+		t.Fatalf("ExtractDrugsFDA: %v", err)
+	}
+	warningsRef := mustRefByBase(t, got, "extract_warnings.jsonl")
+
+	want := []string{
+		fmt.Sprintf(`{"message":"row %d: missing application number","source_file":"Products.txt","table":"products"}`, dataRows+1),
+		`{"message":"no Applications table found in inputs","table":"applications"}`,
+		`{"message":"no Submissions table found in inputs","table":"submissions"}`,
+	}
+	lines := readJSONLines(t, warningsRef.URI)
+	if len(lines) != len(want) {
+		t.Fatalf("extract_warnings.jsonl lines = %d, want %d: %q", len(lines), len(want), lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("warning line %d =\n%s\nwant\n%s", i, lines[i], want[i])
+		}
+	}
+	if warningsRef.Rows == nil || int(*warningsRef.Rows) != len(want) {
+		t.Errorf("extract_warnings.jsonl ref.Rows = %v, want %d", warningsRef.Rows, len(want))
+	}
+
+	// Determinism: a forced re-run must write byte-identical jsonl (stable hash for the cache).
+	cfg2 := Config{Workdir: t.TempDir(), Profile: "mock", Threads: 4, Force: true}
+	got2, err := ExtractDrugsFDA(context.Background(), cfg2, []ArtifactRef{{URI: prodPath, Blake3: id, MediaType: "text/tab-separated-values"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := mustRefByBase(t, got2, "extract_warnings.jsonl")
+	if second.Blake3 != warningsRef.Blake3 {
+		t.Errorf("extract_warnings.jsonl blake3 = %s, want %s", second.Blake3, warningsRef.Blake3)
+	}
+}
+
+// TestExtractDrugsFDAWarningRowsNoTables covers the "nothing recognized" path: the Python
+// extractor records a table="*" warning first, then one per absent table.
+func TestExtractDrugsFDAWarningRowsNoTables(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "Readme.txt")
+	if err := os.WriteFile(readme, []byte("not a drugsfda table\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := blake3store.HashFile(readme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Workdir: t.TempDir(), Profile: "mock", Threads: 4}
+	got, err := ExtractDrugsFDA(context.Background(), cfg, []ArtifactRef{{URI: readme, Blake3: id, MediaType: "text/plain"}})
+	if err != nil {
+		t.Fatalf("ExtractDrugsFDA(unrecognized): %v", err)
+	}
+	warningsRef := mustRefByBase(t, got, "extract_warnings.jsonl")
+	want := []string{
+		`{"message":"no Drugs@FDA tables recognized in inputs","table":"*"}`,
+		`{"message":"no Products table found in inputs","table":"products"}`,
+		`{"message":"no Applications table found in inputs","table":"applications"}`,
+		`{"message":"no Submissions table found in inputs","table":"submissions"}`,
+	}
+	lines := readJSONLines(t, warningsRef.URI)
+	if len(lines) != len(want) {
+		t.Fatalf("extract_warnings.jsonl lines = %d, want %d: %q", len(lines), len(want), lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("warning line %d =\n%s\nwant\n%s", i, lines[i], want[i])
+		}
+	}
+}
+
+// readJSONLines returns the non-empty lines of a .jsonl file.
+func readJSONLines(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// assertDrugsFDAWarningLines checks jsonl lines against canonical warnings: one line each,
+// same order, parsed fields equal (key order on the wire is ascending per json.dumps sort_keys).
+func assertDrugsFDAWarningLines(t *testing.T, lines []string, warnings []drugsfda.Warning) {
+	t.Helper()
+	if len(lines) != len(warnings) {
+		t.Fatalf("warning lines = %d, want %d", len(lines), len(warnings))
+	}
+	for i, w := range warnings {
+		var got map[string]string
+		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil {
+			t.Fatalf("line %d: %v", i, err)
+		}
+		if got["table"] != w.Table || got["message"] != w.Message || got["source_file"] != w.SourceFile {
+			t.Errorf("line %d = %s, want table=%q message=%q source_file=%q", i, lines[i], w.Table, w.Message, w.SourceFile)
+		}
 	}
 }
 

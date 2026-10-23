@@ -265,6 +265,44 @@ def test_pool_reports_a_broken_process_pool_without_a_device(
     assert any("A worker died" in line for line in lines)
 
 
+def test_pool_abandons_in_flight_chunks_after_a_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A named chunk failure must not wait out the remaining shards, and close() must not re-join them.
+    A cold multi-GPU mine runs for hours, so joining the in-flight chunks before surfacing the
+    failure made a broken build look hung. The queued chunks are cancelled, the executor is shut
+    down without waiting, and the pool remembers that choice so the ExitStack unwind at close()
+    does not turn it back into shutdown(wait=True). The workers are not killed: terminating a
+    process mid-CUDA-kernel can wedge the device, and its flock dies with it either way."""
+    _install_stub_pool(
+        monkeypatch, error=NerWorkerError("cuda:1", 1, "IndexError: string index out of range")
+    )
+    ner = DiseaseNER(offline=False, gazetteer={"asthma": "disease"}, workdir=tmp_path)
+    pool = MiningPool(ner, ("cuda:0", "cuda:1"))
+    with pytest.raises(NerWorkerError), pool:
+        pool.mine([("S1", "D1", "asthma"), ("S2", "D2", "diabetes")])
+    executor = _EXECUTORS[-1]
+    assert pool.abandoned
+    assert {"wait": False, "cancel_futures": True} in executor.shutdowns
+    assert all(call["wait"] is False for call in executor.shutdowns), (
+        "close() re-joined the abandoned shards: " + repr(executor.shutdowns)
+    )
+    assert executor.futures, "no chunk was submitted"
+    assert all(future.cancelled for future in executor.futures)
+
+
+def test_pool_shutdown_waits_when_nothing_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    "The healthy path keeps the join, so every shard result is collected before the pool goes away."
+    _install_stub_pool(monkeypatch)
+    ner = DiseaseNER(offline=False, gazetteer={"asthma": "disease"}, workdir=tmp_path)
+    with MiningPool(ner, ("cuda:0",)) as pool:
+        pool.mine([("S1", "D1", "asthma")])
+        assert not pool.abandoned
+    assert _EXECUTORS[-1].shutdowns == [{"wait": True, "cancel_futures": False}]
+
+
 def test_pdeathsig_is_a_noop_off_linux(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dispatch.sys, "platform", "darwin")
     boom = lambda *_args: (_ for _ in ()).throw(AssertionError("CDLL must not load off-Linux"))
@@ -330,6 +368,9 @@ def test_pdeathsig_exits_when_parent_already_dead(monkeypatch: pytest.MonkeyPatc
 # --- MiningPool lifecycle: one pool per run ----------------------------------------
 
 
+_EXECUTORS: list[Any] = []
+
+
 def _install_stub_pool(
     monkeypatch: pytest.MonkeyPatch, *, error: Exception | None = None
 ) -> tuple[list[list[Any]], list[dict[str, Any]]]:
@@ -340,6 +381,7 @@ def _install_stub_pool(
     """
     submitted: list[list[Any]] = []
     constructed: list[dict[str, Any]] = []
+    _EXECUTORS.clear()
 
     class _StubQueue:
         def __init__(self) -> None:
@@ -363,6 +405,11 @@ def _install_stub_pool(
     class _Future:
         def __init__(self, chunk: Sequence[Any]) -> None:
             self._chunk = chunk
+            self.cancelled = 0
+
+        def cancel(self) -> bool:
+            self.cancelled += 1
+            return True
 
         def result(self) -> list[tuple[str, str, Any]]:
             if error is not None:
@@ -375,6 +422,9 @@ def _install_stub_pool(
     class _Executor:
         def __init__(self, **kwargs: Any) -> None:
             constructed.append(kwargs)
+            self.shutdowns: list[dict[str, Any]] = []
+            self.futures: list[_Future] = []
+            _EXECUTORS.append(self)
 
         def __enter__(self) -> _Executor:
             return self
@@ -382,9 +432,14 @@ def _install_stub_pool(
         def __exit__(self, *_args: Any) -> None:
             return None
 
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            self.shutdowns.append({"wait": wait, "cancel_futures": cancel_futures})
+
         def submit(self, _function: Any, chunk: Sequence[Any]) -> _Future:
             submitted.append(list(chunk))
-            return _Future(chunk)
+            future = _Future(chunk)
+            self.futures.append(future)
+            return future
 
     monkeypatch.setattr(dispatch, "ProcessPoolExecutor", _Executor)
     return submitted, constructed
@@ -626,24 +681,40 @@ def test_dispatch_pool_close_failure_does_not_mask_the_mining_error(
 # --- _resolve_devices: the single-arch premise of ordinal-free keying ---------------
 
 
-def test_resolve_devices_warns_when_surviving_devices_are_mixed_arch(
+def test_resolve_devices_refuses_a_mixed_arch_fleet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier B keys spans by device CLASS, so a mixed-arch host would make them run-dependent.
 
     ``cuda:0`` and ``cuda:3`` share one Tier B key because identical archs run identical
     deterministic kernels and emit identical bits. The executor's call queue decides which card runs
-    a chunk, so on a heterogeneous host one text's cached spans would depend on timing. Mixed archs
-    are not a supported pooled-dispatch target; the warning makes that observable instead of silent.
+    a chunk, so on a heterogeneous host one text's cached spans would depend on timing. Refusing
+    pooled dispatch (sequential CPU mining instead) keeps the output reproducible; a warning alone
+    let a non-reproducible KG ship.
     """
     torch = _install_fake_torch(monkeypatch)
     torch.cuda.is_available = lambda: True
     torch.cuda.device_count = lambda: 2
     torch.cuda.get_device_capability = lambda index: (8, 6) if index == 0 else (8, 0)
     torch.cuda.get_arch_list = lambda: ["sm_80", "sm_86"]
+    monkeypatch.delenv("DAKP_ALLOW_MIXED_GPU_ARCH", raising=False)
     with _captured_logs() as lines:
-        assert dispatch._resolve_devices(DiseaseNER(offline=False)) == ("cuda:0", "cuda:1")
-    assert any("ner_mixed_gpu_arch" in line for line in lines)
+        assert dispatch._resolve_devices(DiseaseNER(offline=False)) is None
+    assert any("ner_mixed_gpu_arch_unsupported" in line for line in lines)
+    assert any("sequential CPU mining" in line for line in lines)
+
+
+def test_mixed_arch_pooling_can_be_opted_into(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operator who accepts run-dependent spans can still pool a heterogeneous host."""
+    torch = _install_fake_torch(monkeypatch)
+    torch.cuda.is_available = lambda: True
+    torch.cuda.device_count = lambda: 2
+    torch.cuda.get_device_capability = lambda index: (8, 6) if index == 0 else (8, 0)
+    torch.cuda.get_arch_list = lambda: ["sm_80", "sm_86"]
+    monkeypatch.setenv("DAKP_ALLOW_MIXED_GPU_ARCH", "1")
+    assert dispatch._resolve_devices(DiseaseNER(offline=False)) == ("cuda:0", "cuda:1")
 
 
 def test_resolve_devices_is_quiet_for_a_uniform_fleet(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -653,6 +724,7 @@ def test_resolve_devices_is_quiet_for_a_uniform_fleet(monkeypatch: pytest.Monkey
     torch.cuda.device_count = lambda: 4
     torch.cuda.get_device_capability = lambda index: (6, 0)
     torch.cuda.get_arch_list = lambda: ["sm_60"]
+    monkeypatch.delenv("DAKP_ALLOW_MIXED_GPU_ARCH", raising=False)
     with _captured_logs() as lines:
         assert dispatch._resolve_devices(DiseaseNER(offline=False)) == (
             "cuda:0",
@@ -682,6 +754,7 @@ def test_mixed_arch_probe_failure_is_not_reported_as_mixing(
     torch.cuda.device_count = lambda: 2
     torch.cuda.get_device_capability = capability
     torch.cuda.get_arch_list = lambda: ["sm_86"]
+    monkeypatch.delenv("DAKP_ALLOW_MIXED_GPU_ARCH", raising=False)
     with _captured_logs() as lines:
         dispatch._resolve_devices(DiseaseNER(offline=False))
     assert not any("ner_mixed_gpu_arch" in line for line in lines)

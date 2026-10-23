@@ -68,6 +68,7 @@ See ``plans/ner-export-gliner2.md`` for the design record.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from collections import Counter
@@ -364,11 +365,30 @@ _RELATION_BY_FIELD: dict[str, str] = {
 # --- inputs -------------------------------------------------------------------------
 
 
+#: Explicit root of the committed NER gold benchmark (an installed wheel has no checkout layout).
+_GOLD_ROOT_ENV = "DAKP_NER_GOLD_ROOT"
+
+
+def gold_root(ctx: TaskContext) -> Path | None:
+    """Where the gold benchmark lives: ``ctx.params["ner_gold_root"]``, then ``$DAKP_NER_GOLD_ROOT``.
+
+    ``None`` means "use the checkout layout convention" (see :func:`gold_path`). An orchestrator
+    running the exporter from an installed package must set one of the two, or the export fails
+    loudly on the missing file instead of guessing a repo layout that is not there.
+    """
+    param = ctx.params.get("ner_gold_root")
+    if param:
+        return Path(str(param)).expanduser()
+    env = os.environ.get(_GOLD_ROOT_ENV)
+    return Path(env).expanduser() if env else None
+
+
 def gold_path(root: Path | None = None) -> Path:
     """The committed NER gold benchmark under ``<root>/tests/eval``.
 
     ``root`` defaults to the package's project root (two levels above this file); callers with
-    a configured checkout pass it explicitly instead of relying on the layout convention.
+    a configured checkout pass it explicitly (see :func:`gold_root`) instead of relying on the
+    layout convention.
     Raises ``FileNotFoundError`` when the file is absent: the exporter never runs without
     its eval gold (no silent fallback).
     """
@@ -1115,7 +1135,7 @@ def export(inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
             paths = write_bundle(
                 out_dir,
                 candidate_rows,
-                gold_path(),
+                gold_path(gold_root(ctx)),
                 [dailymed_ref, faers_ref, ema_ref],
                 ner=ner,
                 cache=cache,

@@ -2292,9 +2292,18 @@ class TablassertRunner:
                 if not edges_path.is_file():
                     msg = f"expected exactly one {stem}.edges.ndjson under {kgx_dir} after a successful build-kg, found 0"
                     raise RuntimeError(msg)
-                approval_promotions = reconcile_approval_status(edges_path)
-                stats(logger, "resolved_approval_status", promoted=approval_promotions)
+                # Validate BEFORE reconciling: the approval-status promotion rewrites the edges
+                # file, and a build whose KGX violates the contract must leave the emitted pair
+                # byte-identical so the failed report describes the artifact Tablassert actually
+                # wrote (the old order mutated it first and then reported failure). Re-validating
+                # after the promotion is unnecessary: reconcile_approval_status is atomic,
+                # idempotent, and sets exactly one qualifier (clinical_approval_status) to a
+                # constant the contract accepts - it cannot add/remove edges or touch identities,
+                # other qualifiers, or evidence.
                 contract_problems = validate_kgx_contract(ctx, graph_yaml)
+                if not contract_problems:
+                    approval_promotions = reconcile_approval_status(edges_path)
+                    stats(logger, "resolved_approval_status", promoted=approval_promotions)
             except (OSError, ValueError, RuntimeError) as exc:
                 contract_error = str(exc)
         report.update(

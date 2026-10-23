@@ -1878,6 +1878,7 @@ def test_real_runner_fails_on_kgx_contract_violation(
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+    emitted_bytes: list[bytes] = []
 
     def fake_subprocess(
         command: list[str], cwd: Path | None = None
@@ -1892,6 +1893,7 @@ def test_real_runner_fails_on_kgx_contract_violation(
         emitted.write_text(
             emitted.read_text(encoding="utf-8") + json.dumps(demoted) + "\n", encoding="utf-8"
         )
+        emitted_bytes.append(emitted.read_bytes())
         return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
 
     _patch_installed(monkeypatch)
@@ -1908,6 +1910,13 @@ def test_real_runner_fails_on_kgx_contract_violation(
     assert any(
         "incompatible_edge_category" in problem for problem in report["kgx_contract"]["problems"]
     )
+    # The failed pair must be exactly what build-kg emitted: validating BEFORE the
+    # approval-status promotion is what keeps a rejected graph unmutated, so the report
+    # describes the artifact a debugger will find on disk.
+    __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION
+    emitted = workdir.kgx / f"{tablassert_configs.GRAPH_NAME}_{__version__}.edges.ndjson"
+    assert emitted.read_bytes() == emitted_bytes[0]
+    assert report["resolved_approval_promotions"] == 0
 
 
 def test_real_runner_missing_kgx_after_success_is_loud(

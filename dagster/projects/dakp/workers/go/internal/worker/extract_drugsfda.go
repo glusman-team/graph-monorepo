@@ -2,7 +2,9 @@ package worker
 
 import (
 	"archive/zip"
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -32,7 +34,8 @@ type drugsfdaInput struct {
 // drugsfda_products.DrugsFDAProductsExtractor._extract_via_go: read the staged Drugs@FDA
 // tab-delimited tables with internal/drugsfda, then register the products/applications/submissions/
 // lookups interim parquets (each only when its source table is present; lookups derive from
-// products), the public drugsfda_products.tsv handoff, and an empty extract_warnings.jsonl. Refs are
+// products), the public drugsfda_products.tsv handoff, and extract_warnings.jsonl carrying one
+// JSON line per collected parse warning (mirrors _write_warnings_jsonl). Refs are
 // returned in the same order as the Python extractor.
 func ExtractDrugsFDA(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]ArtifactRef, error) {
 	store := Store{Workdir: cfg.Workdir}
@@ -141,13 +144,15 @@ func ExtractDrugsFDA(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]A
 		refs = append(refs, ref)
 	}
 
-	// Parse-warning provenance record (kept empty; warnings are in the task log stream).
+	// Parse-warning provenance record: one JSON line per collected warning, in collector
+	// insertion order (inputs are processed sorted-by-path, so it is deterministic), mirroring
+	// _write_warnings_jsonl (json.dumps(warning, sort_keys=True)).
 	warningsPath := filepath.Join(drugsfdaDir, "extract_warnings.jsonl")
-	if err := os.WriteFile(warningsPath, nil, 0o644); err != nil {
+	if err := writeDrugsFDAWarningsJSONL(warningsPath, res.Warnings); err != nil {
 		return nil, err
 	}
 	warningsRef, err := store.Register(RegisterInput{
-		Path: warningsPath, MediaType: drugsfdaWarningsMediaType, Rows: 0, Inputs: inputIDs,
+		Path: warningsPath, MediaType: drugsfdaWarningsMediaType, Rows: int64(len(res.Warnings)), Inputs: inputIDs,
 		Operation: "extract_drugsfda_warnings",
 	})
 	if err != nil {
@@ -180,6 +185,39 @@ func writeDrugsFDAParquet(store Store, dir, name string, columns []string, rows 
 		SchemaFingerprint: SchemaFingerprint(columns), Inputs: inputIDs,
 		Warnings: warnings, Operation: "extract_drugsfda_" + name,
 	})
+}
+
+// writeDrugsFDAWarningsJSONL writes one JSON line per warning in the Python wire format:
+// json.dumps(warning, sort_keys=True) => keys emitted ascending (message, source_file, table),
+// with source_file absent for the dict entries that do not carry it (Python omits the key only
+// for the "*" and "no X table found" records). Line order = collector insertion order.
+func writeDrugsFDAWarningsJSONL(path string, warnings []drugsfda.Warning) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	bw := bufio.NewWriter(f)
+	for _, w := range warnings {
+		rec := map[string]string{"message": w.Message, "table": w.Table}
+		if w.SourceFile != "" {
+			rec["source_file"] = w.SourceFile
+		}
+		line, err := json.Marshal(rec)
+		if err != nil {
+			f.Close()
+			return err
+		}
+		line = append(line, '\n')
+		if _, err := bw.Write(line); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if err := bw.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // unpackDrugsFDAZips extracts the members of any .zip files directly under inDir into inDir (flat,

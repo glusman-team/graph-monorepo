@@ -120,7 +120,19 @@ def _resolve_devices(ner: DiseaseNER, gpus: Sequence[str] | None = None) -> Sequ
         for index in range(min(visible, len(candidates)))
         if _cuda_device_supported(torch, index)
     )
-    _warn_on_mixed_arch(torch, supported)
+    mixed = _mixed_arch_capabilities(torch, supported)
+    if mixed is not None and not _mixed_arch_allowed():
+        # Not a warning-and-continue: a heterogeneous host makes Tier B span cache keys
+        # run-dependent, so pooled dispatch is refused and the shaper mines sequentially on CPU
+        # (deterministic, slower). An operator who accepts the non-reproducibility opts in.
+        logger.warning(
+            "ner_mixed_gpu_arch_unsupported: pooled dispatch assumes one compute capability across devices, found {}; "
+            "Tier B spans are keyed by device class, not ordinal, so a mixed host would make them run-dependent; "
+            "falling back to sequential CPU mining (set {}=1 to pool anyway)",
+            sorted(mixed),
+            _MIXED_ARCH_OVERRIDE_ENV,
+        )
+        return None
     if not supported:
         logger.warning(
             "contraindication_gpus_unsupported: no visible CUDA device arch is in the torch build arch list = {}; falling back to sequential CPU mining",
@@ -130,30 +142,39 @@ def _resolve_devices(ner: DiseaseNER, gpus: Sequence[str] | None = None) -> Sequ
     return supported
 
 
-def _warn_on_mixed_arch(torch_mod: Any, devices: Sequence[str]) -> None:
-    """Warn when the surviving ordinals are not all the same compute capability.
+def _mixed_arch_capabilities(torch_mod: Any, devices: Sequence[str]) -> set[Any] | None:
+    """The distinct compute capabilities of ``devices`` when they disagree, else None.
 
     Tier B keys raw spans by (dtype, device), never by ordinal: ``cuda:0`` and ``cuda:3`` share one
     key because identical archs run identical deterministic kernels and emit identical bits. A
-    heterogeneous host breaks that premise, and since the
-    executor's call queue decides which card runs a chunk, one text's spans would then depend on run
-    timing. Mixed-arch hosts are not a supported pooled-dispatch target; this makes the assumption
-    observable in the task log instead of silently non-reproducible.
+    heterogeneous host breaks that premise, and since the executor's call queue decides which card
+    runs a chunk, one text's spans would then depend on run timing. Mixed-arch hosts are therefore
+    not a supported pooled-dispatch target (see :func:`_resolve_devices`); a capability probe that
+    raises is treated as "unknown", not as mixing.
     """
     if len(devices) < 2:
-        return
+        return None
     capabilities: set[Any] = set()
     for index in range(len(devices)):
         try:
             capabilities.add(tuple(torch_mod.cuda.get_device_capability(index)))
         except Exception:
-            return
-    if len(capabilities) > 1:
-        logger.warning(
-            "ner_mixed_gpu_arch: pooled dispatch assumes one compute capability across devices, found {}; "
-            "Tier B spans are keyed by device class, not ordinal, so a mixed host would make them run-dependent",
-            sorted(capabilities),
-        )
+            return None
+    return capabilities if len(capabilities) > 1 else None
+
+
+#: Opt-in for pooling across differing GPU archs (accepts run-dependent Tier B spans).
+_MIXED_ARCH_OVERRIDE_ENV = "DAKP_ALLOW_MIXED_GPU_ARCH"
+
+
+def _mixed_arch_allowed() -> bool:
+    """Whether the operator accepted mixed-arch pooled dispatch via the environment."""
+    return os.environ.get(_MIXED_ARCH_OVERRIDE_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _item_parts(item: Any) -> tuple[str, str, str]:
@@ -347,6 +368,21 @@ def _mine_chunk(chunk: Sequence[Any]) -> list[tuple[str, str, RawTextSpans]]:
     ]
 
 
+@contextmanager
+def _owned_executor(
+    executor: ProcessPoolExecutor, pool: MiningPool
+) -> Iterator[ProcessPoolExecutor]:
+    """Own the executor's shutdown so an abandoned pool never joins its in-flight shards.
+
+    ``ExitStack`` would call ``ProcessPoolExecutor.__exit__`` (``shutdown(wait=True)``), which
+    re-waits for exactly the shards :meth:`MiningPool._abandon` already gave up on.
+    """
+    try:
+        yield executor
+    finally:
+        executor.shutdown(wait=not pool.abandoned, cancel_futures=pool.abandoned)
+
+
 class MiningPool:
     """A run-scoped, device-pinned NER mining pool with one ``mine`` entry point.
 
@@ -376,6 +412,12 @@ class MiningPool:
         self._stack = ExitStack()
         self._executor: ProcessPoolExecutor | None = None
         self._closed = False
+        self._abandoned = False
+
+    @property
+    def abandoned(self) -> bool:
+        """Whether a chunk failure stopped this pool from waiting on its in-flight shards."""
+        return self._abandoned
 
     @property
     def slots(self) -> tuple[str, ...]:
@@ -413,11 +455,14 @@ class MiningPool:
         for slot in self._slots:
             slots.put(slot)
         executor = self._stack.enter_context(
-            ProcessPoolExecutor(
-                max_workers=len(self._slots),
-                mp_context=ctx,
-                initializer=_init_worker,
-                initargs=(slots, self._ner_config),
+            _owned_executor(
+                ProcessPoolExecutor(
+                    max_workers=len(self._slots),
+                    mp_context=ctx,
+                    initializer=_init_worker,
+                    initargs=(slots, self._ner_config),
+                ),
+                self,
             )
         )
         # The feeder thread is the parent's; children hold their own inherited ends, so the parent can
@@ -443,16 +488,34 @@ class MiningPool:
                 chunk_results = future.result()
             except NerWorkerError as exc:
                 self._log_dispatch_failure(exc.device, exc.items, exc.message)
+                self._abandon(futures)
                 raise
             except BrokenProcessPool as exc:
                 # A worker died without returning anything (OOM kill, SIGKILL from the death signal, a
                 # CUDA fault). There is no device to name because no result came back, so point at the
                 # per-process worker logs, which is the only place the cause was written.
                 self._log_dispatch_failure("unknown", 0, f"{type(exc).__name__}: {exc}")
+                self._abandon(futures)
                 raise
             for set_id, doc_id, result in chunk_results:
                 results[(set_id, doc_id)] = result
         return results
+
+    def _abandon(self, futures: Sequence[Future[Any]]) -> None:
+        """Stop waiting on the other chunks once one has failed.
+
+        ``cancel()`` only reaches chunks that have not started; the in-flight ones are GPU work
+        whose results nobody will read, so the executor is shut down without joining them and
+        ``close()`` inherits that choice (see :func:`_owned_executor`). A cold multi-GPU mine
+        takes hours, and waiting out a whole shard before surfacing a named failure is what made
+        a broken build look hung. The workers are deliberately NOT killed: terminating a process
+        mid-CUDA-kernel can wedge the device, and its flock dies with it either way.
+        """
+        self._abandoned = True
+        for future in futures:
+            future.cancel()
+        if self._executor is not None:
+            self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _log_dispatch_failure(self, device: str, items: int, error: str) -> None:
         """Attribute a chunk failure in the TASK log; the traceback itself is in the worker's file."""
