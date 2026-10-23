@@ -81,6 +81,8 @@ class RunConfig:
             params["force"] = True
         if self.fullmap:
             params["fullmap"] = self.fullmap
+        if self.publication_version:
+            params["publication_version"] = self.publication_version
         return params
 
 

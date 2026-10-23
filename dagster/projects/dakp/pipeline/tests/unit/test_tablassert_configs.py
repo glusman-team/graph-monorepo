@@ -1584,6 +1584,27 @@ def test_generate_writes_graph_and_table_configs(tmp_path: Path) -> None:
     }
 
 
+def test_generate_embeds_the_explicit_publication_version(tmp_path: Path) -> None:
+    """``ctx.params["publication_version"]`` names the graph version and the RIG artifact URL.
+
+    Publication identity is decoupled from release tags and the package version: the caller
+    passes it per build, and the KGX stem (``<name>_<version>``) follows the graph config.
+    """
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    ctx = _ctx(workdir, publication_version="1.25.0")
+
+    refs = tablassert_configs.generate(assertion_refs, ctx)
+    graph = yaml.safe_load(refs[0].uri.read_text(encoding="utf-8"))
+    assert graph["version"] == "1.25.0"
+    assert graph["rig"]["artifact_base_url"].endswith("/1.25.0")
+
+    default_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+    default_graph = yaml.safe_load(default_refs[0].uri.read_text(encoding="utf-8"))
+    assert default_graph["version"] == tablassert_configs.DEFAULT_PUBLICATION_VERSION
+
+
 def test_generate_links_assertion_inputs_as_provenance(tmp_path: Path) -> None:
     workdir = Workdir(tmp_path / "work")
     workdir.create()

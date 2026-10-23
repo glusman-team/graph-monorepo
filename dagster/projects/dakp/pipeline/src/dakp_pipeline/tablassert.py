@@ -1902,7 +1902,22 @@ def generate(assertion_refs: list[ArtifactRef], ctx: TaskContext) -> list[Artifa
 
     graph_path = tables_dir / "graph.yaml"
     fullmap = str(ctx.params["fullmap"]) if ctx.params.get("fullmap") else FULLMAP_DEFAULT
-    graph_path.write_text(graph_yaml(table_paths, fullmap=fullmap), encoding="utf-8")
+    # Explicit per-build publication version (decoupled from release tags); it flows into the
+    # graph config version (which names the KGX stem) and the RIG artifact URL.
+    publication_version = str(ctx.params.get("publication_version") or "") or None
+    graph_path.write_text(
+        graph_yaml(
+            table_paths,
+            version=publication_version,
+            fullmap=fullmap,
+            rig_artifact_base_url=(
+                RIG_ARTIFACT_BASE_URL_TEMPLATE.format(version=publication_version)
+                if publication_version
+                else None
+            ),
+        ),
+        encoding="utf-8",
+    )
     graph_ref = store.register(
         graph_path,
         media_type="application/yaml",
