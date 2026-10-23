@@ -868,7 +868,11 @@ def test_committed_table_configs_match_generator_output() -> None:
     # ``avoid`` lists from the
     # installed Tablassert's Biolink enum, so any Biolink churn (e.g. 13.0's
     # ``AffinityMeasurement`` -> ``ProteinLigandAssayResult`` rename) requires a regeneration.
-    repo_tables = Path(__file__).resolve().parents[2] / "tables"
+    # Golden copies of DAKP v1.25.0's committed ``tables/*.yaml`` (production generates them
+    # into the workdir; these pin the generator against drift). ``graph.yaml`` differs from
+    # DAKP's only in the RIG versioning prose (publication version decoupled from the
+    # package version), diff verified against dakp v1.25.0 at port time.
+    repo_tables = Path(__file__).resolve().parents[1] / "fixtures" / "tables"
     for table in TABLES:
         basename = tablassert_configs._TABLE_SPECS[table][0]
         assert (repo_tables / f"{basename}.yaml").read_text(
@@ -1670,6 +1674,11 @@ def test_qc_runtime_available_reflects_importability(monkeypatch: pytest.MonkeyP
 # --- runner: command construction (pure; no process spawned) ----------------------
 
 
+def _no_sibling_script(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hide the venv's own console script so PATH / uv fallbacks are what gets exercised."""
+    monkeypatch.setattr(_RUN_MODULE.sys, "executable", "/nonexistent-venv/bin/python", raising=True)
+
+
 def test_build_command_editable_override_prefix() -> None:
     command = TablassertRunner().build_command(
         Path("tables/graph.yaml"), tablassert_dir="../Tablassert"
@@ -1686,24 +1695,28 @@ def test_build_command_editable_override_prefix() -> None:
 
 
 def test_build_command_prefers_installed_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_sibling_script(monkeypatch)
     monkeypatch.setattr(shutil, "which", lambda name: "/venv/bin/tablassert")
     command = TablassertRunner().build_command(Path("tables/graph.yaml"))
     assert command == ["/venv/bin/tablassert", "build-kg", "tables/graph.yaml"]
 
 
 def test_build_command_falls_back_to_uv_run_tablassert(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_sibling_script(monkeypatch)
     monkeypatch.setattr(shutil, "which", lambda name: None)
     command = TablassertRunner().build_command(Path("tables/graph.yaml"))
     assert command == ["uv", "run", "tablassert", "build-kg", "tables/graph.yaml"]
 
 
 def test_build_command_appends_qc_and_release_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_sibling_script(monkeypatch)
     monkeypatch.setattr(shutil, "which", lambda name: None)
     command = TablassertRunner().build_command(Path("graph.yaml"), qc=True, release=True)
     assert command == ["uv", "run", "tablassert", "build-kg", "graph.yaml", "--qc", "--release"]
 
 
 def test_build_command_has_no_original_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_sibling_script(monkeypatch)
     monkeypatch.setattr(shutil, "which", lambda name: None)
     command = TablassertRunner().build_command(Path("graph.yaml"))
     assert "--no-original" not in command
@@ -1730,6 +1743,7 @@ def _patch_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Force the runner's DEFAULT installed-package path deterministically (no editable dir)."""
     monkeypatch.delenv(TABLASERT_DIR_ENV, raising=False)  # ignore any real dev override in the env
     monkeypatch.setattr(_RUN_MODULE, "tablassert_available", lambda: True)
+    _no_sibling_script(monkeypatch)
     monkeypatch.setattr(shutil, "which", lambda name: None)  # -> the `uv run tablassert` prefix
 
 

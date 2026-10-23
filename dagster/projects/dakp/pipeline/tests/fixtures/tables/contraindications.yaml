@@ -1,0 +1,2224 @@
+template:
+  source:
+    kind: text
+    local: tabular/contraindication_assertions.tsv
+    url:
+      - "https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm"
+      - "https://www.ema.europa.eu/en/documents/report/documents-output-epar_documents_json-report_en.json"
+    delimiter: "\t"
+    reindex:
+      - column: F
+        comparison: ne
+        comparator: HYPERSENSITIVITY
+      - column: F
+        comparison: ne
+        comparator: hypersensitivity
+      - column: F
+        comparison: ne
+        comparator: Hypersensitivity
+      - column: F
+        comparison: ne
+        comparator: "HYPERSENSITIVITY REACTION"
+      - column: F
+        comparison: ne
+        comparator: "hypersensitivity reaction"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity Reaction"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity reaction"
+      - column: F
+        comparison: ne
+        comparator: "HYPERSENSITIVITY REACTIONS"
+      - column: F
+        comparison: ne
+        comparator: "hypersensitivity reactions"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity Reactions"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity reactions"
+      - column: F
+        comparison: ne
+        comparator: "HYPERSENSITIVITY SYMPTOMS"
+      - column: F
+        comparison: ne
+        comparator: "hypersensitivity symptoms"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity Symptoms"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity symptoms"
+      - column: F
+        comparison: ne
+        comparator: "HYPERSENSITIVITY ALLERGIC REACTION"
+      - column: F
+        comparison: ne
+        comparator: "hypersensitivity allergic reaction"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity Allergic Reaction"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity allergic reaction"
+      - column: F
+        comparison: ne
+        comparator: "TYPE I HYPERSENSITIVITY"
+      - column: F
+        comparison: ne
+        comparator: "type i hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "Type I Hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "Type i hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "TYPE IV HYPERSENSITIVITY REACTION"
+      - column: F
+        comparison: ne
+        comparator: "type iv hypersensitivity reaction"
+      - column: F
+        comparison: ne
+        comparator: "Type Iv Hypersensitivity Reaction"
+      - column: F
+        comparison: ne
+        comparator: "Type iv hypersensitivity reaction"
+      - column: F
+        comparison: ne
+        comparator: "DRUG HYPERSENSITIVITY"
+      - column: F
+        comparison: ne
+        comparator: "drug hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "Drug Hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "Drug hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "SKIN HYPERSENSITIVITY"
+      - column: F
+        comparison: ne
+        comparator: "skin hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "Skin Hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "Skin hypersensitivity"
+      - column: F
+        comparison: ne
+        comparator: "HYPERSENSITIVITY PNEUMONITIS"
+      - column: F
+        comparison: ne
+        comparator: "hypersensitivity pneumonitis"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity Pneumonitis"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity pneumonitis"
+      - column: F
+        comparison: ne
+        comparator: "HYPERSENSITIVITY MYOCARDITIS"
+      - column: F
+        comparison: ne
+        comparator: "hypersensitivity myocarditis"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity Myocarditis"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity myocarditis"
+      - column: F
+        comparison: ne
+        comparator: "HYPERSENSITIVITY VASCULITIS"
+      - column: F
+        comparison: ne
+        comparator: "hypersensitivity vasculitis"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity Vasculitis"
+      - column: F
+        comparison: ne
+        comparator: "Hypersensitivity vasculitis"
+      - column: F
+        comparison: ne
+        comparator: "ALLERGIC REACTION"
+      - column: F
+        comparison: ne
+        comparator: "allergic reaction"
+      - column: F
+        comparison: ne
+        comparator: "Allergic Reaction"
+      - column: F
+        comparison: ne
+        comparator: "Allergic reaction"
+      - column: F
+        comparison: ne
+        comparator: "ALLERGIC REACTIONS"
+      - column: F
+        comparison: ne
+        comparator: "allergic reactions"
+      - column: F
+        comparison: ne
+        comparator: "Allergic Reactions"
+      - column: F
+        comparison: ne
+        comparator: "Allergic reactions"
+      - column: F
+        comparison: ne
+        comparator: "ALLERGIC DISORDERS"
+      - column: F
+        comparison: ne
+        comparator: "allergic disorders"
+      - column: F
+        comparison: ne
+        comparator: "Allergic Disorders"
+      - column: F
+        comparison: ne
+        comparator: "Allergic disorders"
+      - column: F
+        comparison: ne
+        comparator: ALLERGY
+      - column: F
+        comparison: ne
+        comparator: allergy
+      - column: F
+        comparison: ne
+        comparator: Allergy
+      - column: F
+        comparison: ne
+        comparator: ALLERGIES
+      - column: F
+        comparison: ne
+        comparator: allergies
+      - column: F
+        comparison: ne
+        comparator: Allergies
+      - column: F
+        comparison: ne
+        comparator: "DRUG ALLERGY"
+      - column: F
+        comparison: ne
+        comparator: "drug allergy"
+      - column: F
+        comparison: ne
+        comparator: "Drug Allergy"
+      - column: F
+        comparison: ne
+        comparator: "Drug allergy"
+      - column: F
+        comparison: ne
+        comparator: SENSITIVITY
+      - column: F
+        comparison: ne
+        comparator: sensitivity
+      - column: F
+        comparison: ne
+        comparator: Sensitivity
+      - column: F
+        comparison: ne
+        comparator: "BLOOD PRESSURE"
+      - column: F
+        comparison: ne
+        comparator: "blood pressure"
+      - column: F
+        comparison: ne
+        comparator: "Blood Pressure"
+      - column: F
+        comparison: ne
+        comparator: "Blood pressure"
+      - column: F
+        comparison: ne
+        comparator: "HEART RATE"
+      - column: F
+        comparison: ne
+        comparator: "heart rate"
+      - column: F
+        comparison: ne
+        comparator: "Heart Rate"
+      - column: F
+        comparison: ne
+        comparator: "Heart rate"
+      - column: F
+        comparison: ne
+        comparator: "LABORATORY TEST"
+      - column: F
+        comparison: ne
+        comparator: "laboratory test"
+      - column: F
+        comparison: ne
+        comparator: "Laboratory Test"
+      - column: F
+        comparison: ne
+        comparator: "Laboratory test"
+      - column: F
+        comparison: ne
+        comparator: "LABORATORY TESTS"
+      - column: F
+        comparison: ne
+        comparator: "laboratory tests"
+      - column: F
+        comparison: ne
+        comparator: "Laboratory Tests"
+      - column: F
+        comparison: ne
+        comparator: "Laboratory tests"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE EVENT"
+      - column: F
+        comparison: ne
+        comparator: "adverse event"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Event"
+      - column: F
+        comparison: ne
+        comparator: "Adverse event"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE EVENTS"
+      - column: F
+        comparison: ne
+        comparator: "adverse events"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Events"
+      - column: F
+        comparison: ne
+        comparator: "Adverse events"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE EFFECT"
+      - column: F
+        comparison: ne
+        comparator: "adverse effect"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Effect"
+      - column: F
+        comparison: ne
+        comparator: "Adverse effect"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE EFFECTS"
+      - column: F
+        comparison: ne
+        comparator: "adverse effects"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Effects"
+      - column: F
+        comparison: ne
+        comparator: "Adverse effects"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE REACTION"
+      - column: F
+        comparison: ne
+        comparator: "adverse reaction"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Reaction"
+      - column: F
+        comparison: ne
+        comparator: "Adverse reaction"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE REACTIONS"
+      - column: F
+        comparison: ne
+        comparator: "adverse reactions"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Reactions"
+      - column: F
+        comparison: ne
+        comparator: "Adverse reactions"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE DRUG REACTION"
+      - column: F
+        comparison: ne
+        comparator: "adverse drug reaction"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Drug Reaction"
+      - column: F
+        comparison: ne
+        comparator: "Adverse drug reaction"
+      - column: F
+        comparison: ne
+        comparator: "ADVERSE DRUG REACTIONS"
+      - column: F
+        comparison: ne
+        comparator: "adverse drug reactions"
+      - column: F
+        comparison: ne
+        comparator: "Adverse Drug Reactions"
+      - column: F
+        comparison: ne
+        comparator: "Adverse drug reactions"
+      - column: F
+        comparison: ne
+        comparator: "SIDE EFFECT"
+      - column: F
+        comparison: ne
+        comparator: "side effect"
+      - column: F
+        comparison: ne
+        comparator: "Side Effect"
+      - column: F
+        comparison: ne
+        comparator: "Side effect"
+      - column: F
+        comparison: ne
+        comparator: "SIDE EFFECTS"
+      - column: F
+        comparison: ne
+        comparator: "side effects"
+      - column: F
+        comparison: ne
+        comparator: "Side Effects"
+      - column: F
+        comparison: ne
+        comparator: "Side effects"
+      - column: F
+        comparison: ne
+        comparator: "DISEASE PROGRESSION"
+      - column: F
+        comparison: ne
+        comparator: "disease progression"
+      - column: F
+        comparison: ne
+        comparator: "Disease Progression"
+      - column: F
+        comparison: ne
+        comparator: "Disease progression"
+      - column: F
+        comparison: ne
+        comparator: "TREATMENT FAILURE"
+      - column: F
+        comparison: ne
+        comparator: "treatment failure"
+      - column: F
+        comparison: ne
+        comparator: "Treatment Failure"
+      - column: F
+        comparison: ne
+        comparator: "Treatment failure"
+      - column: F
+        comparison: ne
+        comparator: "CONDITION AGGRAVATED"
+      - column: F
+        comparison: ne
+        comparator: "condition aggravated"
+      - column: F
+        comparison: ne
+        comparator: "Condition Aggravated"
+      - column: F
+        comparison: ne
+        comparator: "Condition aggravated"
+      - column: F
+        comparison: ne
+        comparator: "CONDITION AGGRIVATED"
+      - column: F
+        comparison: ne
+        comparator: "condition aggrivated"
+      - column: F
+        comparison: ne
+        comparator: "Condition Aggrivated"
+      - column: F
+        comparison: ne
+        comparator: "Condition aggrivated"
+      - column: F
+        comparison: ne
+        comparator: ANAESTHESIA
+      - column: F
+        comparison: ne
+        comparator: anaesthesia
+      - column: F
+        comparison: ne
+        comparator: Anaesthesia
+      - column: F
+        comparison: ne
+        comparator: ANESTHESIA
+      - column: F
+        comparison: ne
+        comparator: anesthesia
+      - column: F
+        comparison: ne
+        comparator: Anesthesia
+      - column: F
+        comparison: ne
+        comparator: OVERDOSE
+      - column: F
+        comparison: ne
+        comparator: overdose
+      - column: F
+        comparison: ne
+        comparator: Overdose
+      - column: F
+        comparison: ne
+        comparator: "DRUG OVERDOSE"
+      - column: F
+        comparison: ne
+        comparator: "drug overdose"
+      - column: F
+        comparison: ne
+        comparator: "Drug Overdose"
+      - column: F
+        comparison: ne
+        comparator: "Drug overdose"
+      - column: F
+        comparison: ne
+        comparator: "DRUG OVERDOSES"
+      - column: F
+        comparison: ne
+        comparator: "drug overdoses"
+      - column: F
+        comparison: ne
+        comparator: "Drug Overdoses"
+      - column: F
+        comparison: ne
+        comparator: "Drug overdoses"
+      - column: F
+        comparison: ne
+        comparator: "INTENTIONAL OVERDOSE"
+      - column: F
+        comparison: ne
+        comparator: "intentional overdose"
+      - column: F
+        comparison: ne
+        comparator: "Intentional Overdose"
+      - column: F
+        comparison: ne
+        comparator: "Intentional overdose"
+      - column: F
+        comparison: ne
+        comparator: POISONING
+      - column: F
+        comparison: ne
+        comparator: poisoning
+      - column: F
+        comparison: ne
+        comparator: Poisoning
+      - column: F
+        comparison: ne
+        comparator: INJURY
+      - column: F
+        comparison: ne
+        comparator: injury
+      - column: F
+        comparison: ne
+        comparator: Injury
+      - column: F
+        comparison: ne
+        comparator: "TRAUMATIC INJURY"
+      - column: F
+        comparison: ne
+        comparator: "traumatic injury"
+      - column: F
+        comparison: ne
+        comparator: "Traumatic Injury"
+      - column: F
+        comparison: ne
+        comparator: "Traumatic injury"
+      - column: F
+        comparison: ne
+        comparator: DEATH
+      - column: F
+        comparison: ne
+        comparator: death
+      - column: F
+        comparison: ne
+        comparator: Death
+      - column: F
+        comparison: ne
+        comparator: "SUDDEN DEATH"
+      - column: F
+        comparison: ne
+        comparator: "sudden death"
+      - column: F
+        comparison: ne
+        comparator: "Sudden Death"
+      - column: F
+        comparison: ne
+        comparator: "Sudden death"
+      - column: F
+        comparison: ne
+        comparator: "HIV TEST POSITIVE"
+      - column: F
+        comparison: ne
+        comparator: "hiv test positive"
+      - column: F
+        comparison: ne
+        comparator: "Hiv Test Positive"
+      - column: F
+        comparison: ne
+        comparator: "Hiv test positive"
+      - column: F
+        comparison: ne
+        comparator: "UNEVALUABLE EVENT"
+      - column: F
+        comparison: ne
+        comparator: "unevaluable event"
+      - column: F
+        comparison: ne
+        comparator: "Unevaluable Event"
+      - column: F
+        comparison: ne
+        comparator: "Unevaluable event"
+      - column: F
+        comparison: ne
+        comparator: "SUBSTANCE USE"
+      - column: F
+        comparison: ne
+        comparator: "substance use"
+      - column: F
+        comparison: ne
+        comparator: "Substance Use"
+      - column: F
+        comparison: ne
+        comparator: "Substance use"
+      - column: F
+        comparison: ne
+        comparator: "GLUCOSE TOLERANCE TEST"
+      - column: F
+        comparison: ne
+        comparator: "glucose tolerance test"
+      - column: F
+        comparison: ne
+        comparator: "Glucose Tolerance Test"
+      - column: F
+        comparison: ne
+        comparator: "Glucose tolerance test"
+      - column: F
+        comparison: ne
+        comparator: CRYING
+      - column: F
+        comparison: ne
+        comparator: crying
+      - column: F
+        comparison: ne
+        comparator: Crying
+  statement:
+    subject:
+      method: column
+      encoding: A
+      prioritize:
+        - Drug
+        - SmallMolecule
+        - ChemicalEntity
+      avoid:
+        - AccessibleDnaRegion
+        - Activity
+        - AdministrativeEntity
+        - Agent
+        - AnatomicalEntity
+        - Article
+        - Attribute
+        - Bacterium
+        - Behavior
+        - BehavioralExposure
+        - BehavioralFeature
+        - BiologicalEntity
+        - BiologicalProcess
+        - BiologicalProcessOrActivity
+        - BiologicalSex
+        - BioticExposure
+        - Book
+        - BookChapter
+        - Case
+        - Cell
+        - CellLine
+        - CellularComponent
+        - CellularOrganism
+        - ChemicalExposure
+        - ChemicalMixture
+        - ChemicalRole
+        - ChiSquaredAnalysisResult
+        - ClinicalAttribute
+        - ClinicalCourse
+        - ClinicalEntity
+        - ClinicalFinding
+        - ClinicalIntervention
+        - ClinicalMeasurement
+        - ClinicalModifier
+        - ClinicalTrial
+        - CodingSequence
+        - Cohort
+        - CommonDataElement
+        - ComplexChemicalExposure
+        - ComplexMolecularMixture
+        - ConceptCountAnalysisResult
+        - ConfidenceLevel
+        - Dataset
+        - DatasetDistribution
+        - DatasetSummary
+        - DatasetVersion
+        - Device
+        - DiagnosticAid
+        - Disease
+        - DiseaseOrPhenotypicFeature
+        - DiseaseOrPhenotypicFeatureExposure
+        - DrugExposure
+        - DrugLabel
+        - DrugToGeneInteractionExposure
+        - Entity
+        - EnvironmentalExposure
+        - EnvironmentalFeature
+        - EnvironmentalFoodContaminant
+        - EnvironmentalProcess
+        - Event
+        - Evidence
+        - EvidenceType
+        - Exon
+        - ExposureEvent
+        - Food
+        - FoodAdditive
+        - Fungus
+        - Gene
+        - GeneFamily
+        - GeneticInheritance
+        - Genome
+        - GenomicBackgroundExposure
+        - GenomicEntity
+        - Genotype
+        - GenotypicSex
+        - GeographicExposure
+        - GeographicLocation
+        - GeographicLocationAtTime
+        - GrossAnatomicalStructure
+        - Haplotype
+        - Hospitalization
+        - Human
+        - IceesStudyResult
+        - IndividualOrganism
+        - InformationContentEntity
+        - Invertebrate
+        - JournalArticle
+        - LifeStage
+        - LogOddsAnalysisResult
+        - MacromolecularComplex
+        - Mammal
+        - MaterialSample
+        - MicroRNA
+        - MolecularActivity
+        - MolecularEntity
+        - MolecularMixture
+        - NamedThing
+        - NoncodingRNAProduct
+        - NucleicAcidEntity
+        - NucleicAcidSequenceMotif
+        - NucleosomeModification
+        - ObservedExpectedFrequencyAnalysisResult
+        - Onset
+        - OrganismAttribute
+        - OrganismTaxon
+        - OrganismalEntity
+        - Patent
+        - PathologicalAnatomicalExposure
+        - PathologicalAnatomicalStructure
+        - PathologicalProcess
+        - PathologicalProcessExposure
+        - Pathway
+        - Phenomenon
+        - PhenotypicFeature
+        - PhenotypicQuality
+        - PhenotypicSex
+        - PhysicalEntity
+        - PhysiologicalProcess
+        - PlanetaryEntity
+        - Plant
+        - Polypeptide
+        - PopulationOfIndividualOrganisms
+        - PosttranslationalModification
+        - PreprintPublication
+        - Procedure
+        - ProcessedMaterial
+        - Protein
+        - ProteinDomain
+        - ProteinFamily
+        - ProteinIsoform
+        - ProteinLigandAssayResult
+        - Publication
+        - RNAProduct
+        - RNAProductIsoform
+        - ReagentTargetedGene
+        - RegulatoryRegion
+        - RelativeFrequencyAnalysisResult
+        - RetrievalSource
+        - SequenceVariant
+        - Serial
+        - SeverityValue
+        - SiRNA
+        - Snv
+        - SocioeconomicAttribute
+        - SocioeconomicExposure
+        - Study
+        - StudyPopulation
+        - StudyResult
+        - StudyVariable
+        - TextMiningStudyResult
+        - Transcript
+        - TranscriptionFactorBindingSite
+        - Treatment
+        - Vertebrate
+        - Virus
+        - WebPage
+        - Zygosity
+      exclude_regex:
+        - "^UMLS:C1314429$"
+        - "^UMLS:C0812740$"
+    predicate: contraindicated_in
+    object:
+      method: column
+      encoding: F
+      prioritize:
+        - Disease
+        - PhenotypicFeature
+      avoid:
+        - AccessibleDnaRegion
+        - Activity
+        - AdministrativeEntity
+        - Agent
+        - AnatomicalEntity
+        - Article
+        - Attribute
+        - Bacterium
+        - Behavior
+        - BehavioralExposure
+        - BehavioralFeature
+        - BiologicalEntity
+        - BiologicalProcess
+        - BiologicalProcessOrActivity
+        - BiologicalSex
+        - BioticExposure
+        - Book
+        - BookChapter
+        - Case
+        - Cell
+        - CellLine
+        - CellularComponent
+        - CellularOrganism
+        - ChemicalEntity
+        - ChemicalExposure
+        - ChemicalMixture
+        - ChemicalRole
+        - ChiSquaredAnalysisResult
+        - ClinicalAttribute
+        - ClinicalCourse
+        - ClinicalEntity
+        - ClinicalFinding
+        - ClinicalIntervention
+        - ClinicalMeasurement
+        - ClinicalModifier
+        - ClinicalTrial
+        - CodingSequence
+        - Cohort
+        - CommonDataElement
+        - ComplexChemicalExposure
+        - ComplexMolecularMixture
+        - ConceptCountAnalysisResult
+        - ConfidenceLevel
+        - Dataset
+        - DatasetDistribution
+        - DatasetSummary
+        - DatasetVersion
+        - Device
+        - DiagnosticAid
+        - DiseaseOrPhenotypicFeature
+        - DiseaseOrPhenotypicFeatureExposure
+        - Drug
+        - DrugExposure
+        - DrugLabel
+        - DrugToGeneInteractionExposure
+        - Entity
+        - EnvironmentalExposure
+        - EnvironmentalFeature
+        - EnvironmentalFoodContaminant
+        - EnvironmentalProcess
+        - Event
+        - Evidence
+        - EvidenceType
+        - Exon
+        - ExposureEvent
+        - Food
+        - FoodAdditive
+        - Fungus
+        - Gene
+        - GeneFamily
+        - GeneticInheritance
+        - Genome
+        - GenomicBackgroundExposure
+        - GenomicEntity
+        - Genotype
+        - GenotypicSex
+        - GeographicExposure
+        - GeographicLocation
+        - GeographicLocationAtTime
+        - GrossAnatomicalStructure
+        - Haplotype
+        - Hospitalization
+        - Human
+        - IceesStudyResult
+        - IndividualOrganism
+        - InformationContentEntity
+        - Invertebrate
+        - JournalArticle
+        - LifeStage
+        - LogOddsAnalysisResult
+        - MacromolecularComplex
+        - Mammal
+        - MaterialSample
+        - MicroRNA
+        - MolecularActivity
+        - MolecularEntity
+        - MolecularMixture
+        - NamedThing
+        - NoncodingRNAProduct
+        - NucleicAcidEntity
+        - NucleicAcidSequenceMotif
+        - NucleosomeModification
+        - ObservedExpectedFrequencyAnalysisResult
+        - Onset
+        - OrganismAttribute
+        - OrganismTaxon
+        - OrganismalEntity
+        - Patent
+        - PathologicalAnatomicalExposure
+        - PathologicalAnatomicalStructure
+        - PathologicalProcess
+        - PathologicalProcessExposure
+        - Pathway
+        - Phenomenon
+        - PhenotypicQuality
+        - PhenotypicSex
+        - PhysicalEntity
+        - PhysiologicalProcess
+        - PlanetaryEntity
+        - Plant
+        - Polypeptide
+        - PopulationOfIndividualOrganisms
+        - PosttranslationalModification
+        - PreprintPublication
+        - Procedure
+        - ProcessedMaterial
+        - Protein
+        - ProteinDomain
+        - ProteinFamily
+        - ProteinIsoform
+        - ProteinLigandAssayResult
+        - Publication
+        - RNAProduct
+        - RNAProductIsoform
+        - ReagentTargetedGene
+        - RegulatoryRegion
+        - RelativeFrequencyAnalysisResult
+        - RetrievalSource
+        - SequenceVariant
+        - Serial
+        - SeverityValue
+        - SiRNA
+        - SmallMolecule
+        - Snv
+        - SocioeconomicAttribute
+        - SocioeconomicExposure
+        - Study
+        - StudyPopulation
+        - StudyResult
+        - StudyVariable
+        - TextMiningStudyResult
+        - Transcript
+        - TranscriptionFactorBindingSite
+        - Treatment
+        - Vertebrate
+        - Virus
+        - WebPage
+        - Zygosity
+      exclude_regex:
+        - "^UMLS:C0812393$"
+    category_override:
+      Disease: EntityToDiseaseAssociation
+      PhenotypicFeature: EntityToPhenotypicFeatureAssociation
+    qualifiers:
+      - qualifier: disease_context_qualifier
+        method: column
+        encoding: J
+        nullable: true
+        prioritize:
+          - Disease
+        avoid:
+          - AccessibleDnaRegion
+          - Activity
+          - AdministrativeEntity
+          - Agent
+          - AnatomicalEntity
+          - Article
+          - Attribute
+          - Bacterium
+          - Behavior
+          - BehavioralExposure
+          - BehavioralFeature
+          - BiologicalEntity
+          - BiologicalProcess
+          - BiologicalProcessOrActivity
+          - BiologicalSex
+          - BioticExposure
+          - Book
+          - BookChapter
+          - Case
+          - Cell
+          - CellLine
+          - CellularComponent
+          - CellularOrganism
+          - ChemicalEntity
+          - ChemicalExposure
+          - ChemicalMixture
+          - ChemicalRole
+          - ChiSquaredAnalysisResult
+          - ClinicalAttribute
+          - ClinicalCourse
+          - ClinicalEntity
+          - ClinicalFinding
+          - ClinicalIntervention
+          - ClinicalMeasurement
+          - ClinicalModifier
+          - ClinicalTrial
+          - CodingSequence
+          - Cohort
+          - CommonDataElement
+          - ComplexChemicalExposure
+          - ComplexMolecularMixture
+          - ConceptCountAnalysisResult
+          - ConfidenceLevel
+          - Dataset
+          - DatasetDistribution
+          - DatasetSummary
+          - DatasetVersion
+          - Device
+          - DiagnosticAid
+          - DiseaseOrPhenotypicFeature
+          - DiseaseOrPhenotypicFeatureExposure
+          - Drug
+          - DrugExposure
+          - DrugLabel
+          - DrugToGeneInteractionExposure
+          - Entity
+          - EnvironmentalExposure
+          - EnvironmentalFeature
+          - EnvironmentalFoodContaminant
+          - EnvironmentalProcess
+          - Event
+          - Evidence
+          - EvidenceType
+          - Exon
+          - ExposureEvent
+          - Food
+          - FoodAdditive
+          - Fungus
+          - Gene
+          - GeneFamily
+          - GeneticInheritance
+          - Genome
+          - GenomicBackgroundExposure
+          - GenomicEntity
+          - Genotype
+          - GenotypicSex
+          - GeographicExposure
+          - GeographicLocation
+          - GeographicLocationAtTime
+          - GrossAnatomicalStructure
+          - Haplotype
+          - Hospitalization
+          - Human
+          - IceesStudyResult
+          - IndividualOrganism
+          - InformationContentEntity
+          - Invertebrate
+          - JournalArticle
+          - LifeStage
+          - LogOddsAnalysisResult
+          - MacromolecularComplex
+          - Mammal
+          - MaterialSample
+          - MicroRNA
+          - MolecularActivity
+          - MolecularEntity
+          - MolecularMixture
+          - NamedThing
+          - NoncodingRNAProduct
+          - NucleicAcidEntity
+          - NucleicAcidSequenceMotif
+          - NucleosomeModification
+          - ObservedExpectedFrequencyAnalysisResult
+          - Onset
+          - OrganismAttribute
+          - OrganismTaxon
+          - OrganismalEntity
+          - Patent
+          - PathologicalAnatomicalExposure
+          - PathologicalAnatomicalStructure
+          - PathologicalProcess
+          - PathologicalProcessExposure
+          - Pathway
+          - Phenomenon
+          - PhenotypicFeature
+          - PhenotypicQuality
+          - PhenotypicSex
+          - PhysicalEntity
+          - PhysiologicalProcess
+          - PlanetaryEntity
+          - Plant
+          - Polypeptide
+          - PopulationOfIndividualOrganisms
+          - PosttranslationalModification
+          - PreprintPublication
+          - Procedure
+          - ProcessedMaterial
+          - Protein
+          - ProteinDomain
+          - ProteinFamily
+          - ProteinIsoform
+          - ProteinLigandAssayResult
+          - Publication
+          - RNAProduct
+          - RNAProductIsoform
+          - ReagentTargetedGene
+          - RegulatoryRegion
+          - RelativeFrequencyAnalysisResult
+          - RetrievalSource
+          - SequenceVariant
+          - Serial
+          - SeverityValue
+          - SiRNA
+          - SmallMolecule
+          - Snv
+          - SocioeconomicAttribute
+          - SocioeconomicExposure
+          - Study
+          - StudyPopulation
+          - StudyResult
+          - StudyVariable
+          - TextMiningStudyResult
+          - Transcript
+          - TranscriptionFactorBindingSite
+          - Treatment
+          - Vertebrate
+          - Virus
+          - WebPage
+          - Zygosity
+      - qualifier: anatomical_context_qualifier
+        method: column
+        encoding: Y
+        nullable: true
+        prioritize:
+          - AnatomicalEntity
+        avoid:
+          - AccessibleDnaRegion
+          - Activity
+          - AdministrativeEntity
+          - Agent
+          - Article
+          - Attribute
+          - Bacterium
+          - Behavior
+          - BehavioralExposure
+          - BehavioralFeature
+          - BiologicalEntity
+          - BiologicalProcess
+          - BiologicalProcessOrActivity
+          - BiologicalSex
+          - BioticExposure
+          - Book
+          - BookChapter
+          - Case
+          - Cell
+          - CellLine
+          - CellularComponent
+          - CellularOrganism
+          - ChemicalEntity
+          - ChemicalExposure
+          - ChemicalMixture
+          - ChemicalRole
+          - ChiSquaredAnalysisResult
+          - ClinicalAttribute
+          - ClinicalCourse
+          - ClinicalEntity
+          - ClinicalFinding
+          - ClinicalIntervention
+          - ClinicalMeasurement
+          - ClinicalModifier
+          - ClinicalTrial
+          - CodingSequence
+          - Cohort
+          - CommonDataElement
+          - ComplexChemicalExposure
+          - ComplexMolecularMixture
+          - ConceptCountAnalysisResult
+          - ConfidenceLevel
+          - Dataset
+          - DatasetDistribution
+          - DatasetSummary
+          - DatasetVersion
+          - Device
+          - DiagnosticAid
+          - Disease
+          - DiseaseOrPhenotypicFeature
+          - DiseaseOrPhenotypicFeatureExposure
+          - Drug
+          - DrugExposure
+          - DrugLabel
+          - DrugToGeneInteractionExposure
+          - Entity
+          - EnvironmentalExposure
+          - EnvironmentalFeature
+          - EnvironmentalFoodContaminant
+          - EnvironmentalProcess
+          - Event
+          - Evidence
+          - EvidenceType
+          - Exon
+          - ExposureEvent
+          - Food
+          - FoodAdditive
+          - Fungus
+          - Gene
+          - GeneFamily
+          - GeneticInheritance
+          - Genome
+          - GenomicBackgroundExposure
+          - GenomicEntity
+          - Genotype
+          - GenotypicSex
+          - GeographicExposure
+          - GeographicLocation
+          - GeographicLocationAtTime
+          - GrossAnatomicalStructure
+          - Haplotype
+          - Hospitalization
+          - Human
+          - IceesStudyResult
+          - IndividualOrganism
+          - InformationContentEntity
+          - Invertebrate
+          - JournalArticle
+          - LifeStage
+          - LogOddsAnalysisResult
+          - MacromolecularComplex
+          - Mammal
+          - MaterialSample
+          - MicroRNA
+          - MolecularActivity
+          - MolecularEntity
+          - MolecularMixture
+          - NamedThing
+          - NoncodingRNAProduct
+          - NucleicAcidEntity
+          - NucleicAcidSequenceMotif
+          - NucleosomeModification
+          - ObservedExpectedFrequencyAnalysisResult
+          - Onset
+          - OrganismAttribute
+          - OrganismTaxon
+          - OrganismalEntity
+          - Patent
+          - PathologicalAnatomicalExposure
+          - PathologicalAnatomicalStructure
+          - PathologicalProcess
+          - PathologicalProcessExposure
+          - Pathway
+          - Phenomenon
+          - PhenotypicFeature
+          - PhenotypicQuality
+          - PhenotypicSex
+          - PhysicalEntity
+          - PhysiologicalProcess
+          - PlanetaryEntity
+          - Plant
+          - Polypeptide
+          - PopulationOfIndividualOrganisms
+          - PosttranslationalModification
+          - PreprintPublication
+          - Procedure
+          - ProcessedMaterial
+          - Protein
+          - ProteinDomain
+          - ProteinFamily
+          - ProteinIsoform
+          - ProteinLigandAssayResult
+          - Publication
+          - RNAProduct
+          - RNAProductIsoform
+          - ReagentTargetedGene
+          - RegulatoryRegion
+          - RelativeFrequencyAnalysisResult
+          - RetrievalSource
+          - SequenceVariant
+          - Serial
+          - SeverityValue
+          - SiRNA
+          - SmallMolecule
+          - Snv
+          - SocioeconomicAttribute
+          - SocioeconomicExposure
+          - Study
+          - StudyPopulation
+          - StudyResult
+          - StudyVariable
+          - TextMiningStudyResult
+          - Transcript
+          - TranscriptionFactorBindingSite
+          - Treatment
+          - Vertebrate
+          - Virus
+          - WebPage
+          - Zygosity
+        exclude_prefixes:
+          - EMAPA
+        exclude_regex:
+          - "^UMLS:C1550636$"
+          - "^UMLS:C0444099$"
+          - "^UMLS:C1609077$"
+          - "^NCIT:C133266$"
+          - "^UMLS:C1550625$"
+          - "^UMLS:C0242291$"
+          - "^UMLS:C0475358$"
+          - "^UMLS:C1550100$"
+          - "^UMLS:C1550616$"
+          - "^UMLS:C1442209$"
+          - "^UMLS:C1550680$"
+          - "^UMLS:C1550663$"
+          - "^UMLS:C1292451$"
+          - "^UMLS:C1511332$"
+          - "^NCIT:C13465$"
+          - "^UMLS:C0444070$"
+          - "^NCIT:C133280$"
+          - "^UMLS:C1550675$"
+          - "^UMLS:C0026140$"
+          - "^UMLS:C1550656$"
+          - "^UMLS:C1292533$"
+          - "^UMLS:C1550659$"
+          - "^UMLS:C1550623$"
+          - "^UMLS:C1550624$"
+          - "^NCIT:C94312$"
+          - "^UMLS:C1519876$"
+          - "^UMLS:C1519910$"
+          - "^UMLS:C1522382$"
+          - "^UBERON:6110636$"
+          - "^UBERON:0014895$"
+          - "^UMLS:C4266572$"
+          - "^UMLS:C4299094$"
+          - "^UMLS:C4037986$"
+          - "^UMLS:C4266534$"
+          - "^UMLS:C4037974$"
+          - "^UMLS:C4299095$"
+          - "^UMLS:C4266525$"
+          - "^UMLS:C4266579$"
+          - "^UMLS:C4482211$"
+          - "^UMLS:C4266577$"
+          - "^UMLS:C4266530$"
+          - "^UMLS:C4037972$"
+          - "^UMLS:C4266537$"
+          - "^UMLS:C4299051$"
+          - "^UMLS:C4037927$"
+          - "^UMLS:C4482396$"
+          - "^UMLS:C4299166$"
+          - "^UMLS:C4266533$"
+          - "^UMLS:C4299091$"
+          - "^UMLS:C4037992$"
+          - "^UMLS:C4071907$"
+          - "^UMLS:C4037976$"
+          - "^UMLS:C4071871$"
+          - "^UMLS:C4299050$"
+          - "^UMLS:C4266528$"
+          - "^UMLS:C4266571$"
+          - "^UMLS:C4299090$"
+          - "^UMLS:C4266636$"
+          - "^UMLS:C4299059$"
+          - "^UMLS:C4071855$"
+          - "^UMLS:C4071894$"
+      - qualifier: sex_qualifier
+        method: column
+        encoding: Z
+        nullable: true
+        prioritize:
+          - BiologicalSex
+          - PopulationOfIndividualOrganisms
+        avoid:
+          - AccessibleDnaRegion
+          - Activity
+          - AdministrativeEntity
+          - Agent
+          - AnatomicalEntity
+          - Article
+          - Attribute
+          - Bacterium
+          - Behavior
+          - BehavioralExposure
+          - BehavioralFeature
+          - BiologicalEntity
+          - BiologicalProcess
+          - BiologicalProcessOrActivity
+          - BioticExposure
+          - Book
+          - BookChapter
+          - Case
+          - Cell
+          - CellLine
+          - CellularComponent
+          - CellularOrganism
+          - ChemicalEntity
+          - ChemicalExposure
+          - ChemicalMixture
+          - ChemicalRole
+          - ChiSquaredAnalysisResult
+          - ClinicalAttribute
+          - ClinicalCourse
+          - ClinicalEntity
+          - ClinicalFinding
+          - ClinicalIntervention
+          - ClinicalMeasurement
+          - ClinicalModifier
+          - ClinicalTrial
+          - CodingSequence
+          - Cohort
+          - CommonDataElement
+          - ComplexChemicalExposure
+          - ComplexMolecularMixture
+          - ConceptCountAnalysisResult
+          - ConfidenceLevel
+          - Dataset
+          - DatasetDistribution
+          - DatasetSummary
+          - DatasetVersion
+          - Device
+          - DiagnosticAid
+          - Disease
+          - DiseaseOrPhenotypicFeature
+          - DiseaseOrPhenotypicFeatureExposure
+          - Drug
+          - DrugExposure
+          - DrugLabel
+          - DrugToGeneInteractionExposure
+          - Entity
+          - EnvironmentalExposure
+          - EnvironmentalFeature
+          - EnvironmentalFoodContaminant
+          - EnvironmentalProcess
+          - Event
+          - Evidence
+          - EvidenceType
+          - Exon
+          - ExposureEvent
+          - Food
+          - FoodAdditive
+          - Fungus
+          - Gene
+          - GeneFamily
+          - GeneticInheritance
+          - Genome
+          - GenomicBackgroundExposure
+          - GenomicEntity
+          - Genotype
+          - GenotypicSex
+          - GeographicExposure
+          - GeographicLocation
+          - GeographicLocationAtTime
+          - GrossAnatomicalStructure
+          - Haplotype
+          - Hospitalization
+          - Human
+          - IceesStudyResult
+          - IndividualOrganism
+          - InformationContentEntity
+          - Invertebrate
+          - JournalArticle
+          - LifeStage
+          - LogOddsAnalysisResult
+          - MacromolecularComplex
+          - Mammal
+          - MaterialSample
+          - MicroRNA
+          - MolecularActivity
+          - MolecularEntity
+          - MolecularMixture
+          - NamedThing
+          - NoncodingRNAProduct
+          - NucleicAcidEntity
+          - NucleicAcidSequenceMotif
+          - NucleosomeModification
+          - ObservedExpectedFrequencyAnalysisResult
+          - Onset
+          - OrganismAttribute
+          - OrganismTaxon
+          - OrganismalEntity
+          - Patent
+          - PathologicalAnatomicalExposure
+          - PathologicalAnatomicalStructure
+          - PathologicalProcess
+          - PathologicalProcessExposure
+          - Pathway
+          - Phenomenon
+          - PhenotypicFeature
+          - PhenotypicQuality
+          - PhenotypicSex
+          - PhysicalEntity
+          - PhysiologicalProcess
+          - PlanetaryEntity
+          - Plant
+          - Polypeptide
+          - PosttranslationalModification
+          - PreprintPublication
+          - Procedure
+          - ProcessedMaterial
+          - Protein
+          - ProteinDomain
+          - ProteinFamily
+          - ProteinIsoform
+          - ProteinLigandAssayResult
+          - Publication
+          - RNAProduct
+          - RNAProductIsoform
+          - ReagentTargetedGene
+          - RegulatoryRegion
+          - RelativeFrequencyAnalysisResult
+          - RetrievalSource
+          - SequenceVariant
+          - Serial
+          - SeverityValue
+          - SiRNA
+          - SmallMolecule
+          - Snv
+          - SocioeconomicAttribute
+          - SocioeconomicExposure
+          - Study
+          - StudyPopulation
+          - StudyResult
+          - StudyVariable
+          - TextMiningStudyResult
+          - Transcript
+          - TranscriptionFactorBindingSite
+          - Treatment
+          - Vertebrate
+          - Virus
+          - WebPage
+          - Zygosity
+      - qualifier: population_context_qualifier
+        method: column
+        encoding: AA
+        nullable: true
+        prioritize:
+          - PopulationOfIndividualOrganisms
+        avoid:
+          - AccessibleDnaRegion
+          - Activity
+          - AdministrativeEntity
+          - Agent
+          - AnatomicalEntity
+          - Article
+          - Attribute
+          - Bacterium
+          - Behavior
+          - BehavioralExposure
+          - BehavioralFeature
+          - BiologicalEntity
+          - BiologicalProcess
+          - BiologicalProcessOrActivity
+          - BiologicalSex
+          - BioticExposure
+          - Book
+          - BookChapter
+          - Case
+          - Cell
+          - CellLine
+          - CellularComponent
+          - CellularOrganism
+          - ChemicalEntity
+          - ChemicalExposure
+          - ChemicalMixture
+          - ChemicalRole
+          - ChiSquaredAnalysisResult
+          - ClinicalAttribute
+          - ClinicalCourse
+          - ClinicalEntity
+          - ClinicalFinding
+          - ClinicalIntervention
+          - ClinicalMeasurement
+          - ClinicalModifier
+          - ClinicalTrial
+          - CodingSequence
+          - Cohort
+          - CommonDataElement
+          - ComplexChemicalExposure
+          - ComplexMolecularMixture
+          - ConceptCountAnalysisResult
+          - ConfidenceLevel
+          - Dataset
+          - DatasetDistribution
+          - DatasetSummary
+          - DatasetVersion
+          - Device
+          - DiagnosticAid
+          - Disease
+          - DiseaseOrPhenotypicFeature
+          - DiseaseOrPhenotypicFeatureExposure
+          - Drug
+          - DrugExposure
+          - DrugLabel
+          - DrugToGeneInteractionExposure
+          - Entity
+          - EnvironmentalExposure
+          - EnvironmentalFeature
+          - EnvironmentalFoodContaminant
+          - EnvironmentalProcess
+          - Event
+          - Evidence
+          - EvidenceType
+          - Exon
+          - ExposureEvent
+          - Food
+          - FoodAdditive
+          - Fungus
+          - Gene
+          - GeneFamily
+          - GeneticInheritance
+          - Genome
+          - GenomicBackgroundExposure
+          - GenomicEntity
+          - Genotype
+          - GenotypicSex
+          - GeographicExposure
+          - GeographicLocation
+          - GeographicLocationAtTime
+          - GrossAnatomicalStructure
+          - Haplotype
+          - Hospitalization
+          - Human
+          - IceesStudyResult
+          - IndividualOrganism
+          - InformationContentEntity
+          - Invertebrate
+          - JournalArticle
+          - LifeStage
+          - LogOddsAnalysisResult
+          - MacromolecularComplex
+          - Mammal
+          - MaterialSample
+          - MicroRNA
+          - MolecularActivity
+          - MolecularEntity
+          - MolecularMixture
+          - NamedThing
+          - NoncodingRNAProduct
+          - NucleicAcidEntity
+          - NucleicAcidSequenceMotif
+          - NucleosomeModification
+          - ObservedExpectedFrequencyAnalysisResult
+          - Onset
+          - OrganismAttribute
+          - OrganismTaxon
+          - OrganismalEntity
+          - Patent
+          - PathologicalAnatomicalExposure
+          - PathologicalAnatomicalStructure
+          - PathologicalProcess
+          - PathologicalProcessExposure
+          - Pathway
+          - Phenomenon
+          - PhenotypicFeature
+          - PhenotypicQuality
+          - PhenotypicSex
+          - PhysicalEntity
+          - PhysiologicalProcess
+          - PlanetaryEntity
+          - Plant
+          - Polypeptide
+          - PosttranslationalModification
+          - PreprintPublication
+          - Procedure
+          - ProcessedMaterial
+          - Protein
+          - ProteinDomain
+          - ProteinFamily
+          - ProteinIsoform
+          - ProteinLigandAssayResult
+          - Publication
+          - RNAProduct
+          - RNAProductIsoform
+          - ReagentTargetedGene
+          - RegulatoryRegion
+          - RelativeFrequencyAnalysisResult
+          - RetrievalSource
+          - SequenceVariant
+          - Serial
+          - SeverityValue
+          - SiRNA
+          - SmallMolecule
+          - Snv
+          - SocioeconomicAttribute
+          - SocioeconomicExposure
+          - Study
+          - StudyPopulation
+          - StudyResult
+          - StudyVariable
+          - TextMiningStudyResult
+          - Transcript
+          - TranscriptionFactorBindingSite
+          - Treatment
+          - Vertebrate
+          - Virus
+          - WebPage
+          - Zygosity
+        exclude_regex:
+          - "^UMLS:C0020157$"
+          - "^UMLS:C0282122$"
+          - "^UMLS:C0018724$"
+      - qualifier: frequency_qualifier
+        method: column
+        encoding: AC
+        nullable: true
+        prioritize:
+          - InformationContentEntity
+        avoid:
+          - AccessibleDnaRegion
+          - Activity
+          - AdministrativeEntity
+          - Agent
+          - AnatomicalEntity
+          - Article
+          - Attribute
+          - Bacterium
+          - Behavior
+          - BehavioralExposure
+          - BehavioralFeature
+          - BiologicalEntity
+          - BiologicalProcess
+          - BiologicalProcessOrActivity
+          - BiologicalSex
+          - BioticExposure
+          - Book
+          - BookChapter
+          - Case
+          - Cell
+          - CellLine
+          - CellularComponent
+          - CellularOrganism
+          - ChemicalEntity
+          - ChemicalExposure
+          - ChemicalMixture
+          - ChemicalRole
+          - ChiSquaredAnalysisResult
+          - ClinicalAttribute
+          - ClinicalCourse
+          - ClinicalEntity
+          - ClinicalFinding
+          - ClinicalIntervention
+          - ClinicalMeasurement
+          - ClinicalModifier
+          - ClinicalTrial
+          - CodingSequence
+          - Cohort
+          - CommonDataElement
+          - ComplexChemicalExposure
+          - ComplexMolecularMixture
+          - ConceptCountAnalysisResult
+          - ConfidenceLevel
+          - Dataset
+          - DatasetDistribution
+          - DatasetSummary
+          - DatasetVersion
+          - Device
+          - DiagnosticAid
+          - Disease
+          - DiseaseOrPhenotypicFeature
+          - DiseaseOrPhenotypicFeatureExposure
+          - Drug
+          - DrugExposure
+          - DrugLabel
+          - DrugToGeneInteractionExposure
+          - Entity
+          - EnvironmentalExposure
+          - EnvironmentalFeature
+          - EnvironmentalFoodContaminant
+          - EnvironmentalProcess
+          - Event
+          - Evidence
+          - EvidenceType
+          - Exon
+          - ExposureEvent
+          - Food
+          - FoodAdditive
+          - Fungus
+          - Gene
+          - GeneFamily
+          - GeneticInheritance
+          - Genome
+          - GenomicBackgroundExposure
+          - GenomicEntity
+          - Genotype
+          - GenotypicSex
+          - GeographicExposure
+          - GeographicLocation
+          - GeographicLocationAtTime
+          - GrossAnatomicalStructure
+          - Haplotype
+          - Hospitalization
+          - Human
+          - IceesStudyResult
+          - IndividualOrganism
+          - Invertebrate
+          - JournalArticle
+          - LifeStage
+          - LogOddsAnalysisResult
+          - MacromolecularComplex
+          - Mammal
+          - MaterialSample
+          - MicroRNA
+          - MolecularActivity
+          - MolecularEntity
+          - MolecularMixture
+          - NamedThing
+          - NoncodingRNAProduct
+          - NucleicAcidEntity
+          - NucleicAcidSequenceMotif
+          - NucleosomeModification
+          - ObservedExpectedFrequencyAnalysisResult
+          - Onset
+          - OrganismAttribute
+          - OrganismTaxon
+          - OrganismalEntity
+          - Patent
+          - PathologicalAnatomicalExposure
+          - PathologicalAnatomicalStructure
+          - PathologicalProcess
+          - PathologicalProcessExposure
+          - Pathway
+          - Phenomenon
+          - PhenotypicFeature
+          - PhenotypicQuality
+          - PhenotypicSex
+          - PhysicalEntity
+          - PhysiologicalProcess
+          - PlanetaryEntity
+          - Plant
+          - Polypeptide
+          - PopulationOfIndividualOrganisms
+          - PosttranslationalModification
+          - PreprintPublication
+          - Procedure
+          - ProcessedMaterial
+          - Protein
+          - ProteinDomain
+          - ProteinFamily
+          - ProteinIsoform
+          - ProteinLigandAssayResult
+          - Publication
+          - RNAProduct
+          - RNAProductIsoform
+          - ReagentTargetedGene
+          - RegulatoryRegion
+          - RelativeFrequencyAnalysisResult
+          - RetrievalSource
+          - SequenceVariant
+          - Serial
+          - SeverityValue
+          - SiRNA
+          - SmallMolecule
+          - Snv
+          - SocioeconomicAttribute
+          - SocioeconomicExposure
+          - Study
+          - StudyPopulation
+          - StudyResult
+          - StudyVariable
+          - TextMiningStudyResult
+          - Transcript
+          - TranscriptionFactorBindingSite
+          - Treatment
+          - Vertebrate
+          - Virus
+          - WebPage
+          - Zygosity
+      - qualifier: temporal_context_qualifier
+        method: column
+        encoding: AD
+        nullable: true
+        prioritize:
+          - InformationContentEntity
+          - Phenomenon
+        avoid:
+          - AccessibleDnaRegion
+          - Activity
+          - AdministrativeEntity
+          - Agent
+          - AnatomicalEntity
+          - Article
+          - Attribute
+          - Bacterium
+          - Behavior
+          - BehavioralExposure
+          - BehavioralFeature
+          - BiologicalEntity
+          - BiologicalProcess
+          - BiologicalProcessOrActivity
+          - BiologicalSex
+          - BioticExposure
+          - Book
+          - BookChapter
+          - Case
+          - Cell
+          - CellLine
+          - CellularComponent
+          - CellularOrganism
+          - ChemicalEntity
+          - ChemicalExposure
+          - ChemicalMixture
+          - ChemicalRole
+          - ChiSquaredAnalysisResult
+          - ClinicalAttribute
+          - ClinicalCourse
+          - ClinicalEntity
+          - ClinicalFinding
+          - ClinicalIntervention
+          - ClinicalMeasurement
+          - ClinicalModifier
+          - ClinicalTrial
+          - CodingSequence
+          - Cohort
+          - CommonDataElement
+          - ComplexChemicalExposure
+          - ComplexMolecularMixture
+          - ConceptCountAnalysisResult
+          - ConfidenceLevel
+          - Dataset
+          - DatasetDistribution
+          - DatasetSummary
+          - DatasetVersion
+          - Device
+          - DiagnosticAid
+          - Disease
+          - DiseaseOrPhenotypicFeature
+          - DiseaseOrPhenotypicFeatureExposure
+          - Drug
+          - DrugExposure
+          - DrugLabel
+          - DrugToGeneInteractionExposure
+          - Entity
+          - EnvironmentalExposure
+          - EnvironmentalFeature
+          - EnvironmentalFoodContaminant
+          - EnvironmentalProcess
+          - Event
+          - Evidence
+          - EvidenceType
+          - Exon
+          - ExposureEvent
+          - Food
+          - FoodAdditive
+          - Fungus
+          - Gene
+          - GeneFamily
+          - GeneticInheritance
+          - Genome
+          - GenomicBackgroundExposure
+          - GenomicEntity
+          - Genotype
+          - GenotypicSex
+          - GeographicExposure
+          - GeographicLocation
+          - GeographicLocationAtTime
+          - GrossAnatomicalStructure
+          - Haplotype
+          - Hospitalization
+          - Human
+          - IceesStudyResult
+          - IndividualOrganism
+          - Invertebrate
+          - JournalArticle
+          - LifeStage
+          - LogOddsAnalysisResult
+          - MacromolecularComplex
+          - Mammal
+          - MaterialSample
+          - MicroRNA
+          - MolecularActivity
+          - MolecularEntity
+          - MolecularMixture
+          - NamedThing
+          - NoncodingRNAProduct
+          - NucleicAcidEntity
+          - NucleicAcidSequenceMotif
+          - NucleosomeModification
+          - ObservedExpectedFrequencyAnalysisResult
+          - Onset
+          - OrganismAttribute
+          - OrganismTaxon
+          - OrganismalEntity
+          - Patent
+          - PathologicalAnatomicalExposure
+          - PathologicalAnatomicalStructure
+          - PathologicalProcess
+          - PathologicalProcessExposure
+          - Pathway
+          - PhenotypicFeature
+          - PhenotypicQuality
+          - PhenotypicSex
+          - PhysicalEntity
+          - PhysiologicalProcess
+          - PlanetaryEntity
+          - Plant
+          - Polypeptide
+          - PopulationOfIndividualOrganisms
+          - PosttranslationalModification
+          - PreprintPublication
+          - Procedure
+          - ProcessedMaterial
+          - Protein
+          - ProteinDomain
+          - ProteinFamily
+          - ProteinIsoform
+          - ProteinLigandAssayResult
+          - Publication
+          - RNAProduct
+          - RNAProductIsoform
+          - ReagentTargetedGene
+          - RegulatoryRegion
+          - RelativeFrequencyAnalysisResult
+          - RetrievalSource
+          - SequenceVariant
+          - Serial
+          - SeverityValue
+          - SiRNA
+          - SmallMolecule
+          - Snv
+          - SocioeconomicAttribute
+          - SocioeconomicExposure
+          - Study
+          - StudyPopulation
+          - StudyResult
+          - StudyVariable
+          - TextMiningStudyResult
+          - Transcript
+          - TranscriptionFactorBindingSite
+          - Treatment
+          - Vertebrate
+          - Virus
+          - WebPage
+          - Zygosity
+        exclude_regex:
+          - "^UMLS:C0262926$"
+          - "^UMLS:C4075937$"
+          - "^UMLS:C1514463$"
+          - "^UMLS:C2081645$"
+          - "^UMLS:C0425945$"
+          - "^UMLS:C0332119$"
+          - "^UMLS:C0455527$"
+          - "^UMLS:C1837352$"
+          - "^UMLS:C2114510$"
+          - "^UMLS:C1408353$"
+          - "^UMLS:C1299544$"
+      - qualifier: species_context_qualifier
+        method: column
+        encoding: AB
+        nullable: false
+        taxon: null
+        prioritize:
+          - OrganismTaxon
+        avoid:
+          - AccessibleDnaRegion
+          - Activity
+          - AdministrativeEntity
+          - Agent
+          - AnatomicalEntity
+          - Article
+          - Attribute
+          - Bacterium
+          - Behavior
+          - BehavioralExposure
+          - BehavioralFeature
+          - BiologicalEntity
+          - BiologicalProcess
+          - BiologicalProcessOrActivity
+          - BiologicalSex
+          - BioticExposure
+          - Book
+          - BookChapter
+          - Case
+          - Cell
+          - CellLine
+          - CellularComponent
+          - CellularOrganism
+          - ChemicalEntity
+          - ChemicalExposure
+          - ChemicalMixture
+          - ChemicalRole
+          - ChiSquaredAnalysisResult
+          - ClinicalAttribute
+          - ClinicalCourse
+          - ClinicalEntity
+          - ClinicalFinding
+          - ClinicalIntervention
+          - ClinicalMeasurement
+          - ClinicalModifier
+          - ClinicalTrial
+          - CodingSequence
+          - Cohort
+          - CommonDataElement
+          - ComplexChemicalExposure
+          - ComplexMolecularMixture
+          - ConceptCountAnalysisResult
+          - ConfidenceLevel
+          - Dataset
+          - DatasetDistribution
+          - DatasetSummary
+          - DatasetVersion
+          - Device
+          - DiagnosticAid
+          - Disease
+          - DiseaseOrPhenotypicFeature
+          - DiseaseOrPhenotypicFeatureExposure
+          - Drug
+          - DrugExposure
+          - DrugLabel
+          - DrugToGeneInteractionExposure
+          - Entity
+          - EnvironmentalExposure
+          - EnvironmentalFeature
+          - EnvironmentalFoodContaminant
+          - EnvironmentalProcess
+          - Event
+          - Evidence
+          - EvidenceType
+          - Exon
+          - ExposureEvent
+          - Food
+          - FoodAdditive
+          - Fungus
+          - Gene
+          - GeneFamily
+          - GeneticInheritance
+          - Genome
+          - GenomicBackgroundExposure
+          - GenomicEntity
+          - Genotype
+          - GenotypicSex
+          - GeographicExposure
+          - GeographicLocation
+          - GeographicLocationAtTime
+          - GrossAnatomicalStructure
+          - Haplotype
+          - Hospitalization
+          - Human
+          - IceesStudyResult
+          - IndividualOrganism
+          - InformationContentEntity
+          - Invertebrate
+          - JournalArticle
+          - LifeStage
+          - LogOddsAnalysisResult
+          - MacromolecularComplex
+          - Mammal
+          - MaterialSample
+          - MicroRNA
+          - MolecularActivity
+          - MolecularEntity
+          - MolecularMixture
+          - NamedThing
+          - NoncodingRNAProduct
+          - NucleicAcidEntity
+          - NucleicAcidSequenceMotif
+          - NucleosomeModification
+          - ObservedExpectedFrequencyAnalysisResult
+          - Onset
+          - OrganismAttribute
+          - OrganismalEntity
+          - Patent
+          - PathologicalAnatomicalExposure
+          - PathologicalAnatomicalStructure
+          - PathologicalProcess
+          - PathologicalProcessExposure
+          - Pathway
+          - Phenomenon
+          - PhenotypicFeature
+          - PhenotypicQuality
+          - PhenotypicSex
+          - PhysicalEntity
+          - PhysiologicalProcess
+          - PlanetaryEntity
+          - Plant
+          - Polypeptide
+          - PopulationOfIndividualOrganisms
+          - PosttranslationalModification
+          - PreprintPublication
+          - Procedure
+          - ProcessedMaterial
+          - Protein
+          - ProteinDomain
+          - ProteinFamily
+          - ProteinIsoform
+          - ProteinLigandAssayResult
+          - Publication
+          - RNAProduct
+          - RNAProductIsoform
+          - ReagentTargetedGene
+          - RegulatoryRegion
+          - RelativeFrequencyAnalysisResult
+          - RetrievalSource
+          - SequenceVariant
+          - Serial
+          - SeverityValue
+          - SiRNA
+          - SmallMolecule
+          - Snv
+          - SocioeconomicAttribute
+          - SocioeconomicExposure
+          - Study
+          - StudyPopulation
+          - StudyResult
+          - StudyVariable
+          - TextMiningStudyResult
+          - Transcript
+          - TranscriptionFactorBindingSite
+          - Treatment
+          - Vertebrate
+          - Virus
+          - WebPage
+          - Zygosity
+  provenance:
+    override:
+      sources:
+        - resource_id: "infores:drugapprovals-kp"
+          resource_role: primary_knowledge_source
+          upstream_resource_ids:
+            - "infores:dailymed"
+            - "infores:epar"
+          source_record_urls:
+            - "https://linkouts.skyelanegoetz.com/edges/{edge_id}"
+        - resource_id: "infores:dailymed"
+          resource_role: supporting_data_source
+        - resource_id: "infores:epar"
+          resource_role: supporting_data_source
+      knowledge_level: knowledge_assertion
+      agent_type: manual_validation_of_automated_agent
+  annotations:
+    - annotation: regulatory_approvals
+      method: column
+      encoding: T
+      split_by: "|"
+    - annotation: publications
+      method: column
+      encoding: U
+      split_by: "|"
+    - annotation: ner_confidence_score
+      method: column
+      encoding: O

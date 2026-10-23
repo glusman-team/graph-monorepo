@@ -1,0 +1,288 @@
+name: DRUG_APPROVALS_KP
+version: "0.1.0"
+fullmap: ".fullmap"
+rig:
+  supporting_data_source_info:
+    - infores_id: "infores:dailymed"
+      name: DailyMed
+      description: >-
+        DailyMed provides trustworthy information about marketed drugs in the
+        United States, based on FDA Structured Product Labeling (SPL)
+        documents. DAKP uses DailyMed to identify FDA-approved drug-indication
+        and drug-contraindication relationships.
+      terms_of_use_info:
+        terms_of_use_url: "https://dailymed.nlm.nih.gov/dailymed/"
+        terms_of_use_description: "DailyMed data are freely available and in the public domain."
+      relevant_files:
+        - file_name: "DailyMed Structured Product Labeling"
+          location: "https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm"
+          description: >-
+            Structured product labeling (SPL) documents for FDA-approved drugs
+    - infores_id: "infores:faers"
+      name: "FDA Adverse Event Reporting System (FAERS)"
+      description: >-
+        FAERS contains adverse event reports, medication error reports, and
+        product quality complaints submitted to the FDA. DAKP uses FAERS to
+        derive drug-disease usage relationships and case counts, including
+        on-label and off-label use.
+      terms_of_use_info:
+        terms_of_use_url: "https://www.fda.gov/drugs/questions-and-answers-fdas-adverse-event-reporting-system-faers/fda-adverse-event-reporting-system-faers-quarterly-data-extract-files"
+        terms_of_use_description: >-
+          FAERS data files are in the public domain and freely available for
+          download.
+      relevant_files:
+        - file_name: "FAERS Quarterly Data Files"
+          location: "https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html"
+          description: "Quarterly data files containing adverse event reports"
+    - infores_id: "infores:ema"
+      name: "European Medicines Agency (EMA) medicines registry"
+      description: >-
+        The EMA publishes a bulk export of every centrally reviewed medicine
+        in the European Union. DAKP uses the Authorised, Human rows to derive
+        approved drug-indication relationships from their MeSH therapeutic
+        areas (infores:ema) and from their free-text EPAR therapeutic
+        indications (infores:epar).
+      terms_of_use_info:
+        terms_of_use_url: "https://www.ema.europa.eu/en/about-us/about-website/legal-notice"
+        terms_of_use_description: >-
+          EMA content may be reused for non-commercial and commercial purposes
+          provided the source is acknowledged; the agency's legal notice
+          applies.
+      relevant_files:
+        - file_name: "EMA medicines report (xlsx)"
+          location: "https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx"
+          description: >-
+            Bulk export of centrally reviewed medicines; MeSH therapeutic areas
+            and EPAR indication text
+    - infores_id: "infores:canada-vigilance"
+      name: >-
+        Health Canada Canada Vigilance Adverse Reaction Online Database
+      description: >-
+        Health Canada's Canada Vigilance database collects adverse reaction
+        reports submitted for drugs and health products marketed in Canada.
+        DAKP uses the suspect drug-indication pairs in its monthly data
+        extract to derive observed drug-disease usage relationships and case
+        counts, including on-label and off-label use
+        (infores:canada-vigilance).
+      terms_of_use_info:
+        terms_of_use_url: "https://open.canada.ca/en/open-government-licence-canada"
+        terms_of_use_description: >-
+          The extract is released under the Open Government Licence - Canada:
+          reproduction for commercial and non-commercial purposes is permitted
+          with attribution to Health Canada.
+      relevant_files:
+        - file_name: "Canada Vigilance data extract (zip)"
+          location: "https://www.canada.ca/en/health-canada/services/drugs-health-products/medeffect-canada/adverse-reaction-database/canada-vigilance-online-database-data-extract.html"
+          description: >-
+            Monthly full extract of the Canada Vigilance Adverse Reaction Online
+            Database; suspect drug-indication pairs
+  source_info:
+    infores_id: "infores:drugapprovals-kp"
+    name: "Drug Approvals Knowledge Provider (DAKP)"
+    description: >-
+      Drug Approvals Knowledge Provider: FDA/EMA-approved treatment
+      relationships, FAERS-observed applied-to-treat uses, and
+      contraindications text-mined from DailyMed, modeled from DailyMed,
+      Drugs@FDA, FAERS, and the EMA medicines registry. Every edge carries
+      the evidence identifiers backing it; approved-treats edges also carry
+      clinical approval status and FDA application numbers or EMA product
+      numbers, FAERS-observed use edges add case counts, and
+      contraindication edges carry application numbers where available.
+    citations:
+      - "Generating Biomedical Knowledge Graphs from Knowledge Bases, Registries, and Multiomic Data (preprint): https://pmc.ncbi.nlm.nih.gov/articles/PMC11601480/"
+    terms_of_use_info:
+      terms_of_use_url: "https://www.nlm.nih.gov/terms.html"
+      terms_of_use_description: >-
+        DAKP is derived from DailyMed (NLM), Drugs@FDA, and FAERS (FDA): US
+        government public-domain data; the NLM and FDA terms of use apply. EMA
+        content is reused under the European Medicines Agency's public reuse
+        policy with source acknowledgement.
+    data_access_locations:
+      - "DailyMed SPL releases - https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm"
+      - "FAERS quarterly ASCII extracts - https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html"
+      - "Canada Vigilance data extract - https://www.canada.ca/en/health-canada/services/drugs-health-products/medeffect-canada/adverse-reaction-database/canada-vigilance-online-database-data-extract.html"
+      - "Drugs@FDA data files - https://www.fda.gov/media/89850/download"
+      - "EMA medicines report - https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx"
+      - "EMA EPAR documents report - https://www.ema.europa.eu/en/documents/report/documents-output-epar_documents_json-report_en.json"
+    data_provision_mechanisms:
+      - file_download
+    data_formats:
+      - kgx
+    data_versioning_and_releases: >-
+      DAKP publication versions are set explicitly per build (graph config
+      version); the default is 0.1.0; every build embeds it in the graph
+      config via graph_config(version=...). Re-ingests track the upstream
+      cadence: FAERS quarterly ASCII extracts, DailyMed SPL releases, and
+      the nightly-regenerated EMA medicines export. DailyMed, Drugs@FDA, and
+      EMA re-downloads are freshness-gated to a 7-day cache window; FAERS
+      downloads are content-addressed and cache-first, with no age gate.
+      Each version's generated KGX pair and RIG are published to the Hugging
+      Face dataset SkyeAv/drug-approvals-kp under a per-version directory
+      (<version>/DRUG_APPROVALS_KP_<version>.{nodes,edges}.ndjson), and
+      every earlier version remains available there.
+    source_status: maintained_regular_updates
+  ingest_info:
+    ingest_categories:
+      - translator_knowledge_creator
+    utility: >-
+      Provides FDA- and EMA-approved drug-disease treatment relationships,
+      FAERS- and Canada Vigilance-observed applied-to-treat uses, and
+      SPL-mined contraindications for Translator querying.
+    scope: >-
+      Approved-treats edges (DailyMed SPL indications joined to Drugs@FDA
+      applications and FAERS cases, plus EMA centrally-authorised medicines'
+      MeSH therapeutic areas, mined EPAR indication text, and mined EMA SmPC
+      product-information indications), FAERS and Canada Vigilance
+      observed-use edges, and contraindication edges text-mined from
+      DailyMed SPL sections and EMA SmPC product-information sections; all
+      other content of the upstream feeds is out of scope.
+    relevant_files:
+      - file_name: "DailyMed full-release SPL zips"
+        location: "https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm"
+        description: >-
+          Structured Product Labeling XML releases;
+          indications/contraindications sections and approval numbers.
+      - file_name: "FAERS quarterly ASCII zips"
+        location: "https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html"
+        description: >-
+          FDA Adverse Event Reporting System quarterly extracts; drug/indication
+          case pairs.
+      - file_name: "Canada Vigilance data extract (zip)"
+        location: "https://www.canada.ca/en/health-canada/services/drugs-health-products/medeffect-canada/adverse-reaction-database/canada-vigilance-online-database-data-extract.html"
+        description: >-
+          Health Canada's Canada Vigilance Adverse Reaction Online Database
+          monthly extract; suspect drug-indication pairs.
+      - file_name: "EMA medicines report (xlsx)"
+        location: "https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx"
+        description: >-
+          EMA centrally-authorised medicines bulk export; MeSH therapeutic areas
+          and EPAR indication text.
+      - file_name: "EMA EPAR documents report (json)"
+        location: "https://www.ema.europa.eu/en/documents/report/documents-output-epar_documents_json-report_en.json"
+        description: >-
+          EMA EPAR documents bulk export; manifests the SmPC product-information
+          PDFs mined for contraindication edges.
+    included_content:
+      - file_name: "DailyMed SPL sections"
+        included_records: >-
+          indications_and_usage (LOINC 34067-9), contraindications (LOINC
+          34070-3), boxed warnings (LOINC 34066-1), and warnings/precautions
+          (LOINC 43685-7, legacy 34071-1/42232-9) sections; FDA application
+          numbers are carried as provenance where available
+        fields_used: >-
+          indications_and_usage, contraindications, boxed-warning, and
+          warnings/precautions section text, SPL set identifiers, FDA
+          application numbers
+      - file_name: "FAERS quarterly ASCII zips"
+        included_records: "drug/indication case pairs; case counts"
+      - file_name: "EMA medicines report (xlsx)"
+        included_records: >-
+          Authorised, Human centrally-authorised medicines only (every other
+          Medicine status and all veterinary rows are dropped at extract time);
+          EMA product numbers are carried as provenance
+        fields_used: >-
+          Active substance / INN, Therapeutic area (MeSH), Therapeutic
+          indication free text, EMA product number, Medicine URL (EPAR page)
+      - file_name: "EMA documents report (json)"
+        included_records: >-
+          EPAR document listings for centrally-authorised medicines; the
+          product-information (SmPC) PDFs they reference carry the mined 4.1
+          Therapeutic indications and 4.3 Contraindications sections
+        fields_used: >-
+          document listing metadata (product name, document kind, PDF URL)
+          locating the product-information PDFs whose 4.1/4.3 sections are mined
+      - file_name: "Canada Vigilance data extract (zip)"
+        included_records: "suspect drug/indication report pairs; case counts"
+        fields_used: >-
+          suspect drug name and indication fields of the $-delimited monthly
+          report extract, plus report identifiers feeding case counts
+    filtered_content:
+      - file_name: "DailyMed SPL indication sections"
+        filtered_records: >-
+          indication sections on SPL sets whose NDA lacks a DailyMed SPL
+          approval
+        rationale: >-
+          approved-treats assertions require an FDA approval backing the
+          indication; observed-use and text-mined contraindication assertions
+          are deliberately not approval-gated
+      - file_name: "DailyMed SPL sections"
+        filtered_records: >-
+          all SPL sections other than indications_and_usage (LOINC 34067-9),
+          contraindications (LOINC 34070-3), boxed warnings (LOINC 34066-1), and
+          warnings/precautions (LOINC 43685-7, legacy 34071-1/42232-9)
+        rationale: >-
+          the remaining sections carry no treatment or contraindication evidence
+    future_considerations:
+      - category: edge_content
+        consideration: >-
+          A drug-drug chemical-entity interaction assertion for medication
+          context (currently the disease_context_qualifier is intentionally
+          disease-only; medications belong in a future interaction assertion)
+        relevant_files: "DailyMed SPL contraindication sections"
+      - category: edge_property_content
+        consideration: >-
+          clinical_approval_status is a first-class Biolink
+          ClinicalApprovalStatusEnum field. Observed assertions ship
+          approved_for_condition or off_label_use; not_provided is emitted only
+          in degraded mode, when no approved-treats table was available to check
+          the reported drug/condition pair against. Revisit if Biolink adds a
+          dedicated observation status.
+  target_info:
+    future_considerations:
+      - category: qualifiers
+        consideration: >-
+          DAKP's sparse qualifier stack (anatomical_context_qualifier,
+          sex_qualifier, population_context_qualifier, frequency_qualifier,
+          temporal_context_qualifier) and the contraindication/approved-treats
+          disease_context_qualifier ride the pinned Biolink model except for two
+          grant-carried slots: the 4.4.5 mixin consolidation (Tablassert >=
+          19.5.1) attached disease_context_qualifier,
+          anatomical_context_qualifier, and frequency_qualifier to the whole
+          disease/phenotype association family and sex_qualifier to
+          EntityToPhenotypicFeatureAssociation, and biolink-model 4.4.6
+          (Tablassert >= 19.7.0) added population_context_qualifier to both
+          pinned classes, so Tablassert retired those CLASS_FIELD_OVERRIDES
+          grants (SkyeAv/Tablassert#120, #188, #213). temporal_context_qualifier
+          on both pinned classes and sex_qualifier on EntityToDiseaseAssociation
+          remain carried by grants ahead of the model, which attaches them only
+          to the environmental-exposure family and the phenotypic-feature side.
+          Drop reliance on those grants once upstream Biolink widens them to the
+          entity-to-disease classes
+      - category: edge_properties
+        consideration: >-
+          ner_confidence_score is the one emitted column with no Biolink slot
+          and no Tablassert carve-out, so it folds into supporting_text until a
+          dedicated mention-recognition-confidence slot exists
+    additional_notes:
+      - "Node and edge type summaries are generated by Tablassert from the observed build, not authored in this configuration."
+      - "FDA application numbers are emitted on the canonical regulatory_approvals edge slot, which the pinned biolink-model (>= 4.4.5) declares natively on EntityToDiseaseAssociation and EntityToPhenotypicFeatureAssociation; every edge pins one of those classes by object category, so the slot survives prune_to_class."
+  provenance_info:
+    contributions:
+      - "Gwenlyn Glusman - code author, domain expertise, data modeling"
+      - "Matthew Brush - data modeling"
+      - "Sierra Moxon - code, data modeling"
+      - "Skye Lane Goetz - code author, pipeline engineering, Tablassert integration"
+    artifacts:
+      - "DAKP pipeline repository: https://github.com/glusman-team/dakp"
+      - "Published KGX releases (Hugging Face dataset): https://huggingface.co/datasets/SkyeAv/drug-approvals-kp"
+      - "Upstream DINGO-reviewed DAKP RIG: https://github.com/NCATSTranslator/translator-ingests/blob/main/src/translator_ingest/ingests/dakp/dakp_rig.yaml"
+      - "RIG review issue: https://github.com/NCATSTranslator/translator-ingests/issues/416"
+  artifact_base_url: "https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/main/0.1.0"
+  artifact_base_path: kgx
+uuid_fields:
+  - subject
+  - predicate
+  - object
+  - disease_context_qualifier
+  - anatomical_context_qualifier
+  - sex_qualifier
+  - population_context_qualifier
+  - frequency_qualifier
+  - temporal_context_qualifier
+  - species_context_qualifier
+uuid_domain: "infores:drugapprovals-kp"
+uuid_on_collision: merge
+tables:
+  - tables/approved_treats.yaml
+  - tables/faers_applied_to_treat.yaml
+  - tables/contraindications.yaml
