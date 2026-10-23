@@ -15,6 +15,11 @@ from pathlib import Path
 # The project root (dagster/projects/dakp) and the published-artifact root follow the
 # monorepo convention: env wins, the project dir is the default.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# DAKP production builds load the lexical disease map + offline NER gazetteer from the repo's
+# pipeline fixture root (cli.py ``_DEFAULT_FIXTURE_ROOT``); the port mirrors that default.
+DEFAULT_FIXTURE_ROOT = PROJECT_ROOT / "pipeline" / "tests" / "fixtures" / "pipeline"
+# DAKP freshness-gates DailyMed / Drugs@FDA / EMA re-downloads to a 7-day cache window.
+DEFAULT_SOURCE_MAX_AGE_DAYS = 7.0
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -30,6 +35,17 @@ def _env_int(name: str, default: int = 0) -> int:
         return int(raw)
     except ValueError:
         msg = f"{name}={raw!r} is not an integer"
+        raise ValueError(msg) from None
+
+
+def _env_float(name: str, default: float | None) -> float | None:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        msg = f"{name}={raw!r} is not a number"
         raise ValueError(msg) from None
 
 
@@ -55,6 +71,11 @@ class RunConfig:
     force: bool
     ner_offline: bool
     publication_version: str | None
+    fixture_root: Path | None = None
+    # Tablassert ``build-kg --release`` / ``--qc``: always on for DAKP production builds.
+    release: bool = True
+    qc: bool = True
+    source_max_age_days: float | None = DEFAULT_SOURCE_MAX_AGE_DAYS
 
     @property
     def refs_dir(self) -> Path:
@@ -86,6 +107,11 @@ class RunConfig:
             params["run_tablassert"] = True
         if self.publication_version:
             params["publication_version"] = self.publication_version
+        params["release"] = self.release
+        params["qc"] = self.qc
+        if self.source_max_age_days is not None:
+            for source in ("dailymed", "drugsfda", "ema"):
+                params[f"{source}_max_age_days"] = self.source_max_age_days
         return params
 
 
@@ -109,6 +135,10 @@ def run_config() -> RunConfig:
         force=_env_bool("DAKP_FORCE"),
         ner_offline=_env_bool("DAKP_NER_OFFLINE"),
         publication_version=version,
+        fixture_root=_env_path("DAKP_FIXTURE_ROOT", DEFAULT_FIXTURE_ROOT),
+        release=_env_bool("DAKP_TABLASSERT_RELEASE", True),
+        qc=_env_bool("DAKP_TABLASSERT_QC", True),
+        source_max_age_days=_env_float("DAKP_SOURCE_MAX_AGE_DAYS", DEFAULT_SOURCE_MAX_AGE_DAYS),
     )
 
 
@@ -118,13 +148,16 @@ def task_context(config: RunConfig | None = None):
     Imported lazily so this module stays importable without the pipeline package (the
     dagster code location loads defs even when a stage will never run).
     """
-    from dakp_pipeline.io.contracts import TaskContext
     from dakp_pipeline.paths import Workdir
+    from dakp_pipeline.runtime import build_context
 
     cfg = config or run_config()
     workdir = Workdir(cfg.workdir)
     workdir.create()
-    return TaskContext(workdir=workdir.root, fixture_root=None, params=cfg.params())
+    # build_context loads the lexical disease map from the fixture root into
+    # params["disease_map"] (DAKP runtime.py), and the shapers' default_ner reads the
+    # offline gazetteer from the same root.
+    return build_context(workdir, cfg.fixture_root, cfg.params())
 
 
 __all__ = ["PROJECT_ROOT", "RunConfig", "run_config", "task_context"]

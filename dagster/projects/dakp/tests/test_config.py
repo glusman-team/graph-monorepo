@@ -28,6 +28,12 @@ def test_fullmap_enables_the_real_tablassert_run(monkeypatch: pytest.MonkeyPatch
     assert params["fullmap"] == "/data/fullmap"
     assert params["run_tablassert"] is True
     assert params["publication_version"] == "1.25.0"
+    # DAKP production defaults: release + qc always on, 7-day freshness gates, and the
+    # disease map loaded from the pipeline fixture root into params["disease_map"].
+    assert params["release"] is True
+    assert params["qc"] is True
+    assert params["dailymed_max_age_days"] == 7.0
+    assert params["disease_map"], "lexical disease map must load from the fixture root"
 
 
 def test_no_fullmap_keeps_the_handoff_deferred(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -38,3 +44,5 @@ def test_no_fullmap_keeps_the_handoff_deferred(monkeypatch: pytest.MonkeyPatch, 
     assert "fullmap" not in params
     assert not params.get("run_tablassert")
     assert "publication_version" not in params
+    # Release/QC stay on without a fullmap (kg_build would defer anyway).
+    assert params["release"] is True and params["qc"] is True
