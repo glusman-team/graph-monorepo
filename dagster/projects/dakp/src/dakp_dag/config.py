@@ -81,6 +81,9 @@ class RunConfig:
             params["force"] = True
         if self.fullmap:
             params["fullmap"] = self.fullmap
+            # A configured fullmap is what turns the Tablassert handoff real (DAKP runtime.py
+            # derives run_tablassert the same way); without it kg_build defers.
+            params["run_tablassert"] = True
         if self.publication_version:
             params["publication_version"] = self.publication_version
         return params
