@@ -305,6 +305,33 @@ def test_epar_patient_clause_populates_disease_context(
     assert row["object_text"] == "severe pain"
 
 
+def test_epar_species_mention_does_not_collide_with_human_taxon(
+    disease_map: dict[str, dict[str, str]],
+) -> None:
+    """A mined OrganismTaxon qualifier is study context; the EPAR row stays HUMAN_TAXON.
+
+    Regression: the attached ``species_context_text`` qualifier was splatted into ``row_for``
+    next to the explicit ``species_context_text=HUMAN_TAXON`` kwarg and crashed the whole
+    shaper (``got multiple values for keyword argument``) on the first production EPAR
+    sentence naming a species. The DAKP v1.25.0 release build carried the same guard as an
+    uncommitted hotfix.
+    """
+    frame = _ema_frame(
+        [
+            _registry_row(
+                therapeutic_indication="KemSu is indicated for the treatment of severe pain in rats."
+            )
+        ]
+    )
+    ner = DiseaseNER(offline=True, gazetteer={"severe pain": "disease", "rats": "OrganismTaxon"})
+    mined = _mined_map(frame, ner)
+    assert any(m.type == "OrganismTaxon" for mentions in mined.values() for m in mentions)
+
+    rows = build_epar_treats_rows(frame, mined, disease_map)
+    row = _rows_by_pair(rows)[("ketamine", "severe pain")]
+    assert row["species_context_text"] == "NCBITaxon:9606"
+
+
 def test_epar_disease_context_does_not_leak_across_sentences(
     disease_map: dict[str, dict[str, str]],
 ) -> None:

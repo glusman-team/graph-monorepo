@@ -1103,6 +1103,10 @@ def build_epar_treats_rows(
                         agg["assertion_context_model"] = host.context_model or ""
                         agg["assertion_context_model_score"] = model_score
                     for field, value in attached.get(host_index, {}).items():
+                        if field == "species_context_text":
+                            # CURIE-valued column pinned to HUMAN_TAXON below; an attached
+                            # OrganismTaxon mention would collide with that keyword in row_for.
+                            continue
                         score = qualifier_scores.get((host_index, field), (0.0, value))
                         previous = agg["qualifier_scores"].get(field)
                         if previous is None or score > previous:
@@ -1243,6 +1247,10 @@ def build_smpc_treats_rows(
                         agg["assertion_context_model"] = host.context_model or ""
                         agg["assertion_context_model_score"] = model_score
                     for field, value in attached.get(host_index, {}).items():
+                        if field == "species_context_text":
+                            # CURIE-valued column pinned to HUMAN_TAXON below; an attached
+                            # OrganismTaxon mention would collide with that keyword in row_for.
+                            continue
                         score = qualifier_scores.get((host_index, field), (0.0, value))
                         previous = agg["qualifier_scores"].get(field)
                         if previous is None or score > previous:
