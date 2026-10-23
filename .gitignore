@@ -33,3 +33,4 @@ dagster/published/
 dagster/projects/*/published/
 .ralph/
 .pi-wt/
+.tablassert/
