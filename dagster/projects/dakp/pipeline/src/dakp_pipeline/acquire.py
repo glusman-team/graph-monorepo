@@ -25,7 +25,7 @@ from pathlib import Path
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
 from dakp_pipeline.logging_setup import logger, stats, step
 from dakp_pipeline.ner import model_cache
-from dakp_pipeline.ner.ner import DEFAULT_MODEL
+from dakp_pipeline.ner.ner import default_model_id
 from dakp_pipeline.sources import (
     canada_vigilance,
     dailymed,
@@ -92,13 +92,13 @@ def acquire_icd10cm(ctx: TaskContext) -> list[ArtifactRef]:
 
 
 def default_ner_models(ctx: TaskContext) -> list[str]:
-    """NER model ids to cache for ``ctx``: the default GLiNER checkpoint the NER backend loads.
+    """NER model ids to cache for ``ctx``: the configured checkpoint the NER backend loads.
 
     A real run downloads the GLiNER weights; offline tests pass an explicit ``models=`` list (and
     a fake ``downloader``) to :func:`acquire_ner_models` instead of relying on this default.
     """
-    del ctx  # the default model set is fixed; the context is kept for a stable call signature
-    return [DEFAULT_MODEL]
+    del ctx  # runtime model selection uses the environment, not task parameters
+    return [default_model_id()]
 
 
 def model_ref_to_artifact(ref: model_cache.ModelRef) -> ArtifactRef:

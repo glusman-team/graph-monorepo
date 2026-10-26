@@ -141,16 +141,19 @@ def default_downloader(model_id: str, dest: Path) -> None:
 
     ``huggingface_hub`` is a core DAKP dependency (transitively via ``gliner2``); if it is
     somehow not importable, raises :class:`NERDependencyError` with the install command.
+    Credentials resolve from ``HF_TOKEN`` or the saved Hub login via ``get_token`` and
+    are passed explicitly, including when implicit Hub authentication is disabled.
+    Tokens are never written to the model manifest. Authorization failures propagate.
     """
     try:
-        from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
+        from huggingface_hub import get_token, snapshot_download  # type: ignore[import-not-found]
     except ImportError as exc:
         msg = (
             "downloading NER model weights requires 'huggingface_hub' (a core DAKP dependency) but it is not importable. "
             "Install all dependencies with: uv sync"
         )
         raise NERDependencyError(msg) from exc
-    snapshot_download(repo_id=model_id, local_dir=dest)
+    snapshot_download(repo_id=model_id, local_dir=dest, token=get_token())
 
 
 # --- content stats (cheap verification) -------------------------------------------
@@ -183,7 +186,7 @@ def ensure_model(
     written. ``force`` re-downloads unconditionally.
 
     Args:
-        model_id: Upstream model identifier (e.g. ``"fastino/gliner2.5-base-v1"``).
+        model_id: Upstream model identifier (e.g. ``"SkyeAv/relmedner-biomed-dakp-20261020"``).
         source: Provenance label / cache subdir (default ``"huggingface"``).
         cache_dir: Explicit cache root. Wins over ``workdir`` when both are given.
         workdir: Pipeline workdir; the cache lives at ``<workdir>/models``.

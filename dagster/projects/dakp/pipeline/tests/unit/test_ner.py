@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from dakp_pipeline.ner.dictionary import (
     MENTION_TYPES,
     OBJECT_TYPES,
@@ -42,13 +44,32 @@ _FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "pipeline"
 _ONTOLOGY_TSV = _FIXTURE_ROOT / "ontology" / "disease_map.tsv"
 
 
+@pytest.mark.parametrize(
+    "override",
+    [None, "", "  ", "SkyeAv/relmedner-biomed-zeroshot-20261021"],
+)
+def test_model_override_aligns_acquisition_and_inference(
+    monkeypatch: pytest.MonkeyPatch, override: str | None
+) -> None:
+    """A selected alternative must be acquired and keyed by inference, not the default."""
+    from dakp_pipeline.acquire import default_ner_models
+
+    if override is None:
+        monkeypatch.delenv("DAKP_NER_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("DAKP_NER_MODEL", override)
+    expected = (override or "").strip() or DEFAULT_MODEL
+    assert DiseaseNER()._model_id == expected
+    assert default_ner_models(None) == [expected]  # type: ignore[arg-type]
+    assert DiseaseNER(model_id="explicit/model")._model_id == "explicit/model"
+
+
 # --- constants + embedded gazetteer --------------------------------------------
 
 
 def test_defaults_and_mention_type_vocabulary() -> None:
-    # The GLiNER2.5 English base boundary checkpoint (first release in the 2.5 family; no
-    # "large" exists) replaces the retired span checkpoint; the benchmark records the comparison.
-    assert DEFAULT_MODEL == "fastino/gliner2.5-base-v1"
+    # The private specialist retains the existing GLiNER2 boundary backend.
+    assert DEFAULT_MODEL == "SkyeAv/relmedner-biomed-dakp-20261020"
     # The label vocabulary is a label -> description mapping covering BOTH channels in one call;
     # the names-only view is the same vocabulary in the same (prompt) order.
     assert isinstance(MODEL_LABELS, dict)
