@@ -1,5 +1,7 @@
 # graph-monorepo
 
+Docs: https://glusman-team.github.io/graph-monorepo/ (first entry: DAKP).
+
 Monorepo for ISB multiomics knowledge-graph pipelines: a Dagster deployment
 hosting several independent DAG code locations (each builds its own knowledge
 graph as KGX ndjson), shared Python libs, Go extraction workers, Nx as the

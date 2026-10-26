@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAKP: Drug Approvals Knowledge Provider - graph-monorepo docs</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="../">graph-monorepo docs</a>
+    <nav>
+      <a href="https://github.com/glusman-team/graph-monorepo">GitHub</a>
+      <a href="https://huggingface.co/datasets/SkyeAv/drug-approvals-kp">Dataset</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <h1>DAKP: Drug Approvals Knowledge Provider</h1>
+  <p class="lede">
+    A KGX knowledge graph of FDA and EMA approved drug-disease treatment
+    relationships, observed applied-to-treat uses from FAERS and Health Canada's
+    Canada Vigilance database, and contraindications text-mined from DailyMed
+    Structured Product Labels. Built with Tablassert, validated against the
+    Biolink Model. Live dataset:
+    <a href="https://huggingface.co/datasets/SkyeAv/drug-approvals-kp">SkyeAv/drug-approvals-kp</a>.
+  </p>
+
+  <h2>Latest release</h2>
+  <p>
+    <strong>1.25.1</strong> - 16,427 nodes, 136,317 edges, 0 validation failures,
+    biolink-model 4.4.6. Every release publishes an NDJSON node/edge pair plus a
+    Resource Ingest Guide (RIG); older releases stay downloadable through dataset
+    tags (<code>v&lt;version&gt;</code>) even though main carries only the latest.
+  </p>
+
+  <h2>Sources</h2>
+  <table>
+    <tr><th>Source</th><th>Contributes</th></tr>
+    <tr><td><a href="https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm">DailyMed</a> (<code>infores:dailymed</code>)</td><td>SPL indications (LOINC 34067-9), contraindications (34070-3), boxed warnings, warnings and precautions, FDA application numbers</td></tr>
+    <tr><td><a href="https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html">FAERS</a> (<code>infores:faers</code>)</td><td>quarterly extracts: drug and indication case pairs and counts for <code>biolink:applied_to_treat</code></td></tr>
+    <tr><td><a href="https://www.fda.gov/media/89850/download">Drugs@FDA</a></td><td>approval backing for indications</td></tr>
+    <tr><td><a href="https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx">EMA medicines report</a> (<code>infores:ema</code>)</td><td>centrally authorised human medicines: MeSH therapeutic areas, EPAR indication text, product numbers</td></tr>
+    <tr><td><a href="https://www.canada.ca/en/health-canada/services/drugs-health-products/medeffect-canada/adverse-reaction-database/canada-vigilance-online-database-data-extract.html">Canada Vigilance</a> (<code>infores:canada-vigilance</code>)</td><td>monthly adverse-reaction extracts: observed-use evidence (not Canadian approval evidence)</td></tr>
+    <tr><td><a href="https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2027/icd10cm-table-and-index-2027.zip">ICD-10-CM Table of Drugs and Chemicals</a> (<code>infores:icd10cm</code>)</td><td>FY2027 Table: the non-therapeutic subject screen behind observed-use filtering; contributes no assertion text</td></tr>
+  </table>
+
+  <h2>Poison screen (new in 1.25.1)</h2>
+  <p>
+    The ICD-10-CM Table of Drugs and Chemicals marks each substance with poisoning
+    and adverse-effect codes. A substance whose Adverse-effect column is empty has
+    no use under proper administration (Official Guidelines I.C.19.e), so it must
+    never carry an applied-to-treat claim. The screen removes such substances two
+    ways, and every <code>biolink:applied_to_treat</code> edge cites
+    <code>infores:icd10cm</code> as a supporting data source:
+  </p>
+  <ul>
+    <li><strong>Wording:</strong> observed-use rows whose subject text names a screened substance (T36-T65 ranges) are dropped at load by a single Tablassert anti-join filter.</li>
+    <li><strong>Identifier:</strong> subject resolution excludes 350 identifiers whose own name is a screened substance, so a reporter spelling that resolves to a poison (FAERS "LEVOXINE" resolves to hydrazine) or a label ingredient (turpentine) cannot surface as a node in any predicate.</li>
+  </ul>
+  <p>
+    Substances that regulator label text names as medicines are exempt (lithium,
+    zinc, arsenic trioxide, permethrin). Water-as-substance identifiers and
+    wordings are excluded separately. GHB/GBL (sodium oxybate, an approved
+    narcolepsy medicine) are deliberately not screened. Full scope and rationale
+    live in each release's
+    <a href="https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/main/1.25.1/DRUG_APPROVALS_KP_1.25.1.RIG.yaml">RIG</a>.
+  </p>
+
+  <h2>Release history</h2>
+  <table>
+    <tr><th>Version</th><th>Nodes</th><th>Edges</th><th>Biolink</th><th>Tag</th></tr>
+    <tr><td>1.25.1</td><td>16,427</td><td>136,317</td><td>4.4.6</td><td><code>v1.25.1</code></td></tr>
+    <tr><td>1.25.0</td><td>16,453</td><td>136,504</td><td>4.4.6</td><td><code>v1.25.0</code></td></tr>
+  </table>
+  <p>
+    1.25.1 adds the ICD-10-CM screen, so its counts sit below 1.25.0's. The 1.25.x
+    line is built by the Dagster port in this repository; earlier releases were
+    built by the original Airflow project.
+  </p>
+
+  <h2>Loading the data</h2>
+<pre><code>BASE=https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/main/1.25.1
+curl -LO $BASE/DRUG_APPROVALS_KP_1.25.1.edges.ndjson
+curl -LO $BASE/DRUG_APPROVALS_KP_1.25.1.nodes.ndjson
+
+# or as a dataset
+from datasets import load_dataset
+edges = load_dataset("SkyeAv/drug-approvals-kp", "1.25.1_edges")</code></pre>
+  <p>
+    Every edge carries provenance (<code>sources</code> rooted at
+    <code>infores:drugapprovals-kp</code>), evidence fields where applicable
+    (<code>number_of_cases</code>, <code>regulatory_approvals</code>,
+    <code>publications</code>, context qualifiers), and a
+    <code>species_context_qualifier</code> naming the organism
+    (<code>NCBITaxon:9606</code> on human edges, veterinary taxa on
+    animal-drug approvals).
+  </p>
+
+  <h2>Running the pipeline</h2>
+<pre><code># one output only (inside dagster/projects/dakp)
+uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions
+
+# the whole DAG through the UI
+make dev    # Dagster UI on http://localhost:3000, launch dakp_build</code></pre>
+  <p>
+    Stage-to-stage handoff is the published artifact under
+    <code>$MO_PUBLISHED_ROOT</code>, never a Dagster value input, so any single
+    stage can build alone. See the repo
+    <a href="https://github.com/glusman-team/graph-monorepo#readme">README</a> for
+    the full command set.
+  </p>
+</main>
+<footer>
+  <div class="inner">
+    Part of <a href="https://github.com/glusman-team/graph-monorepo">glusman-team/graph-monorepo</a>
+    - dataset: <a href="https://huggingface.co/datasets/SkyeAv/drug-approvals-kp">SkyeAv/drug-approvals-kp</a>
+  </div>
+</footer>
+</body>
+</html>

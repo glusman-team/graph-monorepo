@@ -1,0 +1,103 @@
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #5dbb56;
+  --link: #58a6ff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.65 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+header.site {
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  padding: 1rem 0;
+}
+
+header.site .inner,
+main, footer .inner {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+header.site a.brand {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+header.site nav { float: right; }
+header.site nav a { margin-left: 1.25rem; color: var(--muted); }
+
+main { padding: 2.5rem 0 3rem; }
+
+h1 { font-size: 1.9rem; margin: 0 0 0.4rem; }
+h2 { font-size: 1.3rem; margin-top: 2.2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+h3 { font-size: 1.05rem; margin-top: 1.6rem; }
+
+p.lede { color: var(--muted); font-size: 1.08rem; margin-top: 0; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.95rem;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: var(--panel); color: var(--muted); font-weight: 600; }
+
+code, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--panel);
+  border-radius: 6px;
+}
+code { padding: 0.15em 0.4em; }
+pre { padding: 0.9rem 1rem; overflow-x: auto; border: 1px solid var(--border); }
+pre code { padding: 0; background: none; }
+
+.entries { list-style: none; padding: 0; }
+.entries li {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.9rem;
+}
+.entries a.title { font-weight: 700; font-size: 1.1rem; }
+.entries .desc { color: var(--muted); margin: 0.3rem 0 0; }
+
+footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  padding: 1.2rem 0 2rem;
+  font-size: 0.9rem;
+}
+
+.badge {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 0.1rem 0.6rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}

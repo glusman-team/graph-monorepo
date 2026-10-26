@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graph-monorepo docs</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="./">graph-monorepo docs</a>
+    <nav>
+      <a href="https://github.com/glusman-team/graph-monorepo">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <h1>graph-monorepo</h1>
+  <p class="lede">
+    Monorepo for ISB multiomics knowledge-graph pipelines: a Dagster deployment
+    hosting independent DAG code locations, each building its own knowledge graph
+    on shared Python libs and Go workers. KGX ndjson is the only KG output format.
+  </p>
+
+  <h2>Documentation</h2>
+  <ul class="entries">
+    <li>
+      <a class="title" href="dakp/">DAKP: Drug Approvals Knowledge Provider</a>
+      <span class="badge">knowledge graph</span>
+      <p class="desc">
+        The ported DAKP pipeline: FDA and EMA approved drug-disease treatment
+        relationships, observed uses from FAERS and Canada Vigilance, and
+        text-mined contraindications, emitted as validated KGX. Sources, the
+        ICD-10-CM poison screen, release history, and how to run it.
+      </p>
+    </li>
+  </ul>
+
+  <h2>The repo in one minute</h2>
+  <table>
+    <tr><th>Path</th><th>What lives there</th></tr>
+    <tr><td><code>dagster/projects/&lt;name&gt;/</code></td><td>one DAG = one code location = one self-contained workspace (dagster defs, a dagster-free pipeline package, non-Python workers)</td></tr>
+    <tr><td><code>dagster/libs/</code></td><td>shared libraries: pydantic domain models, the KGX writer + QC, dagster pipes helpers</td></tr>
+    <tr><td><code>nix/</code></td><td>devshell and runtime apps; every tool comes from the flake</td></tr>
+    <tr><td><code>docs/</code></td><td>this site</td></tr>
+  </table>
+
+  <p>
+    Nx runs cached tests across the Python packages and the Go workers;
+    <code>nix flake check</code>, <code>dg check defs</code>, and
+    <code>golangci-lint</code> gate every push (see
+    <a href="https://github.com/glusman-team/graph-monorepo/blob/main/.github/workflows/ci.yml">CI</a>).
+  </p>
+</main>
+<footer>
+  <div class="inner">
+    Built from the repository: <a href="https://github.com/glusman-team/graph-monorepo">glusman-team/graph-monorepo</a>
+  </div>
+</footer>
+</body>
+</html>
