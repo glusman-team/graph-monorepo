@@ -648,6 +648,8 @@ def test_load_model_returns_cached_model_without_reimport() -> None:
 
 
 def test_default_model_id_is_used(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The built-in default is independent of the developer's runtime model override."""
+    monkeypatch.delenv("DAKP_NER_MODEL", raising=False)
     _FakeAutoExtractor.loaded_from = []
     _FakeAutoExtractor.model = _FakeExtractorModel([])
     module = types.ModuleType("gliner2")
