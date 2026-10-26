@@ -43,10 +43,9 @@ Twelve more rows exercise the v1.24.1 audit additions (water / bare eye-and-clea
 9. ``WATER PILL`` / ``headache`` is DROPPED by the subject WORDING denylist while 10.
    ``diuretic`` / ``headache`` SURVIVES on the same UMLS:C0012798 (Diuretics) — the class CURIE
    is legitimate, only the unnamed-diuretic placeholder wording is denied.
-11. ``sodium oxybate`` / ``headache`` is DROPPED (its only candidate CHEBI:30830 is excluded)
-   while 12. ``4-HYDROXYBUTANOIC ACID`` / ``headache`` SURVIVES as UMLS:C0673093 (biolink:Drug)
-   — the exclusion must fall the tied wording through to the correct identifier, not just
-   delete the edge.
+11. ``sodium oxybate`` / ``headache`` SURVIVES as CHEBI:30830 and 12. ``4-HYDROXYBUTANOIC ACID``
+   / ``headache`` SURVIVES on the top-ranked tie: GHB/GBL were un-excluded in 1.25.1 (sodium
+   oxybate is an approved medicine), so neither identifier may be dropped any more.
 13. ``Advil`` / ``clear`` is DROPPED by the object wording denylist (resolves NCIT:C48621
    Negative Surgical Margin) while 14. ``Advil`` / ``Clear cell renal cell carcinoma`` SURVIVES
    (MONDO:0005005) — the qualified relative keeps its own edges.
@@ -56,6 +55,11 @@ Twelve more rows exercise the v1.24.1 audit additions (water / bare eye-and-clea
 17. ``Advil`` / ``watery eyes`` is DROPPED while 18. ``Advil`` / ``excessive tearing`` SURVIVES
    on the same MONDO:0001793, and 19. ``Advil`` / ``water intoxication`` is DROPPED (resolves
    MONDO:0022007) — the water-string object denials, same wording-only shape.
+
+23. ``LEVOXINE`` / ``headache`` resolves ONLY to hydrazine (CHEBI:15571), an ICD-10-CM screened
+    poison whose wording the reporter never typed: the generated CURIE screen
+    (``icd10cm_curies.SCREENED_CURIES``) must drop it at resolution even though no wording filter
+    matches.
 
 The fullmap intentionally makes every denied row resolvable; without the denylist filters the
 build would emit fifteen edges, and each assertion below fails.
@@ -78,6 +82,9 @@ pytest.importorskip("tablassert")
 from tablassert import rs
 from tablassert.cli import build_pipeline
 from tablassert.progress import PipelineProgress
+
+# The GHB/GBL identifiers the fixture ties the sodium oxybate wordings to (allowed from 1.25.1).
+GHB_IDS = frozenset({"CHEBI:30830", "CHEBI:42639", "UMLS:C0673093"})
 
 
 def _synonym(curie: str, name: str, names: list[str], category: str) -> dict[str, Any]:
@@ -120,6 +127,7 @@ def test_denylisted_rows_are_dropped_at_load_time(
         "CHEBI:30830",
         "CHEBI:42639",
         "UMLS:C0673093",
+        "CHEBI:15571",
         "NCIT:C48621",
         "MONDO:0005005",
         "MONDO:0005328",
@@ -193,6 +201,8 @@ def test_denylisted_rows_are_dropped_at_load_time(
                 _synonym(
                     "UMLS:C0673093", "4-hydroxybutyric acid", ["4-hydroxybutanoic acid"], "Drug"
                 ),
+                # A screened poison reachable only through an unrelated reporter spelling.
+                _synonym("CHEBI:15571", "hydrazine", ["LEVOXINE"], "SmallMolecule"),
                 _synonym("NCIT:C48621", "Negative Surgical Margin", ["clear"], "PhenotypicFeature"),
                 _synonym(
                     "MONDO:0005005",
@@ -250,6 +260,7 @@ def test_denylisted_rows_are_dropped_at_load_time(
         ("Soap", "headache", "2", "191|192"),
         ("HEROIN", "headache", "1", "201"),
         ("Lithium", "bipolar disorder", "7", "211|212|213|214|215|216|217"),
+        ("LEVOXINE", "headache", "4", "221|222|223|224"),
     ):
         row = dict.fromkeys(schemas.FAERS_APPLIED_TO_TREAT_COLUMNS, "")
         row.update(
@@ -297,19 +308,21 @@ def test_denylisted_rows_are_dropped_at_load_time(
         if line.strip()
     ]
 
-    # THIRTEEN denied/unresolved-family rows never arrive; the nine survivors do. Every denied
+    # TWELVE denied/unresolved-family rows never arrive; the eleven survivor rows do (the two
+    # GHB rows emit under the allowed GHB identifiers). Every denied
     # row resolved fine against the fullmap, so a Tablassert reindex/exclusion regression (or an
     # over-matching one) shows up as extra or missing edges here. The ICD screen denied both
     # poison spellings (CHEBI:90001/90002 must not appear on any edge) while the label-backed
     # lithium row survived (CHEBI:90003).
-    assert len(edges) == 9
     by_pair = {(edge["subject"], edge["object"]): edge for edge in edges}
-    assert set(by_pair) == {
+    ghb_pairs = {pair for pair in by_pair if pair[0] in GHB_IDS}
+    assert ghb_pairs
+    assert all(pair[1] == "HP:0002315" for pair in ghb_pairs)
+    assert set(by_pair) - ghb_pairs == {
         ("CHEBI:5855", "HP:0002315"),
         ("CHEBI:5855", "MONDO:0005044"),
         ("CHEBI:5855", "MONDO:0002050"),
         ("UMLS:C0012798", "HP:0002315"),
-        ("UMLS:C0673093", "HP:0002315"),
         ("CHEBI:5855", "MONDO:0005005"),
         ("CHEBI:5855", "MONDO:0005328"),
         ("CHEBI:5855", "MONDO:0001793"),
@@ -318,8 +331,7 @@ def test_denylisted_rows_are_dropped_at_load_time(
     subjects = {edge["subject"] for edge in edges}
     assert not subjects & {
         "CHEBI:15377",
-        "CHEBI:30830",
-        "CHEBI:42639",
+        "CHEBI:15571",
         "CHEBI:90001",
         "CHEBI:90002",
     }
@@ -341,10 +353,17 @@ def test_denylisted_rows_are_dropped_at_load_time(
     assert int(depression["number_of_cases"]) == 5
 
     # v1.24.1 audit guarantees: no water/GHB/eye/clear identifier or wording survives anywhere.
-    assert {edge["original_subject"] for edge in edges} == {
+    # Both GHB wordings land on one tied identifier and merge into one edge (pipe-joined).
+    ghb_subjects = {
+        wording
+        for edge in edges
+        if edge["subject"] in GHB_IDS
+        for wording in str(edge["original_subject"]).split("|")
+    }
+    assert ghb_subjects == {"sodium oxybate", "4-HYDROXYBUTANOIC ACID"}
+    assert {edge["original_subject"] for edge in edges if edge["subject"] not in GHB_IDS} == {
         "Advil",
         "diuretic",
-        "4-HYDROXYBUTANOIC ACID",
         "Lithium",
     }
     assert {edge["original_object"] for edge in edges} == {
@@ -356,10 +375,9 @@ def test_denylisted_rows_are_dropped_at_load_time(
         "excessive tearing",
         "bipolar disorder",
     }
-    # The GHB-excluded wording FALLS THROUGH to the correct Drug identifier (not deleted).
-    ghb = by_pair[("UMLS:C0673093", "HP:0002315")]
-    assert ghb["original_subject"] == "4-HYDROXYBUTANOIC ACID"
-    assert int(ghb["number_of_cases"]) == 2
+    # GHB is allowed: the sodium oxybate CHEBI identity ships, carrying both reports' cases.
+    ghb = by_pair[("CHEBI:30830", "HP:0002315")]
+    assert int(ghb["number_of_cases"]) == 5
     # The diuretic-class CURIE keeps its legitimate wording while the placeholder is denied.
     diuretic = by_pair[("UMLS:C0012798", "HP:0002315")]
     assert diuretic["original_subject"] == "diuretic"

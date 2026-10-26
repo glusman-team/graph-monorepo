@@ -20,6 +20,7 @@ import copy
 import importlib
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,6 +28,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from dakp_pipeline import icd10cm_curies, icd10cm_denylist
 from dakp_pipeline import tablassert as tablassert_configs
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
@@ -1285,12 +1287,11 @@ def test_subject_exclude_regex_on_all_tables() -> None:
         r"^UMLS:C5981420$",
         r"^UMLS:C1550678$",
         r"^MESH:D008900$",
-        # GHB/GBL identifiers mis-resolving sodium oxybate (v1.24.1 audit): "sodium oxybate"
-        # wordings resolve to CHEBI:30830 ONLY (rows drop); "4-HYDROXYBUTANOIC ACID" falls
-        # through to UMLS:C0673093 and survives under the correct Drug identifier.
-        r"^CHEBI:30830$",
-        r"^CHEBI:42639$",
     ]
+    assert list(tablassert_configs._SUBJECT_EXCLUDE_REGEX_CURATED) == expected
+    # The shipped list appends one anchored pattern per generated ICD-10-CM screened CURIE.
+    screened = [f"^{re.escape(curie)}$" for curie, _name, _key in icd10cm_curies.SCREENED_CURIES]
+    expected = expected + screened
     assert list(tablassert_configs._SUBJECT_EXCLUDE_REGEX) == expected
     for table in TABLES:
         section = Section.model_validate(
@@ -1302,6 +1303,30 @@ def test_subject_exclude_regex_on_all_tables() -> None:
     # denied at load instead) and "dextrose in water" keeps UMLS:C0719841.
     assert not any("C0012798" in pattern for pattern in tablassert_configs._SUBJECT_EXCLUDE_REGEX)
     assert not any("C0719841" in pattern for pattern in tablassert_configs._SUBJECT_EXCLUDE_REGEX)
+    # GHB/GBL are ALLOWED from 1.25.1 (user decision): sodium oxybate is an approved medicine.
+    for allowed in ("CHEBI:30830", "CHEBI:42639", "UMLS:C0673093", "UMLS:C0000503"):
+        assert not any(allowed in pattern for pattern in tablassert_configs._SUBJECT_EXCLUDE_REGEX)
+
+
+def test_icd10cm_screened_curies_snapshot() -> None:
+    # The generated CURIE screen: anchored-unique, never a label-backed exemption, and covering
+    # the poison subjects that reached the 1.25.1 candidate graph through resolution rather than
+    # wording (LEVOXINE -> hydrazine, DIAZIDE -> diazinon) or via label ingredients (TURPENTINE).
+    from dakp_pipeline.assertions.observed_uses import _pair_key
+
+    curies = [curie for curie, _name, _key in icd10cm_curies.SCREENED_CURIES]
+    assert curies == sorted(set(curies))
+    screened = {row[0] for row in icd10cm_denylist.SCREENED_SUBJECTS}
+    exempt = {_pair_key(name) for name, _ in icd10cm_denylist.LABEL_BACKED_EXCEPTIONS}
+    for _curie, name, key in icd10cm_curies.SCREENED_CURIES:
+        assert key in screened
+        assert key not in exempt
+        assert _pair_key(name) == key  # the CURIE's own preferred name is the screened substance
+    for poison in ("CHEBI:15571", "CHEBI:34682", "CHEBI:16842", "UNII:XJ6RUH0O4G", "CHEBI:3639"):
+        assert poison in curies
+    # Real medicines the Table lists under street/trade names stay out (synonym-only matches).
+    for medicine in ("CHEBI:10033", "CHEBI:28787", "CHEBI:27808"):
+        assert medicine not in curies
 
 
 # --- graph config structure -------------------------------------------------------
@@ -1574,11 +1599,16 @@ def test_rig_ingest_info_enrichment() -> None:
         "DailyMed SPL indication sections",
         "DailyMed SPL sections",
         "FAERS and Canada Vigilance observed-use subjects",
+        "All assertion tables: resolved subject identifiers",
     ]
     # The third filter is the ICD-10-CM subject screen: name the tier rule and the exemption, so a
     # silent narrowing of the screen (or of its label-backed exemption) fails here.
     assert "Adverse-effect code" in filtered[2]["filtered_records"]
     assert "extract/icd10cm" in filtered[2]["filtered_records"]
+    # The fourth is the identifier-level screen (generated CURIEs + water family); GHB is allowed.
+    assert str(len(icd10cm_curies.SCREENED_CURIES)) in filtered[3]["filtered_records"]
+    assert "CHEBI:15377" in filtered[3]["filtered_records"]
+    assert "sodium oxybate" in filtered[3]["rationale"]
     assert "biolink:applied_to_treat" in filtered[2]["rationale"]
     assert (
         filtered[0]["filtered_records"]
@@ -1619,6 +1649,7 @@ def test_rig_ingest_info_enrichment() -> None:
         "DailyMed SPL indication sections",
         "DailyMed SPL sections",
         "FAERS and Canada Vigilance observed-use subjects",
+        "All assertion tables: resolved subject identifiers",
     ]
     assert info.future_considerations is not None
     assert info.future_considerations[0].category == "edge_content"

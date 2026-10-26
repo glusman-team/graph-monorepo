@@ -174,7 +174,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from dakp_pipeline import icd10cm_denylist
+from dakp_pipeline import icd10cm_curies, icd10cm_denylist
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
@@ -593,8 +593,24 @@ RIG_FILTERED_CONTENT: tuple[dict[str, str], ...] = (
             "the empty Adverse-effect column is the coding authority's assertion that the substance has no use "
             "under proper administration, so it must not carry a biolink:applied_to_treat claim; the label-backed "
             "exemption keeps substances whose poison and medicine identities coexist (lithium, zinc, alcohol, "
-            "permethrin), and only observed-use rows are screened because approved-treats and contraindication "
-            "subjects are label ingredients by construction"
+            "permethrin), and only observed-use rows are screened by wording because approved-treats and "
+            "contraindication subjects are label ingredients by construction"
+        ),
+    },
+    {
+        "file_name": "All assertion tables: resolved subject identifiers",
+        "filtered_records": (
+            f"subjects that resolve to one of {len(icd10cm_curies.SCREENED_CURIES)} fullmap identifiers whose "
+            f"own preferred name is an ICD-10-CM ({icd10cm_source.ICD10CM_RELEASE}) screened, non label-backed "
+            "substance (hydrazine, diazinon, turpentine, formaldehyde, ...), plus the water-as-substance "
+            "identifier family (CHEBI:15377 and its UMLS/MeSH twins)"
+        ),
+        "rationale": (
+            "a reporter spelling can resolve to a poison it never names (FAERS 'LEVOXINE' -> hydrazine) and "
+            "label-ingredient subjects bypass the observed-use wording screen; excluding the identifiers at "
+            "resolution lets such a wording fall through to its real drug or drop, so no poison or water "
+            "subject node is emitted. GHB/GBL (sodium oxybate) are deliberately not screened: sodium "
+            "oxybate is an approved medicine"
         ),
     },
 )
@@ -1093,16 +1109,16 @@ _OBJECT_EXCLUDE_REGEX: tuple[str, ...] = (r"^UMLS:C0812393$",)
 # against the production 2026jul22 fullmap with ``tablassert quick-map``: every substance wording
 # resolves to a family CURIE only, and each member is included because it is some wording's
 # fall-through once the higher-PR members are excluded -- UMLS:C1550678 "Water Specimen" for
-# "water"/"WATER"/"Water", UMLS:C5981420 "Purified water (specimen)" for "purified water") -- and
-# the GHB/GBL pair mis-resolving the sodium oxybate subject family ("sodium oxybate" wordings
-# resolve to CHEBI:30830 ONLY, so those 14 of 17 v1.24.1 edges drop, while "4-HYDROXYBUTANOIC
-# ACID" falls through to UMLS:C0673093 (4-hydroxybutyric acid, biolink:Drug) and its 3 edges
-# survive under the correct identifier; CHEBI:42639 gamma-Butyrolactone shares the same wording
-# channel and never wins ranking today). NOT excluded: UMLS:C0012798 "Diuretics" (a real
+# "water"/"WATER"/"Water", UMLS:C5981420 "Purified water (specimen)" for "purified water").
+# GHB/GBL (CHEBI:30830, CHEBI:42639) were excluded here in the v1.24.1 audit and are deliberately
+# ALLOWED again from 1.25.1 (user decision): sodium oxybate is an approved narcolepsy medicine, so
+# its "sodium oxybate" / "4-HYDROXYBUTANOIC ACID" / "OXYBATE" rows ship under whatever identifier
+# the fullmap ranks first (CHEBI:30830 gamma-hydroxybutyric acid, UMLS:C0673093, UMLS:C0000503).
+# NOT excluded: UMLS:C0012798 "Diuretics" (a real
 # drug-class CURIE whose "WATER PILL"/"WATER PILLS" wording is denied at load instead),
 # UMLS:C0719841 "Dextrose and Water" and the seawater concepts (UMLS:C0036499/C0939938/C1161329)
 # -- reached by wordings that resolve to real products, absent from the 1.24.1 graph.
-_SUBJECT_EXCLUDE_REGEX: tuple[str, ...] = (
+_SUBJECT_EXCLUDE_REGEX_CURATED: tuple[str, ...] = (
     r"^UMLS:C1314429$",
     r"^UMLS:C0812740$",
     # water-as-substance family (74 v1.24.1 subject edges across the family)
@@ -1114,9 +1130,20 @@ _SUBJECT_EXCLUDE_REGEX: tuple[str, ...] = (
     r"^UMLS:C5981420$",
     r"^UMLS:C1550678$",
     r"^MESH:D008900$",
-    # GHB/GBL identifiers mis-resolving sodium oxybate (17 v1.24.1 subject edges)
-    r"^CHEBI:30830$",
-    r"^CHEBI:42639$",
+)
+
+# The ICD-10-CM poison screen at the IDENTIFIER level, applied to EVERY table's subject. The
+# wording denylist (:data:`_TABLE_SUBJECT_DENYLIST`) drops observed-use rows that NAME a screened
+# substance; it cannot catch reporter spellings that RESOLVE to one (FAERS "LEVOXINE" -> hydrazine,
+# "TPN" -> chlorothalonil, "DIAZIDE" -> diazinon) nor label-ingredient subjects of the
+# contraindication table ("TURPENTINE", "Formaldehyde"), all of which reached the 1.25.1 candidate
+# graph as poison subject nodes. ``icd10cm_curies.SCREENED_CURIES`` is the generated list of
+# fullmap CURIEs whose own preferred name is a screened, non label-backed substance (derivation:
+# tests/eval/icd10cm_curies.py); excluding them at resolution removes the poison identity while a
+# mis-resolved wording falls through to its real drug ("LEVOXINE" -> CHEBI:18332 levothyroxine).
+_SUBJECT_EXCLUDE_REGEX: tuple[str, ...] = (
+    *_SUBJECT_EXCLUDE_REGEX_CURATED,
+    *(f"^{re.escape(curie)}$" for curie, _name, _key in icd10cm_curies.SCREENED_CURIES),
 )
 
 # Deliberately KEPT — the outcome/exposure relatives that name REAL conditions: "sensory loss"

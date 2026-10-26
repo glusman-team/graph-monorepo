@@ -259,8 +259,22 @@ rig:
           not carry a biolink:applied_to_treat claim; the label-backed exemption
           keeps substances whose poison and medicine identities coexist
           (lithium, zinc, alcohol, permethrin), and only observed-use rows are
-          screened because approved-treats and contraindication subjects are
-          label ingredients by construction
+          screened by wording because approved-treats and contraindication
+          subjects are label ingredients by construction
+      - file_name: "All assertion tables: resolved subject identifiers"
+        filtered_records: >-
+          subjects that resolve to one of 350 fullmap identifiers whose own
+          preferred name is an ICD-10-CM (FY2027) screened, non label-backed
+          substance (hydrazine, diazinon, turpentine, formaldehyde, ...), plus
+          the water-as-substance identifier family (CHEBI:15377 and its
+          UMLS/MeSH twins)
+        rationale: >-
+          a reporter spelling can resolve to a poison it never names (FAERS
+          'LEVOXINE' -> hydrazine) and label-ingredient subjects bypass the
+          observed-use wording screen; excluding the identifiers at resolution
+          lets such a wording fall through to its real drug or drop, so no
+          poison or water subject node is emitted. GHB/GBL (sodium oxybate) are
+          deliberately not screened: sodium oxybate is an approved medicine
     future_considerations:
       - category: edge_content
         consideration: >-

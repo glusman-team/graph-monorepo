@@ -47,12 +47,37 @@ DAG (or a `dakp_build_<stage>` job for one output), and find the per-stage
 artifacts in `dagster/projects/dakp/published/dakp/` (or wherever
 `$MO_PUBLISHED_ROOT` points).
 
+## DAKP sources
+
+| Source | infores | Role |
+|---|---|---|
+| DailyMed SPL labels | `infores:dailymed` | indications, contraindications, warnings (assertion text) |
+| FAERS | `infores:faers` | observed-use (`biolink:applied_to_treat`) reports |
+| Drugs@FDA | (none; folded into approval reconciliation) | FDA approval backing for approved-treats edges |
+| EMA medicines registry, EPAR documents, SmPCs | `infores:ema` (EPAR evidence also as `infores:epar` upstream id) | EU authorisations and label text |
+| Health Canada Canada Vigilance | `infores:canada-vigilance` | observed-use reports |
+| CDC/NCHS ICD-10-CM Table of Drugs and Chemicals (FY2027) | `infores:icd10cm` | poison screen: supporting data source on observed-use edges, contributes no assertion text |
+
+The ICD-10-CM screen (added in DAKP 1.25.1) keeps poisons out of the graph two ways:
+
+- Wording: observed-use rows whose subject text names a substance the Table lists with no
+  Adverse-effect code (T36-T65, `icd10cm_denylist.py`) are dropped at load by one Tablassert
+  `antijoin` filter.
+- Identifier: every table's subject resolution excludes the fullmap CURIEs whose own name is such a
+  substance (`icd10cm_curies.py`), so a reporter spelling that resolves to a poison (`LEVOXINE` ->
+  hydrazine) or a label ingredient (`TURPENTINE`) cannot surface as a node.
+
+Substances that regulator label text names as medicines are exempt (lithium, zinc, permethrin).
+Water-as-substance identifiers and wordings are excluded separately. GHB/GBL (sodium oxybate) are
+allowed: it is an approved medicine. Regenerate both snapshots with the scripts in
+`dagster/projects/dakp/pipeline/tests/eval/` when the ICD-10-CM release or fullmap changes.
+
 ## Build one output
 
 Each stage publishes its own artifact and each stage gets a narrow job, so a
 single output can be rebuilt without running any of the others. From
 `dagster/projects/dakp` (stages: `acquire_<source>` for dailymed, faers,
-drugsfda, ema, ema_smpc, canada_vigilance and `acquire_ner_models`;
+drugsfda, ema, ema_smpc, canada_vigilance, icd10cm and `acquire_ner_models`;
 `extract_<source>`; `shape_approved_treats`, `shape_faers_uses`,
 `shape_contraindications`; `ner_training_export`; `tablassert_configs`;
 `kg_build`, `kg_qc`, `legacy_tsv_export`):
