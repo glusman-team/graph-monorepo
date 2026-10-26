@@ -101,12 +101,13 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
 
 - Cut a release with the `release-dakp` skill: explicit `DAKP_PUBLICATION_VERSION`, verify
   validate-kgx + qc.json + the poison/water screens, then the HF upload/card/prune/tag flow.
-- `pipeline/src/dakp_pipeline/icd10cm_{denylist,curies}.py` are GENERATED snapshots (the
-  ICD-10-CM poison screen at wording and identifier level). Their only writers are
-  `pipeline/tests/eval/icd10cm_{denylist,curies}.py`; regenerate them when the ICD-10-CM
-  fiscal-year ZIP or the fullmap changes (the curies derivation resolves through the
-  production fullmap), then regenerate `pipeline/tests/fixtures/tables/*.yaml` goldens.
-  Never hand-edit either snapshot.
+- The ICD-10-CM poison screen is DERIVED IN-DAG by the `derive_icd10cm_screen` and
+  `derive_icd10cm_curies` assets (`pipeline/src/dakp_pipeline/icd10cm_screen.py` holds the
+  logic): the wording denylist always derives from the acquired release; the identifier
+  screen resolves through the fullmap and defers without one. The checked-in
+  `icd10cm_{denylist,curies}.py` snapshots are the OFFLINE DEFAULT (CI, defs checks) and the
+  regression baseline; `pipeline/tests/eval/icd10cm_{denylist,curies}.py` remain their only
+  writers, sharing the screen module's functions. Never hand-edit the snapshots.
 
 ## Migration status
 

@@ -57,8 +57,14 @@
   </p>
   <ul>
     <li><strong>Wording:</strong> observed-use rows whose subject text names a screened substance (T36-T65 ranges) are dropped at load by a single Tablassert anti-join filter.</li>
-    <li><strong>Identifier:</strong> subject resolution excludes 350 identifiers whose own name is a screened substance, so a reporter spelling that resolves to a poison (FAERS "LEVOXINE" resolves to hydrazine) or a label ingredient (turpentine) cannot surface as a node in any predicate.</li>
+    <li><strong>Identifier:</strong> subject resolution excludes identifiers whose own name is a screened substance, so a reporter spelling that resolves to a poison (FAERS "LEVOXINE" resolves to hydrazine) or a label ingredient (turpentine) cannot surface as a node in any predicate.</li>
   </ul>
+  <p>
+    Both screens are derived by the pipeline itself on every build
+    (<code>derive_icd10cm_screen</code> / <code>derive_icd10cm_curies</code> assets) from the
+    acquired ICD-10-CM release, the Drugs@FDA register, the shaped approved-treats table, and
+    the configured fullmap - a new Table release flows into the graph without a code change.
+  </p>
   <p>
     Substances that regulator label text names as medicines are exempt (lithium,
     zinc, arsenic trioxide, permethrin). Water-as-substance identifiers and

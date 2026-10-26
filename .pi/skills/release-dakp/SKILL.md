@@ -62,9 +62,11 @@ before mutating the public dataset when the request did not already authorize th
 
 - Gated tests need the real Tablassert: `uv run --with 'tablassert[cli,log,qc]==22.2.0'
   pytest` inside `pipeline/`; plain `uv run pytest` silently skips them (importorskip).
-- Generated denylist snapshots (`pipeline/src/dakp_pipeline/icd10cm_{denylist,curies}.py`) are
-  rewritten only by `tests/eval/icd10cm_{denylist,curies}.py`; if the ICD-10-CM release or the
-  fullmap changed, regenerate them (the curies one needs the production fullmap) BEFORE the
-  rebuild, then regenerate `tests/fixtures/tables/*.yaml` goldens.
+- The poison screen derives in-DAG (`derive_icd10cm_screen` always;
+  `derive_icd10cm_curies` when a fullmap is configured). A changed ICD-10-CM release or
+  fullmap therefore flows into the configs on the next build with NO manual step; when it
+  does, also refresh the checked-in snapshots via `tests/eval/icd10cm_{denylist,curies}.py`
+  so the offline default and the build-time derivation agree, then regenerate
+  `tests/fixtures/tables/*.yaml` goldens.
 - Changing table-config content changes the Tablassert config fingerprint: the tablassert and
   kg stages re-run warm-cached; shapes and extracts do not. Budget the run accordingly.

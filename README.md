@@ -60,7 +60,9 @@ artifacts in `dagster/projects/dakp/published/dakp/` (or wherever
 | Health Canada Canada Vigilance | `infores:canada-vigilance` | observed-use reports |
 | CDC/NCHS ICD-10-CM Table of Drugs and Chemicals (FY2027) | `infores:icd10cm` | poison screen: supporting data source on observed-use edges, contributes no assertion text |
 
-The ICD-10-CM screen (added in DAKP 1.25.1) keeps poisons out of the graph two ways:
+The ICD-10-CM screen (added in DAKP 1.25.1) keeps poisons out of the graph two ways;
+both screens are derived inside the DAG at build time (`derive_icd10cm_screen` +
+`derive_icd10cm_curies` assets), not baked into the code:
 
 - Wording: observed-use rows whose subject text names a substance the Table lists with no
   Adverse-effect code (T36-T65, `icd10cm_denylist.py`) are dropped at load by one Tablassert
