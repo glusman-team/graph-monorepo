@@ -44,7 +44,9 @@ Monorepo for ISB multiomics knowledge-graph pipelines:
   `DAKP_EXTRACT_WORKER_BIN`, `DAKP_FULLMAP` (absent => deferred Tablassert
   handoff, reported not failed), `DAKP_FORCE`, `DAKP_NER_OFFLINE`,
   `DAKP_THREADS`, `DAKP_MEMORY_BUDGET_GB`, `DAKP_QUARTER_LIMIT`,
-  `DAKP_RELEASE_LIMIT`, `DAKP_PUBLICATION_VERSION`.
+  `DAKP_RELEASE_LIMIT`, `DAKP_PUBLICATION_VERSION`, `DAKP_SOURCE_MAX_AGE_DAYS`
+  (freshness gate on dailymed/drugsfda/ema re-downloads, default 7),
+  `DAKP_ICD10CM_URL` (override the fiscal-year-pinned ICD-10-CM ZIP).
 - Every python package has a cached nx `test` target (`project.json`);
   run tests with `npx nx affected -t test`, never bare pytest loops.
 - Stage-to-stage handoff is the published artifact under `$MO_PUBLISHED_ROOT`,
@@ -66,6 +68,8 @@ npx nx affected -t test          # fast loop: only what changed
 cd dagster && uvx dg list project
 go build -o bin/dakp-extract ./cmd/dakp-extract   # inside projects/dakp/workers/go
 uv run dg check defs                    # inside dagster/deployments/local (loads every location)
+# gated dakp pipeline tests (tablassert-dependent tests importorskip; CI runs ungated):
+cd dagster/projects/dakp/pipeline && uv run --with 'tablassert[cli,log,qc]==22.2.0' pytest
 # one output only, no other stage runs (inside dagster/projects/dakp):
 uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions
 uv run dagster asset materialize --select kg_build -m dakp_dag.definitions
@@ -92,6 +96,17 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
   behavior changes. gonx picks up targets automatically.
 - **Shared python code**: goes in `libs/*` only if generic; else keep it in the
   project. Promote Go code to a shared module only when two DAGs need it.
+
+## Releases and generated snapshots
+
+- Cut a release with the `release-dakp` skill: explicit `DAKP_PUBLICATION_VERSION`, verify
+  validate-kgx + qc.json + the poison/water screens, then the HF upload/card/prune/tag flow.
+- `pipeline/src/dakp_pipeline/icd10cm_{denylist,curies}.py` are GENERATED snapshots (the
+  ICD-10-CM poison screen at wording and identifier level). Their only writers are
+  `pipeline/tests/eval/icd10cm_{denylist,curies}.py`; regenerate them when the ICD-10-CM
+  fiscal-year ZIP or the fullmap changes (the curies derivation resolves through the
+  production fullmap), then regenerate `pipeline/tests/fixtures/tables/*.yaml` goldens.
+  Never hand-edit either snapshot.
 
 ## Migration status
 
