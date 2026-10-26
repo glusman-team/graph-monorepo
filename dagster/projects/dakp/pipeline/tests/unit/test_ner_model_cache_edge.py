@@ -88,21 +88,42 @@ def test_default_downloader_raises_clear_error_without_huggingface_hub(
         default_downloader("acme/tiny-ner", tmp_path)
 
 
+@pytest.mark.parametrize("token", ["hf_test_environment", "hf_test_saved", None])
 def test_default_downloader_uses_huggingface_hub_when_present(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, token: str | None
 ) -> None:
+    """Explicit credentials support private snapshots, while public overrides need no token."""
     captured: dict[str, object] = {}
     module = types.ModuleType("huggingface_hub")
 
-    def _snapshot_download(repo_id: str, local_dir: Path) -> None:
+    def _snapshot_download(repo_id: str, local_dir: Path, token: str | None = None) -> None:
         captured["repo_id"] = repo_id
         captured["local_dir"] = local_dir
+        captured["token"] = token
 
+    module.get_token = lambda: token  # type: ignore[attr-defined]
     module.snapshot_download = _snapshot_download  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "huggingface_hub", module)
 
     default_downloader("acme/tiny-ner", tmp_path)
-    assert captured == {"repo_id": "acme/tiny-ner", "local_dir": tmp_path}
+    assert captured == {"repo_id": "acme/tiny-ner", "local_dir": tmp_path, "token": token}
+
+
+def test_download_auth_failure_leaves_no_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Denied private access must not become a cache hit or silently use another model."""
+    module = types.ModuleType("huggingface_hub")
+    module.get_token = lambda: "hf_test_denied"  # type: ignore[attr-defined]
+
+    def denied(**kwargs: object) -> None:
+        raise PermissionError("private model access denied")
+
+    module.snapshot_download = denied  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", module)
+    with pytest.raises(PermissionError, match="private model access denied"):
+        ensure_model("private/model", cache_dir=tmp_path)
+    assert not list(tmp_path.rglob("manifest.json"))
 
 
 # --- ensure_model: re-download branches -----------------------------------------

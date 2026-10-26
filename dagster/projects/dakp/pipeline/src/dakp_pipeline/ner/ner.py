@@ -98,7 +98,14 @@ from dakp_pipeline.ner.model_cache import NERDependencyError, default_model_cach
 # gliner2 architecture split — so re-fine-tuning that FAERS/DailyMed corpus for gliner2 is a
 # recorded follow-up. Requires ``gliner2>=2.1`` (first release with ``BoundaryExtractor`` and
 # ``AutoExtractor`` architecture auto-selection). Override for another GLiNER2/2.5 checkpoint.
-DEFAULT_MODEL = "fastino/gliner2.5-base-v1"
+DEFAULT_MODEL = "SkyeAv/relmedner-biomed-dakp-20261020"
+
+
+def default_model_id() -> str:
+    """Resolve the runtime override consistently for acquisition and inference."""
+    return os.environ.get("DAKP_NER_MODEL", "").strip() or DEFAULT_MODEL
+
+
 #: The prompt-engineered label vocabulary: label -> description, passed VERBATIM as gliner2's
 #: ``entity_types`` on every inference call. Both call paths DAKP uses funnel it straight into
 #: ``Schema.entities()`` (``inference/runtime.py:1293`` per-text, ``:1335`` batched), which
@@ -1289,7 +1296,7 @@ class DiseaseNER:
         *,
         offline: bool = True,
         gazetteer: Gazetteer | Mapping[str, str] | None = None,
-        model_id: str = DEFAULT_MODEL,
+        model_id: str | None = None,
         model_labels: Mapping[str, str] = MODEL_LABELS,
         threshold: float = DEFAULT_THRESHOLD,
         accept_threshold: float = DEFAULT_ACCEPT_THRESHOLD,
@@ -1313,7 +1320,7 @@ class DiseaseNER:
         self._offline = offline
         if not model_labels:
             raise ValueError("model_labels must contain at least one label")
-        self._model_id = model_id
+        self._model_id = default_model_id() if model_id is None else model_id
         # Copied, not aliased: a caller mutating its own mapping must not change what an already
         # constructed backend requests (the mention-cache fingerprint is taken from this value).
         self._model_labels: dict[str, str] = dict(model_labels)
