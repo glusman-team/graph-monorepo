@@ -180,12 +180,12 @@ cd dagster/deployments/local && uv run dg check defs
   [glusman-team.github.io/graph-monorepo](https://glusman-team.github.io/graph-monorepo/)
   mirrors `docs/`. `AGENTS.md` is the canonical agent-facing context and stays
   in sync with this file.
-- **Security problems:** do not open a public issue. Email the maintainers
-  listed in the [Code of Conduct](CODE_OF_CONDUCT.md) so the report stays
-  private until a fix ships.
+- **Security problems:** do not open a public issue. Contact a maintainer
+  privately on GitHub (direct message or private security advisory) so the
+  report stays private until a fix ships.
 - **Conduct:** all contributors are expected to follow the
-  [Code of Conduct](CODE_OF_CONDUCT.md); violations go to the enforcement
-  contacts named there.
+  [Code of Conduct](CODE_OF_CONDUCT.md); violations go to the community
+  leaders responsible for enforcement, reached the same private way.
 
 ## License
 
