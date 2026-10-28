@@ -136,3 +136,10 @@ BLAKE3 cache via `internal/pipesutil`, bump `WorkerVersion` on behavior change.
 including packages nested inside a project, then `dg check defs` so every code
 location must load), go (build/test/golangci-lint per workers module),
 `nix flake check`. Issue templates in `.github/ISSUE_TEMPLATE/`.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the daily edit/check loop,
+repo rules, and the quality gates. PRs use
+[.github/pull_request_template.md](.github/pull_request_template.md); all
+contributors are held to the [Code of Conduct](CODE_OF_CONDUCT.md).

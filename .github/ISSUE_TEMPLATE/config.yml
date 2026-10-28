@@ -6,3 +6,6 @@ contact_links:
   - name: Nx documentation
     url: https://nx.dev
     about: Task graph, caching, and affected commands.
+  - name: Tablassert
+    url: https://github.com/SkyeAv/Tablassert
+    about: Assertion shaping downstream of the DAKP handoff (fullmap, antijoin filters).
