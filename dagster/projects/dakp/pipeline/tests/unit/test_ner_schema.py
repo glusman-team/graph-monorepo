@@ -10,8 +10,8 @@ silently regress it, and neither shows up as an exception:
    here captures ``entity_types`` and asserts it equals :data:`MODEL_LABELS`.
 2. **An unmodelled qualifier enters the pipeline.** ``MENTION_TYPES`` is a closed vocabulary;
    ``severity_qualifier`` is the concrete counter-example (a plausible label DAKP has no column
-   for). It must be dropped at the span adapter, and it must not exist anywhere in ``src/``,
-   ``tables/`` or the gold fixture.
+   for). It must be dropped at the span adapter, and it must not exist anywhere in ``src/`` or
+   ``tables/``.
 
 Channel routing is tested at both levels: the pure span routers (fast, hermetic) and the full
 ``extract`` / ``extract_batch`` paths through the fake ``gliner2`` module shared with
@@ -390,12 +390,12 @@ def test_unmodelled_qualifier_never_becomes_a_mention(
     assert {m.type for m in [*single, *batched]} <= set(MENTION_TYPES)
 
 
-def test_shipped_code_tables_and_gold_fixture_never_mention_the_unmodelled_qualifier() -> None:
+def test_shipped_code_tables_never_mention_the_unmodelled_qualifier() -> None:
     """The closed vocabulary is only real if nothing shipped re-introduces the dropped label.
 
-    A stray constant, table column or gold annotation naming ``severity_qualifier`` would mean
+    A stray constant or table column naming ``severity_qualifier`` would mean
     DAKP claims a type it cannot produce (or produces one it never reviewed), so the whole tree
-    that ships — ``src/``, ``tables/`` and the gold fixture — is grepped. Test files are excluded
+    that ships — ``src/`` and ``tables/`` — is grepped. Test files are excluded
     on purpose: they are where the drop is asserted.
     """
     root = Path(__file__).resolve().parents[2]
@@ -404,7 +404,6 @@ def test_shipped_code_tables_and_gold_fixture_never_mention_the_unmodelled_quali
         for path in itertools.chain((root / "src").rglob("*"), (root / "tables").rglob("*"))
         if path.is_file() and "__pycache__" not in path.parts
     ]
-    paths.append(root / "tests" / "eval" / "ner_gold.json")
     assert paths, "no shipped files found — the glob is broken, this test would pass vacuously"
     offenders = [
         str(path.relative_to(root))

@@ -295,8 +295,7 @@ def patient_clause_contexts(
     (:data:`CONTEXT_INTRO`) vouching for the context (never starting inside it), a
     non-blank normalized context, the disease-range rule (Biolink's
     ``disease_context_qualifier`` is disease-ranged), and the companion-medication guard
-    (:data:`MEDICATION_CONTEXT`). Shared verbatim by the contraindication shaper and the
-    ``ner_export`` training-data rows.
+    (:data:`MEDICATION_CONTEXT`). Shared verbatim by the contraindication shaper.
     """
     groups: dict[object, tuple[str, list[tuple[int, int, int]]]] = {}
     for index, mention in enumerate(objects):

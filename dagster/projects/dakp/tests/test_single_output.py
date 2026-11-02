@@ -9,7 +9,7 @@ Two invariants the monorepo contract rests on:
 
 Plus the end-to-end shape of one full run: every declared artifact published, stages ordered
 by lineage, the operation index serving the second run, the deferred Tablassert handoff
-reported (not failed) through kg_build / kg_qc / legacy_tsv_export, and a crashed Go worker
+reported (not failed) through kg_build / kg_qc, and a crashed Go worker
 failing its stage without publishing.
 """
 
@@ -37,10 +37,6 @@ def refs_file(stage: str) -> str:
     return f"dakp/refs/{stage}.refs.json"
 
 
-def published_refs(dag_env, stage: str) -> list[dict]:
-    return json.loads((dag_env.published / "dakp" / "refs" / f"{stage}.refs.json").read_text())
-
-
 def test_full_run_publishes_every_declared_artifact(dag_env, stubbed_pipeline):
     result = run_job("dakp_build")
     assert result.success, failure_text(result) if not result.success else ""
@@ -55,12 +51,6 @@ def test_full_run_publishes_every_declared_artifact(dag_env, stubbed_pipeline):
     assert len(edges.read_text().splitlines()) == 1
     qc = json.loads((dag_env.published / "dakp" / "kg" / assets.QC_REPORT).read_text())
     assert {"nodes": 2, "edges": 1, "dangling_edges": 0} == qc
-
-    # the legacy retrofit is the REAL legacy_tsv code over the published pair
-    tsvs = sorted(p.stem for p in (dag_env.workdir / "kgx").glob("*.tsv"))
-    stem = stubbed_pipeline.stem
-    assert tsvs == [f"{stem}.edges", f"{stem}.nodes"]
-    assert len(published_refs(dag_env, assets.LEGACY_TSV_EXPORT)) == 2
 
 
 def test_full_run_orders_stages_by_lineage(dag_env, stubbed_pipeline):
@@ -130,7 +120,6 @@ def test_force_bypasses_the_operation_index(dag_env, stubbed_pipeline, monkeypat
         ("shape_approved_treats", "extract_dailymed"),
         (assets.KG_BUILD, "shape_approved_treats"),
         (assets.KG_QC, assets.KG_BUILD),
-        (assets.LEGACY_TSV_EXPORT, assets.KG_BUILD),
     ],
 )
 def test_narrow_run_fails_loudly_without_its_published_upstream(
@@ -152,7 +141,6 @@ def test_deferred_handoff_is_reported_not_failed(dag_env, stubbed_pipeline):
 
     assert materialization(result, assets.KG_BUILD)["deferred"] is True
     assert materialization(result, assets.KG_QC)["deferred"] is True
-    assert materialization(result, assets.LEGACY_TSV_EXPORT)["deferred"] is True
 
     published = published_files(dag_env.published)
     assert not any(name.startswith("dakp/kg/") for name in published), (

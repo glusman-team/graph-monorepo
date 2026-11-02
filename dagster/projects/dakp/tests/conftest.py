@@ -12,10 +12,9 @@ their documented seams:
   is what makes the already-done cache-hit path testable
 - Tablassert: ``tablassert.generate`` / ``tablassert.run`` (their own docstring names
   ``monkeypatch.setattr("dakp_pipeline.tablassert.run", ...)`` as the seam)
-- NER export: ``ner_export.export``
 
-Left REAL on purpose: the refs handoff (publish/load), the op-index skip, ``legacy_tsv``
-(the KGX -> legacy TSV retrofit), ``mo_kg.kgx`` QC, and every dagster definition.
+Left REAL on purpose: the refs handoff (publish/load), the op-index skip, ``mo_kg.kgx`` QC,
+and every dagster definition.
 """
 
 import importlib
@@ -186,11 +185,10 @@ def stubbed_pipeline(monkeypatch, dag_env) -> SimpleNamespace:
     """Stub every heavy pipeline entry point at its documented seam (see module docstring).
 
     ``defer_tablassert()`` switches the handoff to its deferred mode (no fullmap), so the
-    deferral path through kg_build / kg_qc / legacy_tsv_export is testable.
+    deferral path through kg_build / kg_qc is testable.
     """
     acquire = importlib.import_module("dakp_pipeline.acquire")
     families = importlib.import_module("dakp_pipeline.families")
-    ner_export = importlib.import_module("dakp_pipeline.ner_export")
     tablassert = importlib.import_module("dakp_pipeline.tablassert")
     state = SimpleNamespace(deferred=False, calls=[], stem="DRUG_APPROVALS_KP_test")
 
@@ -272,13 +270,8 @@ def stubbed_pipeline(monkeypatch, dag_env) -> SimpleNamespace:
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         return [make_ref(report_path, rows=None)]
 
-    def fake_export(inputs, ctx):
-        state.calls.append("ner_export.export")
-        return [make_ref(dag_env.workdir / "ner" / "training_bundle.json", rows=len(inputs))]
-
     monkeypatch.setattr(tablassert, "generate", fake_generate)
     monkeypatch.setattr(tablassert, "run", fake_run)
-    monkeypatch.setattr(ner_export, "export", fake_export)
 
     def defer_tablassert() -> None:
         state.deferred = True

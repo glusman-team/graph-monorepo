@@ -21,7 +21,7 @@ description: Scaffold a new Dagster code location (KG DAG) in this monorepo, wir
    for the shape: `acquire_<source>` -> `extract_<source>` (Go pipes worker or an
    in-process extractor, generated from one `SOURCES` table) -> `shape_*` (one per
    edge family in the pipeline's registry) -> `tablassert_configs` -> `kg_build` ->
-   `kg_qc` / `legacy_tsv_export`).
+   `kg_qc`).
    Copy its output contract too: one published artifact per stage (the stage's
    ArtifactRef list at `<published>/<dag>/refs/<stage>.refs.json`, the KGX pair
    under `<published>/<dag>/kg/`), stages

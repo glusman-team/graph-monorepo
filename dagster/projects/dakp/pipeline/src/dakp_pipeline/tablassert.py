@@ -2500,7 +2500,7 @@ class TablassertRunner:
 
                 kgx_dir = Workdir(ctx.workdir).kgx
                 stem = _graph_stem(graph_yaml)
-                report["kgx_stem"] = stem  # the downstream legacy-tsv export keys off this
+                report["kgx_stem"] = stem  # kg_build locates the KGX pair via this
                 edges_path = kgx_dir / f"{stem}.edges.ndjson"
                 if not edges_path.is_file():
                     msg = f"expected exactly one {stem}.edges.ndjson under {kgx_dir} after a successful build-kg, found 0"

@@ -54,7 +54,7 @@ class Workdir:
 
     @property
     def kgx(self) -> Path:
-        """Final KGX NDJSON + RIG + legacy TSV outputs produced by Tablassert (``kgx/``)."""
+        """Final KGX NDJSON + RIG outputs produced by Tablassert (``kgx/``)."""
         return self.root / "kgx"
 
     @property

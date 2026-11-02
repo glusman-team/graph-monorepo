@@ -83,8 +83,8 @@ single output can be rebuilt without running any of the others. From
 `dagster/projects/dakp` (stages: `acquire_<source>` for dailymed, faers,
 drugsfda, ema, ema_smpc, canada_vigilance, icd10cm and `acquire_ner_models`;
 `extract_<source>`; `shape_approved_treats`, `shape_faers_uses`,
-`shape_contraindications`; `ner_training_export`; `tablassert_configs`;
-`kg_build`, `kg_qc`, `legacy_tsv_export`):
+`shape_contraindications`; `tablassert_configs`;
+`kg_build`, `kg_qc`):
 
 ```sh
 uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions    # only kg_build
