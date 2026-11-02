@@ -547,7 +547,7 @@ ner = [
     { name = "huggingface-hub", specifier = ">=0.34" },
     { name = "peft", specifier = ">=0.14" },
     { name = "tablassert", extras = ["cli", "log", "qc"], specifier = ">=22.2.0,<23" },
-    { name = "torch", specifier = ">=2.8,<2.9", index = "https://download.pytorch.org/whl/cu126" },
+    { name = "torch", specifier = ">=2.8,<2.16", index = "https://download.pytorch.org/whl/cu126" },
     { name = "transformers", specifier = ">=5,<6" },
 ]
 
