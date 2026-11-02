@@ -69,6 +69,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/nix-installer-action@v23
       - uses: DeterminateSystems/magic-nix-cache-action@v8
       - run: nix flake check --no-build --no-warn-dirty
