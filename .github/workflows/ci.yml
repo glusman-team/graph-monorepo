@@ -56,7 +56,7 @@ jobs:
           go test ./...
         working-directory: dagster/projects/dakp/workers/go
       - name: lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           # v1 binaries are built with go1.24 and refuse go 1.26 targets.
           # Pin the v2 line (matches the devshell toolchain) instead of the
