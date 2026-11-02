@@ -11,6 +11,6 @@
   },
   "devDependencies": {
     "@naxodev/gonx": "^2.1.0",
-    "nx": "^23.2.1"
+    "nx": "^24.0.3"
   }
 }
