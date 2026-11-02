@@ -5,7 +5,7 @@ name = "graph-monorepo-workspace-local"
 version = "0.0.0"
 requires-python = ">=3.10,<3.15"
 dependencies = [
-  "dagster==1.13.24",
-  "dagster-dg-cli==1.13.24",
-  "dagster-webserver==1.13.24",
+  "dagster==1.13.28",
+  "dagster-dg-cli==1.13.28",
+  "dagster-webserver==1.13.28",
 ]
