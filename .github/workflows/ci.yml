@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: dagster/projects/dakp/workers/go/go.mod
           cache-dependency-path: dagster/projects/dakp/workers/go/go.sum
