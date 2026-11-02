@@ -10,7 +10,7 @@
     "affected": "nx affected -t test"
   },
   "devDependencies": {
-    "@naxodev/gonx": "^2.1.0",
+    "@naxodev/gonx": "^4.1.2",
     "nx": "^24.0.3"
   }
 }
