@@ -194,6 +194,11 @@ from dakp_pipeline.sources import icd10cm as icd10cm_source
 INFORES_DAKP = "infores:drugapprovals-kp"
 AGENT_TYPE = "manual_validation_of_automated_agent"
 
+#: The drug-composition (product -> active ingredient) assertion table: the one family whose
+#: object is a chemical rather than a disease. Declared up here because the source-URL, RIG and
+#: provenance tables below all key on it.
+COMPOSITION_TABLE = "has_active_ingredient_assertions"
+
 GRAPH_NAME = "DRUG_APPROVALS_KP"
 #: Fallback ``fullmap`` written into ``graph.yaml`` when no real fullmap is configured (deferred
 #: runs, which never invoke ``build-kg``). Tablassert's ``Graph`` model REQUIRES a ``fullmap``
@@ -297,11 +302,16 @@ _TABLE_SOURCE_URLS: dict[str, tuple[str, ...]] = {
         dailymed_source.FULL_RELEASE_INDEX_URL,
         ema_documents_source.EMA_DOCUMENTS_URL,
     ),
+    COMPOSITION_TABLE: (
+        dailymed_source.FULL_RELEASE_INDEX_URL,
+        drugsfda_source.DRUGSFDA_DATA_FILES_URL,
+    ),
 }
 GRAPH_DESCRIPTION = (
     "Drug Approvals Knowledge Provider: FDA/EMA-approved treatment relationships, "
-    "FAERS-observed applied-to-treat uses, and contraindications text-mined from "
-    "DailyMed, modeled from DailyMed, Drugs@FDA, FAERS, and the EMA medicines registry. "
+    "FAERS-observed applied-to-treat uses, contraindications text-mined from DailyMed, and "
+    "drug-product/active-ingredient composition from DailyMed SPL and Drugs@FDA, "
+    "modeled from DailyMed, Drugs@FDA, FAERS, and the EMA medicines registry. "
     "Every edge carries the evidence identifiers backing it; approved-treats edges also carry "
     "clinical approval status and FDA application numbers or EMA product numbers, FAERS-observed "
     "use edges add case counts, and contraindication edges carry application numbers where available."
@@ -526,6 +536,29 @@ RIG_INCLUDED_CONTENT: tuple[dict[str, str], ...] = (
             "indications_and_usage, contraindications, boxed-warning, and warnings/precautions section text, "
             "SPL set identifiers, FDA application numbers"
         ),
+    },
+    {
+        "file_name": "DailyMed SPL manufactured products",
+        "included_records": (
+            "manufactured products and their ACTIVE ingredients (HL7 ingredient class codes "
+            "ACTIB/ACTIM/ACTIR and the legacy activeIngredient form), for every label type "
+            "DAKP acquires (human Rx/OTC, animal, homeopathic); both the labeled ingredient "
+            "substance and its active moiety are kept. Inactive ingredients (IACT), impurities "
+            "and color/flavor entries are excluded, as are rows whose product name IS the "
+            "ingredient name (a generic's tautological self-edge)"
+        ),
+        "fields_used": (
+            "manufacturedProduct product name and NDC product code, ingredientSubstance name/UNII, "
+            "activeMoiety name/UNII, SPL set identifiers (publications), FDA application numbers (audit)"
+        ),
+    },
+    {
+        "file_name": "Drugs@FDA Products.txt",
+        "included_records": (
+            "product (brand or generic) names with their active ingredients, the composition "
+            "half of the has_active_ingredient edges that carries FDA application numbers"
+        ),
+        "fields_used": "DrugName, ActiveIngredient (split on top-level semicolons), ApplNo/ApplType",
     },
     {
         "file_name": "FAERS quarterly ASCII zips",
@@ -780,8 +813,11 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
             "location": icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL,
             "description": "CDC/NCHS release archive; its drug-table XML screens the observed-use subjects DAKP is willing to assert.",
         },
-        # No Drugs@FDA entry: no assertion table declares it as a section source (it is joined
-        # in upstream, at assertion-build time), so the RIG audit would reject it.
+        {
+            "file_name": "Drugs@FDA data files (Products.txt)",
+            "location": drugsfda_source.DRUGSFDA_DATA_FILES_URL,
+            "description": "FDA Drugs@FDA product register; brand/generic product names with their active ingredients and application numbers.",
+        },
         # REJECTED from the upstream ``NCATSTranslator/translator-ingests`` DAKP RIG: its legacy
         # KGX-file ``relevant_files`` (``drug_approvals_kg_{edges,nodes}.jsonl.gz`` at
         # db.systemsbiology.net) are legacy pipeline OUTPUT artifacts, not inputs; no table
@@ -827,8 +863,8 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
             "ingest_categories": ["translator_knowledge_creator"],
             "utility": (
                 "Provides FDA- and EMA-approved drug-disease treatment relationships, FAERS- and Canada "
-                "Vigilance-observed applied-to-treat uses, and SPL-mined contraindications for "
-                "Translator querying."
+                "Vigilance-observed applied-to-treat uses, SPL-mined contraindications, and FDA "
+                "drug-product/active-ingredient composition for Translator querying."
             ),
             "scope": (
                 "Approved-treats edges (DailyMed SPL indications joined to Drugs@FDA applications and "
@@ -836,8 +872,9 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
                 "EPAR indication text, and mined EMA SmPC product-information indications), FAERS and "
                 "Canada Vigilance observed-use edges, and contraindication edges text-mined from "
                 "DailyMed SPL sections "
-                "and EMA SmPC product-information sections; all other content of the upstream feeds is "
-                "out of scope."
+                "and EMA SmPC product-information sections, plus product/active-ingredient composition "
+                "from DailyMed manufactured products and the Drugs@FDA product register; all other "
+                "content of the upstream feeds is out of scope."
             ),
             "relevant_files": [
                 entry for entry in relevant_files if entry["location"] in included_urls
@@ -865,11 +902,12 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
     }
 
 
-# Canonical emission order for the three assertion tables.
+# Canonical emission order for the four assertion tables.
 _TABLE_ORDER = (
     "approved_treats_assertions",
     "faers_applied_to_treat_assertions",
     "contraindication_assertions",
+    COMPOSITION_TABLE,
 )
 
 # assertion table -> subject_text row exclusions, emitted as ONE ``source.reindex`` ``antijoin``
@@ -1174,6 +1212,12 @@ _TABLE_SPECS: dict[str, tuple[str, str, str, str]] = {
         "knowledge_assertion",
         AGENT_TYPE,
     ),
+    COMPOSITION_TABLE: (
+        "has_active_ingredient",
+        "has_active_ingredient",
+        "knowledge_assertion",
+        AGENT_TYPE,
+    ),
 }
 
 #: Per-edge record URL template carried by the ``infores:drugapprovals-kp`` sources
@@ -1237,6 +1281,17 @@ _TABLE_SOURCES: dict[str, tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]
         (INFORES_DAKP, "primary_knowledge_source", ("infores:dailymed", "infores:epar"), ()),
         ("infores:dailymed", "supporting_data_source", (), ()),
         ("infores:epar", "supporting_data_source", (), ()),
+    ),
+    COMPOSITION_TABLE: (
+        # Same provenance shape as the other families: DAKP primary, FDA sources upstream.
+        (
+            INFORES_DAKP,
+            "primary_knowledge_source",
+            ("infores:dailymed", "infores:drugs-at-fda"),
+            (),
+        ),
+        ("infores:dailymed", "supporting_data_source", (), ()),
+        ("infores:drugs-at-fda", "supporting_data_source", (), ()),
     ),
 }
 
@@ -1352,6 +1407,15 @@ _TABLE_ANNOTATIONS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         # unreadable. The column stays in the assertion TSV as provenance; only the edge drops it.
         ("ner_confidence_score", "ner_confidence_score", None),
     ),
+    COMPOSITION_TABLE: (
+        # Only the SPL set CURIEs reach the edge, as ``publications``.
+        # ``FDA_regulatory_approvals`` is deliberately NOT annotated:
+        # ``ChemicalEntityToChemicalEntityAssociation`` has no ``regulatory_approvals`` slot, so
+        # the application numbers stay in the TSV for audit instead of folding into
+        # ``supporting_text``. ``ingredient_kind`` and ``supporting_spl_sets`` are audit columns
+        # for the same reason.
+        ("edge_evidence", "publications", "|"),
+    ),
 }
 
 SUBJECT_COLUMN = "subject_text"
@@ -1363,6 +1427,39 @@ OBJECT_COLUMN = "object_text"
 # The allow-list IS the ``prioritize`` tuple on each side; widen both together.
 SUBJECT_PRIORITIZE = ("Drug", "SmallMolecule", "ChemicalEntity")
 OBJECT_PRIORITIZE = ("Disease", "PhenotypicFeature")
+
+#: The drug-composition family is the one table whose object is a CHEMICAL, not a disease, so
+#: every disease-specific guard is a per-table lookup with the disease values as the default.
+#: Product names resolve to brands (UMLS ``ChemicalEntity``/``Drug``) as well as generic
+#: small molecules and mixtures; the object side accepts molecular entities only. ``Protein``
+#: is deliberately absent: it derives ``ChemicalGeneInteractionAssociation``, and biologics
+#: such as adalimumab already resolve to ``ChemicalEntity``.
+COMPOSITION_SUBJECT_PRIORITIZE = ("Drug", "ChemicalEntity", "SmallMolecule", "MolecularMixture")
+COMPOSITION_OBJECT_PRIORITIZE = (
+    "SmallMolecule",
+    "ChemicalEntity",
+    "MolecularEntity",
+    "MolecularMixture",
+    "Drug",
+)
+#: ``has_active_ingredient`` is legal on ``ChemicalEntityToChemicalEntityAssociation`` for every
+#: allowed pair; pinning it keeps the derived (subject role, object role) lookup out of the way.
+COMPOSITION_CATEGORY_OVERRIDE: dict[str, str] = dict.fromkeys(
+    COMPOSITION_OBJECT_PRIORITIZE, "ChemicalEntityToChemicalEntityAssociation"
+)
+_TABLE_SUBJECT_PRIORITIZE: dict[str, tuple[str, ...]] = {
+    COMPOSITION_TABLE: COMPOSITION_SUBJECT_PRIORITIZE
+}
+_TABLE_OBJECT_PRIORITIZE: dict[str, tuple[str, ...]] = {
+    COMPOSITION_TABLE: COMPOSITION_OBJECT_PRIORITIZE
+}
+_TABLE_OBJECT_CATEGORY_OVERRIDE: dict[str, dict[str, str]] = {
+    COMPOSITION_TABLE: COMPOSITION_CATEGORY_OVERRIDE
+}
+#: Composition objects carry no disease-wording denylist and no disease CURIE exclusions.
+_TABLE_OBJECT_DENYLISTS: dict[str, tuple[str, ...]] = {COMPOSITION_TABLE: ()}
+_TABLE_OBJECT_EXCLUDE_REGEXES: dict[str, tuple[str, ...]] = {COMPOSITION_TABLE: ()}
+
 #: ``statement.category_override`` (Tablassert >= 15.0): the association class each object
 #: category pins, in place of the derived ``(subject role, object role)`` pair lookup. Tablassert
 #: derives ``ChemicalEntityToDiseaseOrPhenotypicFeatureAssociation`` for every DAKP pair, and that
@@ -1643,6 +1740,9 @@ _TABLE_QUALIFIERS: dict[str, tuple[tuple[str, str], ...]] = {
     # qualifier. Disease-only by design: medications belong in a future chemical-entity interaction
     # assertion, not this slot. The same sentence-hosted attachment (``assertions/
     # contraindications.py``) populates the five sparse qualifier columns on this table too.
+    # Composition carries NO qualifiers: it is a property of the product, not of a species,
+    # disease or population. ``table_config`` omits the ``qualifiers`` key for an empty entry.
+    COMPOSITION_TABLE: (),
     "contraindication_assertions": (
         ("disease_context_qualifier", "disease_context_text"),
         ("anatomical_context_qualifier", "anatomical_context_text"),
@@ -1820,19 +1920,21 @@ def table_config(table: str) -> dict[str, Any]:
         "subject": {
             "method": "column",
             "encoding": column_letter(table, SUBJECT_COLUMN),
-            "prioritize": list(SUBJECT_PRIORITIZE),
-            "avoid": category_avoid_list(SUBJECT_PRIORITIZE),
+            "prioritize": list(_TABLE_SUBJECT_PRIORITIZE.get(table, SUBJECT_PRIORITIZE)),
+            "avoid": category_avoid_list(_TABLE_SUBJECT_PRIORITIZE.get(table, SUBJECT_PRIORITIZE)),
             "exclude_regex": list(_SUBJECT_EXCLUDE_REGEX),
         },
         "predicate": predicate,
         "object": {
             "method": "column",
             "encoding": column_letter(table, OBJECT_COLUMN),
-            "prioritize": list(OBJECT_PRIORITIZE),
-            "avoid": category_avoid_list(OBJECT_PRIORITIZE),
-            "exclude_regex": list(_OBJECT_EXCLUDE_REGEX),
+            "prioritize": list(_TABLE_OBJECT_PRIORITIZE.get(table, OBJECT_PRIORITIZE)),
+            "avoid": category_avoid_list(_TABLE_OBJECT_PRIORITIZE.get(table, OBJECT_PRIORITIZE)),
+            "exclude_regex": list(_TABLE_OBJECT_EXCLUDE_REGEXES.get(table, _OBJECT_EXCLUDE_REGEX)),
         },
-        "category_override": dict(OBJECT_CATEGORY_OVERRIDE),
+        "category_override": dict(
+            _TABLE_OBJECT_CATEGORY_OVERRIDE.get(table, OBJECT_CATEGORY_OVERRIDE)
+        ),
     }
     if qualifiers:  # no backing column => no ``qualifiers`` key (Tablassert treats absent and empty alike; keep configs minimal)
         statement["qualifiers"] = qualifiers
@@ -1862,10 +1964,11 @@ def table_config(table: str) -> dict[str, Any]:
     object_letter = column_letter(table, OBJECT_COLUMN)
     reindex += [
         {"column": object_letter, "comparison": "ne", "comparator": variant}
-        for name in _TABLE_OBJECT_DENYLIST
+        for name in _TABLE_OBJECT_DENYLISTS.get(table, _TABLE_OBJECT_DENYLIST)
         for variant in _casing_variants(name)
     ]
-    source["reindex"] = reindex
+    if reindex:  # the composition table has no row-exclusion filters; keep the key out entirely
+        source["reindex"] = reindex
     return {
         "source": source,
         "statement": statement,
@@ -2271,6 +2374,34 @@ def _command_prefix(tablassert_dir: str | None) -> list[str]:
     return ["uv", "run", "tablassert"]
 
 
+def _python_prefix(tablassert_dir: str | None) -> list[str]:
+    """argv prefix that launches a Python interpreter with ``tablassert`` importable.
+
+    Same environment resolution as :func:`_command_prefix` (editable checkout override, else the
+    running interpreter), used to run Tablassert's study assertions as their own step AFTER the
+    post-build filters rather than inside ``build-kg``.
+    """
+    if tablassert_dir:
+        return ["uv", "run", "--with-editable", tablassert_dir, "python"]
+    return [sys.executable]
+
+
+#: Tablassert's stage-7 study (PR #229's ``self-loop-edges`` assertion included) over an
+#: already-built KGX pair. DAKP runs it as a separate step so its post-build filters
+#: (self-loop removal, approval-status reconciliation) land BEFORE the assertions.
+_STUDY_SCRIPT = (
+    "import sys;from pathlib import Path;"
+    "from tablassert.cli import study_final_ndjson;"
+    "study_final_ndjson(sys.argv[1], sys.argv[2], Path(sys.argv[3]), category_override_declared=True)"
+)
+
+
+def _study_command(graph_yaml: Path, kgx_dir: Path, tablassert_dir: str | None) -> list[str]:
+    """The exact study invocation (pure; testable without spawning a process)."""
+    name, version = _graph_stem(graph_yaml).rsplit("_", 1)
+    return [*_python_prefix(tablassert_dir), "-c", _STUDY_SCRIPT, name, version, str(kgx_dir)]
+
+
 def _resolve_tablassert_dir(runner_dir: str | None, params_dir: str | None) -> str | None:
     """Editable-checkout override precedence: ctx param > ``DAKP_TABLASERT_DIR`` env > runner default.
 
@@ -2462,9 +2593,18 @@ class TablassertRunner:
                 event,
             )
         release = bool(ctx.params.get("release"))
+        # A graph carrying the composition table can resolve a product and its own ingredient
+        # onto one CURIE. Tablassert's study FAILS on such self-loops instead of dropping them,
+        # so DAKP runs the build WITHOUT --qc, removes them (:func:`selfloops.drop_self_loop_edges`),
+        # and only then applies the very same study assertions to the filtered pair.
+        composition = any(ref.uri.stem == _TABLE_SPECS[COMPOSITION_TABLE][0] for ref in config_refs)
+        study_separately = qc and composition
 
         command = self.build_command(
-            graph_yaml, tablassert_dir=tablassert_dir, qc=qc, release=release
+            graph_yaml,
+            tablassert_dir=tablassert_dir,
+            qc=qc and not study_separately,
+            release=release,
         )
         cwd = Workdir(ctx.workdir).root
 
@@ -2494,6 +2634,9 @@ class TablassertRunner:
         contract_problems: list[str] = []
         contract_error: str | None = None
         approval_promotions = 0
+        self_loop_report: dict[str, int] = {"self_loop_edges_dropped": 0, "orphan_nodes_dropped": 0}
+        study_command: list[str] = []
+        study_exit_code: int | None = None
         if completed.returncode == 0:  # reconcile only a build that actually emitted a KGX pair
             try:
                 from dakp_pipeline.approval_reconciliation import reconcile_approval_status
@@ -2509,6 +2652,14 @@ class TablassertRunner:
                 # applied_to_treat edge that has a resolved treats counterpart but is not
                 # approved_for_condition, which is exactly the overlap this promotion repairs.
                 # Validating first would fail every real build carrying such overlap.
+                if composition:
+                    # BEFORE reconciliation/validation/publication: tautological composition
+                    # edges (product resolving to its own ingredient) never leave the build.
+                    from dakp_pipeline.selfloops import drop_self_loop_edges
+
+                    self_loop_report = drop_self_loop_edges(
+                        kgx_dir / f"{stem}.nodes.ndjson", edges_path
+                    )
                 approval_promotions = reconcile_approval_status(edges_path)
                 stats(logger, "resolved_approval_status", promoted=approval_promotions)
                 contract_problems = validate_kgx_contract(ctx, graph_yaml)
@@ -2537,7 +2688,32 @@ class TablassertRunner:
             }
             if contract_error:
                 report["kgx_contract"]["error"] = contract_error
+        # The study runs on the FINAL, filtered pair, exactly as build-kg --qc's stage 7 would
+        # have on the unfiltered one. It is skipped when the build itself failed.
+        if (
+            study_separately
+            and completed.returncode == 0
+            and not contract_error
+            and not contract_problems
+        ):
+            study_command = _study_command(graph_yaml, kgx_dir, tablassert_dir)
+            with step(logger, "study_kgx"):
+                stats(logger, event, study_command=" ".join(study_command))
+                study = stream_subprocess(study_command, cwd=cwd)
+            study_exit_code = study.returncode
+            report["study"] = {
+                "command": study_command,
+                "exit_code": study.returncode,
+                "stdout": study.stdout,
+                "stderr": study.stderr,
+            }
+            stats(logger, event, study_exit_code=study.returncode)
+        report.update(self_loop_report)
         refs = [_write_report(report, assertion_refs, ctx)]
+        if study_exit_code:
+            raise TablassertError(
+                f"Tablassert study assertions failed on the built KGX pair (exit {study_exit_code}); see handoff report: {refs[0].uri}"
+            )
         if completed.returncode != 0:
             raise TablassertError(
                 f"Tablassert exited {completed.returncode}; see handoff report: {refs[0].uri}\n{(completed.stderr or '').strip()[:500]}"

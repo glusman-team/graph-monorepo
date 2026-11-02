@@ -1,5 +1,5 @@
 source_record_id	spl_set_id	ingredient_name	ingredient_unii	role	release_file	xml_path
-b3:44778da40157f8b4372c56447228712738eb892902ecd689a2b58dde6bf33582	SETID-EXAMPLESTATIN-001	Examplestatin	UNII:QFX8B1R4QF	active	dailymed_spl.xml.gz	dailymed_spl.xml.gz
-b3:d53568a12607cc4771fe0d212af99c794f01e2479781a7fa41d5f51ff3ea9555	SETID-EXAMPLESTATIN-001	Lactose	UNII:J2B2A4N98G	inactive	dailymed_spl.xml.gz	dailymed_spl.xml.gz
-b3:4257342255067641e3773d9caccbbbf58aa3230ea3e54ea52b528b785ad9ccaf	SETID-IBUPROFEN-002	Ibuprofen	UNII:WK2XYI10QM	active	dailymed_spl.xml.gz	dailymed_spl.xml.gz
-b3:0e047de86954f61db90fc6d55e962fc408bc6c081cc1c69ea4829486a07128af	SETID-OMEPRAZOLE-003	Omeprazole	UNII:KG6015933S	active	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:5580dae2cf0caf592d9b896f9691d43409ba24589e429aa624c23c74ddceddcb	SETID-EXAMPLESTATIN-001	Examplestatin	UNII:QFX8B1R4QF	active	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:0509156600b5ac35c1d79ecae9d8deb656c3dde71e6e22a474f676b0573510a8	SETID-EXAMPLESTATIN-001	Lactose	UNII:J2B2A4N98G	inactive	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:9c249d0c43c3b3ba72abdc1b7c29efcf7175996c46064d1b28f45db5729d87b3	SETID-IBUPROFEN-002	Ibuprofen	UNII:WK2XYI10QM	active	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:9923b26fb8868d9e8525a0ba743005f31dbf47450c3880996f713defcab5011a	SETID-OMEPRAZOLE-003	Omeprazole	UNII:KG6015933S	active	dailymed_spl.xml.gz	dailymed_spl.xml.gz

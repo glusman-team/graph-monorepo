@@ -62,6 +62,10 @@ TABLES = (
     "faers_applied_to_treat_assertions",
     "contraindication_assertions",
 )
+#: The composition family is asserted separately (COMPOSITION_TESTS below): most of this
+#: module's per-table assertions pin the DISEASE shape (object denylist, qualifiers, disease
+#: category override), which does not apply to it.
+COMPOSITION = "has_active_ingredient_assertions"
 
 INFORES_DAKP = "infores:drugapprovals-kp"
 AGENT_TYPE = "manual_validation_of_automated_agent"
@@ -880,7 +884,7 @@ def test_committed_table_configs_match_generator_output() -> None:
     # DAKP's only in the RIG versioning prose (publication version decoupled from the
     # package version), diff verified against dakp v1.25.0 at port time.
     repo_tables = Path(__file__).resolve().parents[1] / "fixtures" / "tables"
-    for table in TABLES:
+    for table in (*TABLES, COMPOSITION):
         basename = tablassert_configs._TABLE_SPECS[table][0]
         assert (repo_tables / f"{basename}.yaml").read_text(
             encoding="utf-8"
@@ -1344,6 +1348,7 @@ def test_graph_config_structure() -> None:
         "tables/approved_treats.yaml",
         "tables/faers_applied_to_treat.yaml",
         "tables/contraindications.yaml",
+        "tables/has_active_ingredient.yaml",
     ]
     # Tablassert >= 11 rejects the legacy top-level RIG keys; every RIG fact lives under `rig:`.
     for legacy_key in ("description", "infores", "contributions", "ui_explanation"):
@@ -1577,6 +1582,8 @@ def test_rig_ingest_info_enrichment() -> None:
     included = ingest["included_content"]
     assert [entry["file_name"] for entry in included] == [
         "DailyMed SPL sections",
+        "DailyMed SPL manufactured products",
+        "Drugs@FDA Products.txt",
         "FAERS quarterly ASCII zips",
         "EMA medicines report (xlsx)",
         "EMA documents report (json)",
@@ -1590,7 +1597,7 @@ def test_rig_ingest_info_enrichment() -> None:
     assert included[0]["fields_used"] == (
         "indications_and_usage, contraindications, boxed-warning, and warnings/precautions section text, SPL set identifiers, FDA application numbers"
     )
-    assert included[1]["included_records"] == "drug/indication case pairs; case counts"
+    assert included[3]["included_records"] == "drug/indication case pairs; case counts"
     # Both scope filters pinned: the approval gate is approved-treats-only (observed-use and
     # text-mined contraindications are not approval-gated), and only the four mined section
     # kinds survive the section filter.
@@ -1639,6 +1646,8 @@ def test_rig_ingest_info_enrichment() -> None:
     assert info.included_content is not None
     assert [entry.file_name for entry in info.included_content] == [
         "DailyMed SPL sections",
+        "DailyMed SPL manufactured products",
+        "Drugs@FDA Products.txt",
         "FAERS quarterly ASCII zips",
         "EMA medicines report (xlsx)",
         "EMA documents report (json)",
@@ -1768,6 +1777,7 @@ def test_generate_writes_graph_and_table_configs(tmp_path: Path) -> None:
         "approved_treats.yaml",
         "faers_applied_to_treat.yaml",
         "contraindications.yaml",
+        "has_active_ingredient.yaml",
     ]
     for ref in refs:
         assert ref.uri.exists()
@@ -1790,6 +1800,7 @@ def test_generate_writes_graph_and_table_configs(tmp_path: Path) -> None:
         "approved_treats": "treats",
         "faers_applied_to_treat": "applied_to_treat",
         "contraindications": "contraindicated_in",
+        "has_active_ingredient": "has_active_ingredient",
     }
 
 
@@ -1821,10 +1832,10 @@ def test_generate_links_assertion_inputs_as_provenance(tmp_path: Path) -> None:
     ctx = _ctx(workdir)
 
     refs = tablassert_configs.generate(assertion_refs, ctx)
-    # The graph manifest lists the three table configs as inputs; each table config lists its TSV.
+    # The graph manifest lists the four table configs as inputs; each table config lists its TSV.
     assert refs[0].manifest is not None
     graph_manifest = json.loads(refs[0].manifest.read_text(encoding="utf-8"))
-    assert len(graph_manifest["inputs"]) == 3
+    assert len(graph_manifest["inputs"]) == 4
 
 
 # --- runner: deferred handoff report ----------------------------------------------
@@ -1845,7 +1856,7 @@ def test_deferred_runner_writes_deferred_handoff_report(tmp_path: Path) -> None:
     assert report["status"] == "deferred"
     assert report["stage"] == "tablassert_handoff"
     assert {entry["table"] for entry in report["assertion_inputs"]} == set(TABLES)
-    assert len(report["config_inputs"]) == 4  # graph + 3 tables
+    assert len(report["config_inputs"]) == 5  # graph + 4 tables
 
 
 # --- runner: availability probes (importlib.util.find_spec seams) -----------------
@@ -2277,8 +2288,17 @@ def test_real_runner_appends_qc_when_runtime_available(
         assertion_refs, config_refs, _ctx(workdir, qc=True, fullmap="/maps/fullmap.redb")
     )
 
-    assert "--qc" in seen[0]
-    assert _read_report(workdir)["qc"] is True
+    # The generated graph carries the composition table, so the build runs WITHOUT --qc and
+    # Tablassert's study assertions (including self-loop-edges) run as a SECOND subprocess over
+    # the post-filter KGX pair.
+    assert "--qc" not in seen[0]
+    assert seen[0][:4] == ["uv", "run", "tablassert", "build-kg"]
+    assert len(seen) == 2
+    assert "study_final_ndjson" in seen[1][2]
+    report = _read_report(workdir)
+    assert report["qc"] is True
+    assert report["study"]["exit_code"] == 0
+    assert report["self_loop_edges_dropped"] == 0
 
 
 def test_real_runner_skips_qc_when_runtime_missing(
@@ -2470,3 +2490,89 @@ def test_every_qualifier_slot_carries_a_category_guard() -> None:
             assert entry.get("exclude_regex", []) == list(
                 _QUALIFIER_EXCLUDE_REGEX.get(qualifier, ())
             )
+
+
+# --- composition: post-build self-loop removal + deferred study stage --------------
+
+
+def _append_composition_self_loop(workdir: Workdir) -> Path:
+    """Add a tautological composition edge to the fake build's emitted pair."""
+    stem = f"{tablassert_configs.GRAPH_NAME}_{tablassert_configs.DEFAULT_PUBLICATION_VERSION}"
+    edges_path = workdir.kgx / f"{stem}.edges.ndjson"
+    with edges_path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "id": "uuid-self-loop",
+                    "subject": "CHEBI:31236",
+                    "predicate": "biolink:has_active_ingredient",
+                    "object": "CHEBI:31236",
+                }
+            )
+            + "\n"
+        )
+    return edges_path
+
+
+def test_real_runner_drops_composition_self_loops_before_the_contract_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+    edges_path: Path | None = None
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        _fake_build_kgx(workdir)
+        nonlocal edges_path
+        edges_path = _append_composition_self_loop(workdir)
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(assertion_refs, config_refs, _ctx(workdir, fullmap="/maps/fullmap.redb"))
+
+    # The loop is gone (it would otherwise fail the contract on its missing fields), and the
+    # rest of the pair survived.
+    assert edges_path is not None
+    kept = [json.loads(line) for line in edges_path.read_text(encoding="utf-8").splitlines()]
+    assert kept
+    assert all(edge["id"] != "uuid-self-loop" for edge in kept)
+    report = _read_report(workdir)
+    assert report["self_loop_edges_dropped"] == 1
+    assert report["kgx_contract"]["status"] == "ok"
+
+
+def test_real_runner_fails_when_the_deferred_study_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        _fake_build_kgx(workdir)
+        is_study = any("study_final_ndjson" in part for part in command)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1 if is_study else 0,
+            stdout="",
+            stderr="self-loop-edges: 1" if is_study else "",
+        )
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "qc_runtime_available", lambda: True)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    with pytest.raises(TablassertError, match="study assertions failed"):
+        TablassertRunner().run(
+            assertion_refs, config_refs, _ctx(workdir, qc=True, fullmap="/maps/fullmap.redb")
+        )
+    report = _read_report(workdir)
+    assert report["study"]["exit_code"] == 1
+    assert "self-loop-edges" in report["study"]["stderr"]

@@ -24,7 +24,7 @@ const dailymedEvent = "extract_dailymed"
 // dailymedInterimOrder is the interim-table registration order; spl_documents is FIRST (the locked
 // public contract - downstream shapers resolve "the dailymed parquet" via the first matching ref),
 // mirroring spl_xml.SPLXMLExtractor.
-var dailymedInterimOrder = []string{"spl_documents", "spl_sets", "spl_approvals", "spl_ingredients", "spl_sections"}
+var dailymedInterimOrder = []string{"spl_documents", "spl_sets", "spl_approvals", "spl_ingredients", "spl_products", "spl_sections"}
 
 // ExtractDailyMed is the native Go implementation of the DAG's extract_dailymed stage. It mirrors
 // spl_xml.SPLXMLExtractor._extract_via_go: parse the staged SPL inputs with internal/dailymed, then

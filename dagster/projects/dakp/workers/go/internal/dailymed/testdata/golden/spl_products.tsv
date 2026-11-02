@@ -1,0 +1,6 @@
+source_record_id	spl_set_id	product_code	product_name	generic_name	ingredient_name	ingredient_unii	ingredient_kind	release_file	xml_path
+b3:50ec490cc5d6bac603756d00990f410135a45924622a9816cedca43b0a89785b	SETID-EXAMPLESTATIN-001	00001-0001	Exastat	Examplestatin	Examplestatin sodium	UNII:QFX8B1R4QF	substance	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:3099ed89b041706d78cfeda018b009e0f3cfc126415de9b6442aee4e45a79700	SETID-EXAMPLESTATIN-001	00001-0001	Exastat	Examplestatin	Examplestatin	UNII:QFX8B1R4QF	moiety	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:7acc23a5f87f43070b4986d68ae3fde2c12e9931cedf07a1b7c804d1370ba146	SETID-IBUPROFEN-002	00002-0001	Advil	Ibuprofen	Ibuprofen	UNII:WK2XYI10QM	substance	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:26386af41cf5e0615ade8466f02ae8211c7806640214c0fab9aebfaac8985a9e	SETID-IBUPROFEN-002	00002-0002	Ibuprofen	Ibuprofen	Ibuprofen	UNII:WK2XYI10QM	substance	dailymed_spl.xml.gz	dailymed_spl.xml.gz
+b3:c7bb54e0b80773d52f570be5fc6edde1a9ac026e96500c4d164ee3d502964252	SETID-OMEPRAZOLE-003	00003-0001	Prilosec	Omeprazole	Omeprazole	UNII:KG6015933S	substance	dailymed_spl.xml.gz	dailymed_spl.xml.gz

@@ -62,6 +62,20 @@ def _approved_treats() -> EdgeFamily:
     )
 
 
+def _has_active_ingredient() -> EdgeFamily:
+    from dakp_pipeline.assertions.active_ingredients import HasActiveIngredientShaper
+
+    return EdgeFamily(
+        name="has_active_ingredient",
+        table="has_active_ingredient_assertions",
+        predicate="biolink:has_active_ingredient",
+        knowledge_level="knowledge_assertion",
+        agent_type="manual_validation_of_automated_agent",
+        ner_profile=None,  # structured label data (product composition), not text mining
+        shaper=HasActiveIngredientShaper,
+    )
+
+
 def _observed_uses() -> EdgeFamily:
     from dakp_pipeline.assertions.observed_uses import ObservedUsesShaper
 
@@ -92,7 +106,7 @@ def _contraindications() -> EdgeFamily:
 
 # Registration order is the deterministic stage/build order (observed-uses consumes the
 # approved_treats table, so it must follow it).
-_FAMILY_BUILDERS = (_approved_treats, _observed_uses, _contraindications)
+_FAMILY_BUILDERS = (_approved_treats, _observed_uses, _contraindications, _has_active_ingredient)
 
 
 def all_families() -> list[EdgeFamily]:

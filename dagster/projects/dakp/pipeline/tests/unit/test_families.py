@@ -21,6 +21,7 @@ def test_registry_tables_match_the_shipped_schemas() -> None:
         "approved_treats_assertions",
         "faers_applied_to_treat_assertions",
         "contraindication_assertions",
+        "has_active_ingredient_assertions",
     }
     assert {family.table for family in families.all_families()} == shipped
     for family in families.all_families():
@@ -35,7 +36,12 @@ def test_registry_order_keeps_dependencies_before_consumers() -> None:
 
 def test_family_metadata_matches_the_shaper_constants() -> None:
     """The registry carries the same predicate/table constants the shapers emit."""
-    from dakp_pipeline.assertions import approved_treats, contraindications, observed_uses
+    from dakp_pipeline.assertions import (
+        active_ingredients,
+        approved_treats,
+        contraindications,
+        observed_uses,
+    )
 
     assert families.get_family("approved_treats").predicate == approved_treats._PREDICATE
     assert families.get_family("approved_treats").table == approved_treats._TABLE
@@ -44,6 +50,10 @@ def test_family_metadata_matches_the_shaper_constants() -> None:
     assert families.get_family("faers_applied_to_treat").ner_profile is None  # FAERS bypasses NER
     assert families.get_family("contraindications").predicate == contraindications._PREDICATE
     assert families.get_family("contraindications").table == contraindications._TABLE
+    assert families.get_family("has_active_ingredient").predicate == active_ingredients.PREDICATE
+    assert families.get_family("has_active_ingredient").table == active_ingredients._TABLE
+    # Composition is structured label data, not text mining.
+    assert families.get_family("has_active_ingredient").ner_profile is None
 
 
 def test_get_family_names_the_missing_family() -> None:

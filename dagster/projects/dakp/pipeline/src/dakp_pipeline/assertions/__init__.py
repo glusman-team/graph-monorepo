@@ -23,6 +23,8 @@ INFORES_EPAR = "infores:epar"
 INFORES_FAERS = "infores:faers"
 #: Health Canada's Canada Vigilance Adverse Reaction Online Database (observed-use extract).
 INFORES_CANADA_VIGILANCE = "infores:canada-vigilance"
+#: The Drugs@FDA application/product register (brand/generic product composition).
+INFORES_DRUGS_AT_FDA = "infores:drugs-at-fda"
 
 KL_ASSERTION = "knowledge_assertion"
 AT_MANUAL = "manual_validation_of_automated_agent"
@@ -87,6 +89,7 @@ __all__ = [
     "INFORES_CANADA_VIGILANCE",
     "INFORES_DAILYMED",
     "INFORES_DAKP",
+    "INFORES_DRUGS_AT_FDA",
     "INFORES_EMA",
     "INFORES_EPAR",
     "INFORES_FAERS",

@@ -55,6 +55,7 @@ var (
 		"spl_set_id",
 		"xml_path",
 		"release_file",
+		"label_type",
 		"approval_code",
 		"approval_type",
 		"loinc_code",
@@ -69,6 +70,20 @@ var (
 	ApprovalsColumns = []string{"source_record_id", "spl_set_id", "approval_id", "approval_code", "approval_type", "release_file", "xml_path"}
 	// IngredientsColumns is active + inactive ingredients, each with UNII + role.
 	IngredientsColumns = []string{"source_record_id", "spl_set_id", "ingredient_name", "ingredient_unii", "role", "release_file", "xml_path"}
+	// ProductsColumns is one row per manufactured product x active ingredient (substance
+	// AND active moiety), the composition input for has_active_ingredient edges.
+	ProductsColumns = []string{
+		"source_record_id",
+		"spl_set_id",
+		"product_code",
+		"product_name",
+		"generic_name",
+		"ingredient_name",
+		"ingredient_unii",
+		"ingredient_kind",
+		"release_file",
+		"xml_path",
+	}
 	// SectionsColumns is the proper per-section table: LOINC code, title, raw + clean text.
 	SectionsColumns = []string{
 		"source_record_id",
@@ -122,6 +137,17 @@ type Ingredient struct {
 	Role string // "active" | "inactive"
 }
 
+// ProductIngredient is one active ingredient of one manufactured product. Kind is
+// "substance" (the ingredientSubstance as labeled) or "moiety" (its activeMoiety).
+type ProductIngredient struct {
+	ProductCode    string
+	ProductName    string
+	GenericName    string
+	IngredientName string
+	IngredientUNII string
+	Kind           string
+}
+
 // Section is one LOINC-coded section with its raw and whitespace-collapsed text.
 type Section struct {
 	LOINC     string
@@ -134,8 +160,10 @@ type Section struct {
 // DocumentRecord is a fully parsed SPL document, before flattening into normalized tables.
 type DocumentRecord struct {
 	SetID       string
+	LabelType   string
 	Approvals   []Approval
 	Ingredients []Ingredient
+	Products    []ProductIngredient
 	Sections    []Section
 	Warnings    []string
 }
@@ -374,6 +402,8 @@ func parseMockDocument(n *node) DocumentRecord {
 	for _, ing := range n.directChildren("inactiveIngredient") {
 		rec.Ingredients = append(rec.Ingredients, Ingredient{Name: ing.attr("name"), UNII: unii(ing.attr("unii")), Role: "inactive"})
 	}
+	rec.LabelType = mockLabelType(n)
+	rec.Products = mockProducts(n)
 	rec.Sections = collectSections(n.iter("section"), &rec.Warnings)
 	return rec
 }
@@ -391,8 +421,10 @@ func parseHL7v3Document(n *node) DocumentRecord {
 	if rec.SetID == "" {
 		rec.Warnings = append(rec.Warnings, "document missing setId root")
 	}
+	rec.LabelType = hl7v3DocumentLabelType(n)
 	rec.Approvals = hl7v3Approvals(n)
 	rec.Ingredients = hl7v3Ingredients(n)
+	rec.Products = append(hl7v3Products(n), mockProducts(n)...)
 	rec.Sections = collectSections(n.iter("section"), &rec.Warnings)
 	return rec
 }
@@ -484,6 +516,211 @@ func hl7v3Ingredients(n *node) []Ingredient {
 	return out
 }
 
+// mockLabelType reads the fixture's first direct <code code=> child (the document-level LOINC
+// type code), mirroring spl_xml._parse_mock_document.
+func mockLabelType(n *node) string {
+	for _, code := range n.directChildren("code") {
+		if c := code.attr("code"); c != "" {
+			return c
+		}
+	}
+	return ""
+}
+
+// hl7v3DocumentLabelType ports spl_xml._hl7v3_document_label_type: only DIRECT children of
+// <document> count (ingredient UNIIs, section codes and approval types are <code> elements
+// too). A LOINC codeSystem match wins, else the first LOINC-shaped code, else the first code.
+func hl7v3DocumentLabelType(n *node) string {
+	shaped, anyCode := "", ""
+	for _, child := range n.directChildren("code") {
+		candidate := child.attr("code")
+		if candidate == "" {
+			continue
+		}
+		if child.attr("codeSystem") == loincCodeSystem {
+			return candidate
+		}
+		if looksLoinc(candidate) {
+			if shaped == "" {
+				shaped = candidate
+			}
+		} else if anyCode == "" {
+			anyCode = candidate
+		}
+	}
+	if shaped != "" {
+		return shaped
+	}
+	return anyCode
+}
+
+// activeIngredientClassCodes are the HL7 v3 ingredient class codes that declare an ACTIVE
+// ingredient: ACTIB (active ingredient - basis of strength), ACTIM (active ingredient -
+// active moiety), ACTIR (active ingredient - reference). IACT/IMPY/INGR/CNTM are inactive,
+// impurity, unspecified and color/flavor entries and are deliberately excluded.
+var activeIngredientClassCodes = map[string]bool{"ACTIB": true, "ACTIM": true, "ACTIR": true}
+
+// substanceIdentity reads a substance element's DIRECT <name>/<code> children, mirroring
+// spl_xml._hl7v3_ingredients' add(): nested activeMoiety names must never overwrite the
+// substance's own identity.
+func substanceIdentity(substance *node) (name string, code string) {
+	for _, k := range substance.kids {
+		if k.elem == nil {
+			continue
+		}
+		switch k.elem.name {
+		case "name":
+			name = k.elem.text()
+		case "code":
+			code = k.elem.attr("code")
+		}
+	}
+	return name, unii(code)
+}
+
+// hl7v3Products ports spl_xml._hl7v3_products: for every manufactured product carrying its
+// own <name>, one record per active ingredient SUBSTANCE plus one per ACTIVE MOIETY.
+//
+// Real DailyMed nests the product one level deep (manufacturedProduct/manufacturedProduct on
+// modern labels, manufacturedProduct/manufacturedMedicine on pre-2009 labels), so the product
+// element is recognized by its direct <name> child, not by its depth. Kits wrap their parts in
+// part/partProduct under a named kit product: traversal stops at the first named product, so
+// the kit carries every part's actives and parts are not emitted separately.
+func hl7v3Products(n *node) []ProductIngredient {
+	var out []ProductIngredient
+	var walk func(*node)
+	walk = func(x *node) {
+		for _, k := range x.kids {
+			if k.elem == nil {
+				continue
+			}
+			e := k.elem
+			if (e.name == "manufacturedProduct" || e.name == "manufacturedMedicine") && len(e.directChildren("name")) > 0 {
+				out = append(out, productIngredients(e)...)
+				continue // nested partProducts belong to this product
+			}
+			walk(e)
+		}
+	}
+	walk(n)
+	return out
+}
+
+// productDisplayName renders a product <name> element: the label splits the suffix into a
+// nested <suffix> element ("ALBUTEROL SULFATE<suffix>HFA</suffix>"), so the pieces are joined
+// with a space instead of concatenated ("ALBUTEROL SULFATE HFA").
+func productDisplayName(name *node) string {
+	parts := make([]string, 0, 3)
+	for _, k := range name.kids {
+		var piece string
+		if k.elem == nil {
+			piece = collapseWS(k.text)
+		} else if k.elem.name == "suffix" {
+			piece = k.elem.text()
+		}
+		if piece != "" {
+			parts = append(parts, piece)
+		}
+	}
+	return collapseWS(strings.Join(parts, " "))
+}
+
+// productIngredients reads one named product element into (product, active ingredient) records.
+func productIngredients(product *node) []ProductIngredient {
+	productName := ""
+	for _, name := range product.directChildren("name") {
+		productName = productDisplayName(name)
+		break
+	}
+	if productName == "" {
+		return nil
+	}
+	productCode := ""
+	for _, code := range product.directChildren("code") {
+		productCode = code.attr("code")
+		break
+	}
+	genericName := ""
+	for _, holder := range product.iter("genericMedicine") {
+		if names := holder.directChildren("name"); len(names) > 0 {
+			genericName = names[0].text()
+			break
+		}
+	}
+	out := make([]ProductIngredient, 0, 4)
+	seen := map[[3]string]bool{}
+	add := func(substance *node, kind string) {
+		name, u := substanceIdentity(substance)
+		if name == "" {
+			return
+		}
+		key := [3]string{kind, u, strings.ToLower(name)}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, ProductIngredient{
+			ProductCode:    productCode,
+			ProductName:    productName,
+			GenericName:    genericName,
+			IngredientName: name,
+			IngredientUNII: u,
+			Kind:           kind,
+		})
+	}
+	addSubstanceAndMoiety := func(substance *node) {
+		add(substance, "substance")
+		for _, moiety := range substance.iter("activeMoiety") {
+			for _, inner := range moiety.iter("activeMoiety") {
+				add(inner, "moiety")
+			}
+		}
+	}
+	for _, ing := range product.iter("ingredient") {
+		if !activeIngredientClassCodes[ing.attr("classCode")] {
+			continue
+		}
+		for _, substance := range ing.iter("ingredientSubstance") {
+			addSubstanceAndMoiety(substance)
+		}
+	}
+	// Legacy (pre-2009) labels declare actives as activeIngredient/activeIngredientSubstance.
+	for _, ing := range product.iter("activeIngredient") {
+		for _, substance := range ing.iter("activeIngredientSubstance") {
+			addSubstanceAndMoiety(substance)
+		}
+	}
+	return out
+}
+
+// mockProducts parses the simplified fixture's optional <product name= code= generic=>
+// children, each holding <activeIngredient name= unii= kind=> entries. Fixtures without a
+// <product> element contribute no product rows (composition is opt-in there).
+func mockProducts(n *node) []ProductIngredient {
+	var out []ProductIngredient
+	for _, product := range n.directChildren("product") {
+		for _, ing := range product.directChildren("activeIngredient") {
+			name := ing.attr("name")
+			if name == "" {
+				continue
+			}
+			kind := ing.attr("kind")
+			if kind != "moiety" {
+				kind = "substance"
+			}
+			out = append(out, ProductIngredient{
+				ProductCode:    product.attr("code"),
+				ProductName:    product.attr("name"),
+				GenericName:    product.attr("generic"),
+				IngredientName: name,
+				IngredientUNII: unii(ing.attr("unii")),
+				Kind:           kind,
+			})
+		}
+	}
+	return out
+}
+
 // collectSections builds Section records from <section> elements (shared by both shapes),
 // mirroring spl_xml._collect_sections.
 func collectSections(sectionElems []*node, warnings *[]string) []Section {
@@ -567,6 +804,7 @@ func DocumentRows(rec DocumentRecord, releaseFile string) [][]string {
 			rec.SetID,
 			releaseFile,
 			releaseFile,
+			rec.LabelType,
 			apCode,
 			apType,
 			sec.LOINC,
@@ -628,6 +866,27 @@ func IngredientRows(rec DocumentRecord, sourceID, releaseFile string) [][]string
 	return rows
 }
 
+// ProductRows builds the product x active-ingredient rows for one document (empty when the
+// document declares no named manufactured products), mirroring spl_xml._product_rows.
+func ProductRows(rec DocumentRecord, sourceID, releaseFile string) [][]string {
+	rows := make([][]string, 0, len(rec.Products))
+	for _, p := range rec.Products {
+		rows = append(rows, []string{
+			pipeline.SourceRecordID(sourceID, "product", rec.SetID, p.ProductCode, p.ProductName, p.IngredientUNII, p.IngredientName, p.Kind),
+			rec.SetID,
+			p.ProductCode,
+			p.ProductName,
+			p.GenericName,
+			p.IngredientName,
+			p.IngredientUNII,
+			p.Kind,
+			releaseFile,
+			releaseFile,
+		})
+	}
+	return rows
+}
+
 // SectionRows builds the per-section rows for one document, mirroring spl_xml._section_rows.
 func SectionRows(rec DocumentRecord, sourceID, releaseFile string) [][]string {
 	rows := make([][]string, 0, len(rec.Sections))
@@ -657,6 +916,7 @@ type Tables struct {
 	Sets        [][]string
 	Approvals   [][]string
 	Ingredients [][]string
+	Products    [][]string
 	Sections    [][]string
 	Warnings    int
 	InputIDs    []string
@@ -726,6 +986,7 @@ func Extract(ctx context.Context, paths []string, ids []string, limit int) (*Tab
 			t.Sets = append(t.Sets, SetRows(doc, r.sourceID, r.releaseFile)...)
 			t.Approvals = append(t.Approvals, ApprovalRows(doc, r.sourceID, r.releaseFile)...)
 			t.Ingredients = append(t.Ingredients, IngredientRows(doc, r.sourceID, r.releaseFile)...)
+			t.Products = append(t.Products, ProductRows(doc, r.sourceID, r.releaseFile)...)
 			t.Sections = append(t.Sections, SectionRows(doc, r.sourceID, r.releaseFile)...)
 		}
 	}
@@ -790,7 +1051,7 @@ type TableFile struct {
 	Rows    [][]string
 }
 
-// TableFiles returns the five normalized tables as TSV file descriptors in a stable order
+// TableFiles returns the six normalized tables as TSV file descriptors in a stable order
 // (documents first — the locked public contract — then sets, approvals, ingredients,
 // sections), mirroring the Python extractor's ref ordering.
 func (t *Tables) TableFiles() []TableFile {
@@ -799,6 +1060,7 @@ func (t *Tables) TableFiles() []TableFile {
 		{"spl_sets.tsv", SetsColumns, t.Sets},
 		{"spl_approvals.tsv", ApprovalsColumns, t.Approvals},
 		{"spl_ingredients.tsv", IngredientsColumns, t.Ingredients},
+		{"spl_products.tsv", ProductsColumns, t.Products},
 		{"spl_sections.tsv", SectionsColumns, t.Sections},
 	}
 }

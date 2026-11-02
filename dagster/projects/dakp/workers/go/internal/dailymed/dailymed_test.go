@@ -17,7 +17,7 @@ import (
 // fixtureSourceID is the BLAKE3 of testdata/dailymed_spl.xml.gz — byte-identical to the
 // Python test fixture (tests/fixtures/pipeline/dailymed/dailymed_spl.xml.gz), so it is the
 // source artifact id that underlies every source_record_id in the goldens.
-const fixtureSourceID = "b3:9ea784ce2eed27f988d8d243aedaeb864ccd5dce02d548246ff4e4ae71e8db11"
+const fixtureSourceID = "b3:e6c4a987bc1d1ec6b84d5f8629e7690523a257b91f3b17c645153fa7acc8c023"
 
 const mockFixture = "testdata/dailymed_spl.xml.gz"
 
@@ -158,7 +158,7 @@ func TestGoldenTSVParity(t *testing.T) {
 // and the Go code agree on HOW ids are derived, not just on their literal bytes.
 func TestSourceRecordIDDerivationMatchesGolden(t *testing.T) {
 	got := pipeline.SourceRecordID(fixtureSourceID, "section", "SETID-EXAMPLESTATIN-001", "34067-9")
-	want := "b3:f3cbfffe07fe5b0bed219ae86dc94a905271aa25e8b49df4331da2560c3558ff" // golden row 1
+	want := "b3:c1702d2cbe7b8aa8bafb661f1de0b963212130a63b2a9a0dc007d8898e0223d4" // golden row 1
 	if got != want {
 		t.Errorf("SourceRecordID = %q, want golden %q", got, want)
 	}
@@ -293,6 +293,9 @@ func TestParseHL7v3Fixture(t *testing.T) {
 	// Ingredients: active from the nested activeMoiety, inactive from
 	// inactiveIngredientSubstance; each with UNII + role, deduplicated.
 	wantIng := []Ingredient{
+		// The manufactured product's nested activeMoiety is an active ingredient too
+		// (the existing set-level extraction traverses the whole document).
+		{Name: "LISINOPRIL ANHYDROUS", UNII: "UNII:7Q3P4BS2FD", Role: "active"},
 		{Name: "Aspirin", UNII: "UNII:R16CO5Y76E", Role: "active"},
 		{Name: "Microcrystalline Cellulose", UNII: "UNII:OP1R32D61U", Role: "inactive"},
 	}

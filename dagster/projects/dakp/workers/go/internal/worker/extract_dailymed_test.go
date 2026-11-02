@@ -33,12 +33,13 @@ func TestExtractDailyMedParity(t *testing.T) {
 		t.Fatalf("ExtractDailyMed: %v", err)
 	}
 
-	// Six refs in the locked order: 5 interim parquet (spl_documents first) + sections TSV handoff.
+	// Seven refs in the locked order: 6 interim parquet (spl_documents first) + sections TSV handoff.
 	wantNames := []string{
 		"spl_documents.parquet",
 		"spl_sets.parquet",
 		"spl_approvals.parquet",
 		"spl_ingredients.parquet",
+		"spl_products.parquet",
 		"spl_sections.parquet",
 		"dailymed_spl_sections.tsv",
 	}
@@ -56,18 +57,18 @@ func TestExtractDailyMedParity(t *testing.T) {
 			t.Errorf("ref[%d] manifest missing", i)
 		}
 	}
-	// Media types: first five parquet, last TSV.
-	for i := 0; i < 5; i++ {
+	// Media types: first six parquet, last TSV.
+	for i := 0; i < 6; i++ {
 		if refs[i].MediaType != ParquetMediaType {
 			t.Errorf("ref[%d] media_type = %q, want parquet", i, refs[i].MediaType)
 		}
 	}
-	if refs[5].MediaType != TSVMediaType {
-		t.Errorf("ref[5] media_type = %q, want tsv", refs[5].MediaType)
+	if refs[6].MediaType != TSVMediaType {
+		t.Errorf("ref[6] media_type = %q, want tsv", refs[6].MediaType)
 	}
 
 	// The sections TSV handoff must be byte-identical to the Python/polars golden.
-	gotTSV, err := os.ReadFile(refs[5].URI)
+	gotTSV, err := os.ReadFile(refs[6].URI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +91,7 @@ func TestExtractDailyMedParity(t *testing.T) {
 		"spl_sets.parquet":        len(tables.Sets),
 		"spl_approvals.parquet":   len(tables.Approvals),
 		"spl_ingredients.parquet": len(tables.Ingredients),
+		"spl_products.parquet":    len(tables.Products),
 		"spl_sections.parquet":    len(tables.Sections),
 	}
 	wantCols := map[string][]string{
@@ -97,9 +99,10 @@ func TestExtractDailyMedParity(t *testing.T) {
 		"spl_sets.parquet":        dailymed.SetsColumns,
 		"spl_approvals.parquet":   dailymed.ApprovalsColumns,
 		"spl_ingredients.parquet": dailymed.IngredientsColumns,
+		"spl_products.parquet":    dailymed.ProductsColumns,
 		"spl_sections.parquet":    dailymed.SectionsColumns,
 	}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		name := filepath.Base(refs[i].URI)
 		cols, rows := readBack(t, refs[i].URI)
 		if len(rows) != wantRows[name] {

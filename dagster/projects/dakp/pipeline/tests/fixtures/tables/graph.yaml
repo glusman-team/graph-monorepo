@@ -105,8 +105,9 @@ rig:
     name: "Drug Approvals Knowledge Provider (DAKP)"
     description: >-
       Drug Approvals Knowledge Provider: FDA/EMA-approved treatment
-      relationships, FAERS-observed applied-to-treat uses, and
-      contraindications text-mined from DailyMed, modeled from DailyMed,
+      relationships, FAERS-observed applied-to-treat uses, contraindications
+      text-mined from DailyMed, and drug-product/active-ingredient
+      composition from DailyMed SPL and Drugs@FDA, modeled from DailyMed,
       Drugs@FDA, FAERS, and the EMA medicines registry. Every edge carries
       the evidence identifiers backing it; approved-treats edges also carry
       clinical approval status and FDA application numbers or EMA product
@@ -154,16 +155,19 @@ rig:
       - translator_knowledge_creator
     utility: >-
       Provides FDA- and EMA-approved drug-disease treatment relationships,
-      FAERS- and Canada Vigilance-observed applied-to-treat uses, and
-      SPL-mined contraindications for Translator querying.
+      FAERS- and Canada Vigilance-observed applied-to-treat uses, SPL-mined
+      contraindications, and FDA drug-product/active-ingredient composition
+      for Translator querying.
     scope: >-
       Approved-treats edges (DailyMed SPL indications joined to Drugs@FDA
       applications and FAERS cases, plus EMA centrally-authorised medicines'
       MeSH therapeutic areas, mined EPAR indication text, and mined EMA SmPC
       product-information indications), FAERS and Canada Vigilance
       observed-use edges, and contraindication edges text-mined from
-      DailyMed SPL sections and EMA SmPC product-information sections; all
-      other content of the upstream feeds is out of scope.
+      DailyMed SPL sections and EMA SmPC product-information sections, plus
+      product/active-ingredient composition from DailyMed manufactured
+      products and the Drugs@FDA product register; all other content of the
+      upstream feeds is out of scope.
     relevant_files:
       - file_name: "DailyMed full-release SPL zips"
         location: "https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm"
@@ -195,6 +199,11 @@ rig:
         description: >-
           CDC/NCHS release archive; its drug-table XML screens the observed-use
           subjects DAKP is willing to assert.
+      - file_name: "Drugs@FDA data files (Products.txt)"
+        location: "https://www.fda.gov/media/89850/download"
+        description: >-
+          FDA Drugs@FDA product register; brand/generic product names with their
+          active ingredients and application numbers.
     included_content:
       - file_name: "DailyMed SPL sections"
         included_records: >-
@@ -206,6 +215,27 @@ rig:
           indications_and_usage, contraindications, boxed-warning, and
           warnings/precautions section text, SPL set identifiers, FDA
           application numbers
+      - file_name: "DailyMed SPL manufactured products"
+        included_records: >-
+          manufactured products and their ACTIVE ingredients (HL7 ingredient
+          class codes ACTIB/ACTIM/ACTIR and the legacy activeIngredient form),
+          for every label type DAKP acquires (human Rx/OTC, animal,
+          homeopathic); both the labeled ingredient substance and its active
+          moiety are kept. Inactive ingredients (IACT), impurities and
+          color/flavor entries are excluded, as are rows whose product name IS
+          the ingredient name (a generic's tautological self-edge)
+        fields_used: >-
+          manufacturedProduct product name and NDC product code,
+          ingredientSubstance name/UNII, activeMoiety name/UNII, SPL set
+          identifiers (publications), FDA application numbers (audit)
+      - file_name: "Drugs@FDA Products.txt"
+        included_records: >-
+          product (brand or generic) names with their active ingredients, the
+          composition half of the has_active_ingredient edges that carries FDA
+          application numbers
+        fields_used: >-
+          DrugName, ActiveIngredient (split on top-level semicolons),
+          ApplNo/ApplType
       - file_name: "FAERS quarterly ASCII zips"
         included_records: "drug/indication case pairs; case counts"
       - file_name: "EMA medicines report (xlsx)"
@@ -350,3 +380,4 @@ tables:
   - tables/approved_treats.yaml
   - tables/faers_applied_to_treat.yaml
   - tables/contraindications.yaml
+  - tables/has_active_ingredient.yaml

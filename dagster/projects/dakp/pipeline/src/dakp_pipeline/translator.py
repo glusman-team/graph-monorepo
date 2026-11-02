@@ -78,6 +78,7 @@ INFORES_EMA = "infores:ema"
 INFORES_EPAR = "infores:epar"
 INFORES_FAERS = "infores:faers"
 INFORES_CANADA_VIGILANCE = "infores:canada-vigilance"
+INFORES_DRUGS_AT_FDA = "infores:drugs-at-fda"
 # CDC/NCHS ICD-10-CM Table of Drugs and Chemicals: the non-therapeutic subject screen that gates
 # which observed-use edges exist at all (a supporting source, never an upstream of a claim).
 INFORES_ICD10CM = "infores:icd10cm"
@@ -111,12 +112,14 @@ _DISEASE_SET = frozenset(DISEASE_PHENOTYPE_CATEGORIES)
 PINNED_EDGE_CATEGORIES: tuple[str, ...] = (
     "biolink:EntityToDiseaseAssociation",
     "biolink:EntityToPhenotypicFeatureAssociation",
+    "biolink:ChemicalEntityToChemicalEntityAssociation",
 )
 _PINNED_SET = frozenset(PINNED_EDGE_CATEGORIES)
 
 PREDICATE_TREATS = "biolink:treats"
 PREDICATE_APPLIED_TO_TREAT = "biolink:applied_to_treat"
 PREDICATE_CONTRAINDICATED_IN = "biolink:contraindicated_in"
+PREDICATE_HAS_ACTIVE_INGREDIENT = "biolink:has_active_ingredient"
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,12 @@ EDGE_FAMILIES: dict[str, EdgeFamily] = {
         PREDICATE_CONTRAINDICATED_IN,
         frozenset({INFORES_DAILYMED}),
         alternative_upstream=(frozenset({INFORES_EPAR}),),
+    ),
+    # Product composition: every edge's sources carry BOTH FDA sources upstream (the Tablassert
+    # override stamps one fixed chain per table), whichever of them supplied the row.
+    PREDICATE_HAS_ACTIVE_INGREDIENT: EdgeFamily(
+        PREDICATE_HAS_ACTIVE_INGREDIENT,
+        frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
     ),
 }
 
@@ -507,14 +516,23 @@ def _check_edge(
                     f"edge {entity_id} subject {subject!r} categories are not chemical/drug for {predicate}",
                 )
             )
-        if object_node is not None and not (_category_set(object_node) & _DISEASE_SET):
+        # Composition is the one family whose object is a CHEMICAL, not a disease.
+        expected_object = (
+            _CHEMICAL_SET if predicate == PREDICATE_HAS_ACTIVE_INGREDIENT else _DISEASE_SET
+        )
+        object_label = (
+            "chemical/molecular"
+            if predicate == PREDICATE_HAS_ACTIVE_INGREDIENT
+            else "disease/phenotype"
+        )
+        if object_node is not None and not (_category_set(object_node) & expected_object):
             problems.append(
                 ContractProblem(
                     INCOMPATIBLE_OBJECT_CATEGORY,
                     "edge",
                     entity_id,
                     "object",
-                    f"edge {entity_id} object {obj!r} categories are not disease/phenotype for {predicate}",
+                    f"edge {entity_id} object {obj!r} categories are not {object_label} for {predicate}",
                 )
             )
 
@@ -695,6 +713,13 @@ FAMILY_INVARIANTS: dict[str, FamilyInvariant] = {
         "knowledge_assertion",
         # EU SmPC rows carry the infores:epar chain (approved_treats' EMA conventions).
         alternative_upstream=(frozenset({INFORES_EPAR}),),
+    ),
+    # No clinical_approval_status: composition is a property of the product, not of an indication.
+    PREDICATE_HAS_ACTIVE_INGREDIENT: FamilyInvariant(
+        PREDICATE_HAS_ACTIVE_INGREDIENT,
+        frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
+        None,
+        "knowledge_assertion",
     ),
 }
 
@@ -901,6 +926,7 @@ __all__ = [
     "PINNED_EDGE_CATEGORIES",
     "PREDICATE_APPLIED_TO_TREAT",
     "PREDICATE_CONTRAINDICATED_IN",
+    "PREDICATE_HAS_ACTIVE_INGREDIENT",
     "PREDICATE_TREATS",
     "REQUIRED_EDGE_FIELDS",
     "REQUIRED_NODE_FIELDS",

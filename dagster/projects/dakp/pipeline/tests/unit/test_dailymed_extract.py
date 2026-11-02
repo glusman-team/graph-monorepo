@@ -43,10 +43,10 @@ def _acquire_and_extract(
 def test_extract_emits_all_tables_plus_section_tsv(tmp_path: Path) -> None:
     _raw, refs, ctx = _acquire_and_extract(tmp_path)
 
-    # 5 interim parquet tables + 1 uncompressed section TSV.
+    # 6 interim parquet tables + 1 uncompressed section TSV.
     parquets = [r for r in refs if r.uri.suffix == ".parquet"]
     tsvs = [r for r in refs if r.uri.suffix == ".tsv"]
-    assert len(parquets) == 5
+    assert len(parquets) == 6
     assert len(tsvs) == 1
 
     names = {r.uri.name for r in refs}
@@ -55,6 +55,7 @@ def test_extract_emits_all_tables_plus_section_tsv(tmp_path: Path) -> None:
         "spl_sets.parquet",
         "spl_approvals.parquet",
         "spl_ingredients.parquet",
+        "spl_products.parquet",
         "spl_sections.parquet",
         "dailymed_spl_sections.tsv",
     }
@@ -83,6 +84,8 @@ def test_row_counts_match_fixture(tmp_path: Path) -> None:
     assert by_name["spl_sets.parquet"].rows == 3  # 3 distinct set ids
     assert by_name["spl_approvals.parquet"].rows == 3  # 1 approval per document
     assert by_name["spl_ingredients.parquet"].rows == 4  # 1 active each + 1 inactive on doc 1
+    # 2 Exastat (substance + moiety) + 2 Ibuprofen-set products + 1 Prilosec.
+    assert by_name["spl_products.parquet"].rows == 5
 
 
 def test_sections_table_carries_loinc_title_raw_and_clean_text(tmp_path: Path) -> None:
@@ -317,3 +320,83 @@ def test_hl7v3_first_loinc_shaped_code_wins_without_oid(tmp_path: Path) -> None:
 
     by_loinc = {row["loinc_code"]: row["section_name"] for row in sections.iter_rows(named=True)}
     assert by_loinc == {"34070-3": "contraindications"}
+
+
+# --- manufactured products (has_active_ingredient input) -----------------------
+
+
+def test_mock_products_table(tmp_path: Path) -> None:
+    _raw, refs, _ctx = _acquire_and_extract(tmp_path)
+    frame = pl.read_parquet(next(r for r in refs if r.uri.name == "spl_products.parquet").uri)
+    assert frame.columns == spl_xml.SPL_PRODUCTS_COLUMNS
+    rows = frame.sort(["product_name", "ingredient_kind"]).to_dicts()
+    exastat = [r for r in rows if r["product_name"] == "Exastat"]
+    # Substance AND active moiety, on the same NDC product code.
+    assert [(r["ingredient_name"], r["ingredient_kind"]) for r in exastat] == [
+        ("Examplestatin", "moiety"),
+        ("Examplestatin sodium", "substance"),
+    ]
+    assert {r["product_code"] for r in exastat} == {"00001-0001"}
+    assert {r["generic_name"] for r in exastat} == {"Examplestatin"}
+    assert {r["spl_set_id"] for r in exastat} == {"SETID-EXAMPLESTATIN-001"}
+    # Two products on the ibuprofen set: a brand and the self-named generic.
+    ibuprofen = [r for r in rows if r["spl_set_id"] == "SETID-IBUPROFEN-002"]
+    assert {r["product_name"] for r in ibuprofen} == {"Advil", "Ibuprofen"}
+    assert {r["ingredient_name"] for r in ibuprofen} == {"Ibuprofen"}
+    assert frame.get_column("source_record_id").n_unique() == frame.height
+
+
+def test_hl7v3_products_table(tmp_path: Path) -> None:
+    """Real-shape SPL: ACTIB actives, substance + moiety, IACT/CNTM excluded, suffix spaced."""
+    ctx = _ctx(tmp_path)
+    Workdir(ctx.workdir).create()
+    refs = spl_xml.extract([ctx.fixture("dailymed/hl7v3_spl.xml.gz")], ctx)
+    frame = pl.read_parquet(next(r for r in refs if r.uri.name == "spl_products.parquet").uri)
+    rows = frame.sort(["ingredient_kind", "ingredient_name"]).to_dicts()
+    assert [(r["ingredient_name"], r["ingredient_kind"]) for r in rows] == [
+        ("LISINOPRIL ANHYDROUS", "moiety"),
+        ("HYDROCHLOROTHIAZIDE", "substance"),
+        ("LISINOPRIL", "substance"),
+    ]
+    assert {r["product_name"] for r in rows} == {"Lisinopril and hydrochlorothiazide 20/12.5"}
+    assert {r["product_code"] for r in rows} == {"63187-050"}
+    assert {r["spl_set_id"] for r in rows} == {"abcdef12-3456-7890-abcd-ef1234567890"}
+    # The inactive and color ingredients never become composition rows.
+    assert "MICROCRYSTALLINE CELLULOSE" not in frame.get_column("ingredient_name").to_list()
+
+
+def test_hl7v3_products_legacy_and_kits(tmp_path: Path) -> None:
+    """Legacy manufacturedMedicine labels and partProduct kits both yield product rows."""
+    legacy = """<document xmlns="urn:hl7-org:v3"><setId root="S"/>
+      <subject><manufacturedProduct><manufacturedMedicine>
+        <code code="0069-3750"/><name>Renese</name>
+        <activeIngredient><activeIngredientSubstance>
+          <code code="36780APV5N"/><name>polythiazide</name>
+          <activeMoiety><activeMoiety><code code="36780APV5N"/><name>polythiazide</name></activeMoiety></activeMoiety>
+        </activeIngredientSubstance></activeIngredient>
+        <asEntityWithGeneric><genericMedicine><name>polythiazide</name></genericMedicine></asEntityWithGeneric>
+      </manufacturedMedicine></manufacturedProduct></subject></document>"""
+    kit = """<document xmlns="urn:hl7-org:v3"><setId root="K"/>
+      <manufacturedProduct><manufacturedProduct><code code="49836-009"/><name>P-Care K80G</name>
+        <part><partProduct><name>Aplicare Povidone-Iodine Triples</name>
+          <ingredient classCode="ACTIM"><ingredientSubstance>
+            <code code="85H0HZU99M"/><name>POVIDONE-IODINE</name>
+            <activeMoiety><activeMoiety><code code="9679TC07X4"/><name>IODINE</name></activeMoiety></activeMoiety>
+          </ingredientSubstance></ingredient></partProduct></part>
+      </manufacturedProduct></manufacturedProduct></document>"""
+    import xml.etree.ElementTree as ET
+
+    for xml, product, count in [(legacy, "Renese", 2), (kit, "P-Care K80G", 2)]:
+        record = spl_xml._parse_hl7v3_document(ET.fromstring(xml))
+        assert {p.product_name for p in record.products} == {product}
+        assert len(record.products) == count
+        assert {p.kind for p in record.products} == {"substance", "moiety"}
+
+
+def test_animal_fixture_products(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    Workdir(ctx.workdir).create()
+    refs = spl_xml.extract([ctx.fixture("dailymed/dailymed_spl_animal.xml.gz")], ctx)
+    frame = pl.read_parquet(next(r for r in refs if r.uri.name == "spl_products.parquet").uri)
+    assert set(frame.get_column("product_name").to_list()) == {"FleaWash", "ItchAway"}
+    assert set(frame.get_column("ingredient_name").to_list()) == {"Fipronil"}

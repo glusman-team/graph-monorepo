@@ -129,6 +129,20 @@ CONTRAINDICATION_COLUMNS = [
     "temporal_context_text",
 ]
 
+HAS_ACTIVE_INGREDIENT_COLUMNS = [
+    "subject_text",
+    "predicate",
+    "object_text",
+    "ingredient_kind",
+    "FDA_regulatory_approvals",
+    "supporting_spl_sets",
+    "edge_evidence",
+    "knowledge_level",
+    "agent_type",
+    "primary_knowledge_source",
+    "upstream_resource_ids",
+]
+
 FAERS_CASES_COLUMNS = [
     "quarter",
     "primaryid",
@@ -148,6 +162,7 @@ ASSERTION_TABLES: dict[str, list[str]] = {
     "approved_treats_assertions": APPROVED_TREATS_COLUMNS,
     "faers_applied_to_treat_assertions": FAERS_APPLIED_TO_TREAT_COLUMNS,
     "contraindication_assertions": CONTRAINDICATION_COLUMNS,
+    "has_active_ingredient_assertions": HAS_ACTIVE_INGREDIENT_COLUMNS,
 }
 
 
@@ -230,6 +245,7 @@ __all__ = [
     "DAILYMED_SPL_DOCUMENTS_COLUMNS",
     "FAERS_APPLIED_TO_TREAT_COLUMNS",
     "FAERS_CASES_COLUMNS",
+    "HAS_ACTIVE_INGREDIENT_COLUMNS",
     "PARQUET_MEDIA_TYPE",
     "TSV_MEDIA_TYPE",
     "coerce_count_column",

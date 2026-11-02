@@ -12,6 +12,9 @@ tables under ``interim/dailymed/``:
 * ``spl_sets.parquet``       — one row per distinct SPL set id.
 * ``spl_approvals.parquet``  — one row per approval (id/code/type) per set.
 * ``spl_ingredients.parquet``— active + inactive ingredients, each with UNII + role.
+* ``spl_products.parquet``   — one row per manufactured product x active ingredient
+  (the labeled substance AND its active moiety), the composition input for
+  ``has_active_ingredient`` assertions.
 * ``spl_sections.parquet``   — the proper per-section table: LOINC code, title, raw *and*
   cleaned section text, with a stable ``source_record_id``.
 
@@ -103,6 +106,18 @@ SPL_INGREDIENTS_COLUMNS: list[str] = [
     "release_file",
     "xml_path",
 ]
+SPL_PRODUCTS_COLUMNS: list[str] = [
+    "source_record_id",
+    "spl_set_id",
+    "product_code",
+    "product_name",
+    "generic_name",
+    "ingredient_name",
+    "ingredient_unii",
+    "ingredient_kind",
+    "release_file",
+    "xml_path",
+]
 SPL_SECTIONS_COLUMNS: list[str] = [
     "source_record_id",
     "spl_document_id",
@@ -132,6 +147,16 @@ class IngredientRecord:
 
 
 @dataclass
+class ProductIngredientRecord:
+    product_code: str
+    product_name: str
+    generic_name: str
+    ingredient_name: str
+    ingredient_unii: str
+    kind: str  # "substance" | "moiety"
+
+
+@dataclass
 class SectionRecord:
     loinc: str
     name: str
@@ -147,6 +172,7 @@ class DocumentRecord:
     set_id: str
     approvals: list[ApprovalRecord] = field(default_factory=list)
     ingredients: list[IngredientRecord] = field(default_factory=list)
+    products: list[ProductIngredientRecord] = field(default_factory=list)
     sections: list[SectionRecord] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     #: Document-level LOINC type code (``34391-4`` human Rx, ``50578-4`` Rx animal, ...);
@@ -166,6 +192,7 @@ class SPLXMLExtractor:
         set_rows: list[dict[str, str]] = []
         approval_rows: list[dict[str, str]] = []
         ingredient_rows: list[dict[str, str]] = []
+        product_rows: list[dict[str, str]] = []
         section_rows: list[dict[str, str]] = []
         total_warnings = 0
         input_ids: list[str] = []
@@ -184,6 +211,7 @@ class SPLXMLExtractor:
                 set_rows.extend(_set_rows(record, ref.blake3, release_file))
                 approval_rows.extend(_approval_rows(record, ref.blake3, release_file))
                 ingredient_rows.extend(_ingredient_rows(record, ref.blake3, release_file))
+                product_rows.extend(_product_rows(record, ref.blake3, release_file))
                 section_rows.extend(_section_rows(record, ref.blake3, release_file))
 
         operation = OperationBlock(name="extract_dailymed_spl")
@@ -191,6 +219,7 @@ class SPLXMLExtractor:
         sets_fp = schemas.schema_fingerprint(SPL_SETS_COLUMNS)
         approvals_fp = schemas.schema_fingerprint(SPL_APPROVALS_COLUMNS)
         ingredients_fp = schemas.schema_fingerprint(SPL_INGREDIENTS_COLUMNS)
+        products_fp = schemas.schema_fingerprint(SPL_PRODUCTS_COLUMNS)
         sections_fp = schemas.schema_fingerprint(SPL_SECTIONS_COLUMNS)
 
         refs: list[ArtifactRef] = []
@@ -256,6 +285,18 @@ class SPLXMLExtractor:
                 input_ids,
             )
         )
+        refs.append(
+            _write_parquet(
+                product_rows,
+                SPL_PRODUCTS_COLUMNS,
+                interim_dir / "spl_products.parquet",
+                store,
+                operation,
+                products_fp,
+                total_warnings,
+                input_ids,
+            )
+        )
         # Uncompressed TSV of the section table for Tablassert handoff.
         refs.append(
             _write_tsv(
@@ -277,6 +318,7 @@ class SPLXMLExtractor:
             sets=len(set_rows),
             approvals=len(approval_rows),
             ingredients=len(ingredient_rows),
+            products=len(product_rows),
             sections=len(section_rows),
             warnings=total_warnings,
         )
@@ -349,6 +391,8 @@ def _parse_mock_document(elem: ET.Element) -> DocumentRecord:
             )
         )
 
+    products = _mock_products(elem)
+
     sections = _collect_sections([s for s in elem.iter() if _local(s.tag) == "section"], warnings)
     label_type = ""
     for code in _direct_children(elem, "code"):
@@ -359,6 +403,7 @@ def _parse_mock_document(elem: ET.Element) -> DocumentRecord:
         set_id=set_id,
         approvals=approvals,
         ingredients=ingredients,
+        products=products,
         sections=sections,
         warnings=warnings,
         label_type=label_type,
@@ -385,11 +430,13 @@ def _parse_hl7v3_document(elem: ET.Element) -> DocumentRecord:
 
     approvals = _hl7v3_approvals(elem)
     ingredients = _hl7v3_ingredients(elem)
+    products = [*_hl7v3_products(elem), *_mock_products(elem)]
     sections = _collect_sections(list(_descendants(elem, "section")), warnings)
     return DocumentRecord(
         set_id=set_id,
         approvals=approvals,
         ingredients=ingredients,
+        products=products,
         sections=sections,
         warnings=warnings,
         label_type=_hl7v3_document_label_type(elem),
@@ -483,6 +530,152 @@ def _hl7v3_ingredients(elem: ET.Element) -> list[IngredientRecord]:
         if _attr(ing, "classCode") == "IACT":
             for inner in _descendants(ing, "ingredientSubstance"):
                 add(inner, "inactive")
+    return out
+
+
+def _mock_products(elem: ET.Element) -> list[ProductIngredientRecord]:
+    """The simplified fixture's optional ``<product name= code= generic=>`` children.
+
+    Read on BOTH document paths so the namespaced animal fixture (mock-style elements in an
+    HL7 v3 wrapper) contributes composition rows too.
+    """
+    out: list[ProductIngredientRecord] = []
+    for product in _direct_children(elem, "product"):
+        for ing in _direct_children(product, "activeIngredient"):
+            name = _attr(ing, "name")
+            if not name:
+                continue
+            out.append(
+                ProductIngredientRecord(
+                    product_code=_attr(product, "code"),
+                    product_name=_attr(product, "name"),
+                    generic_name=_attr(product, "generic"),
+                    ingredient_name=name,
+                    ingredient_unii=_unii(_attr(ing, "unii")),
+                    kind="moiety" if _attr(ing, "kind") == "moiety" else "substance",
+                )
+            )
+    return out
+
+
+#: HL7 v3 ingredient class codes declaring an ACTIVE ingredient: ACTIB (active ingredient -
+#: basis of strength), ACTIM (active ingredient - active moiety), ACTIR (active ingredient -
+#: reference). IACT/IMPY/INGR/CNTM are inactive, impurity, unspecified and color/flavor
+#: entries and are deliberately excluded.
+_ACTIVE_INGREDIENT_CLASS_CODES = frozenset({"ACTIB", "ACTIM", "ACTIR"})
+
+
+def _substance_identity(substance: ET.Element) -> tuple[str, str]:
+    """A substance element's DIRECT ``<name>``/``<code>`` identity (never its nested moiety's)."""
+    name = ""
+    unii = ""
+    for child in substance:
+        if _local(child.tag) == "name":
+            name = _text(child)
+        elif _local(child.tag) == "code":
+            unii = _unii(_attr(child, "code"))
+    return name, unii
+
+
+def _hl7v3_products(elem: ET.Element) -> list[ProductIngredientRecord]:
+    """One record per manufactured product x active ingredient (substance AND active moiety).
+
+    Real DailyMed nests the product one level deep (``manufacturedProduct/manufacturedProduct``
+    on modern labels, ``manufacturedProduct/manufacturedMedicine`` on pre-2009 labels), so the
+    product element is recognized by its direct ``<name>`` child, not by its depth. Kits wrap
+    their parts in ``part/partProduct`` under a named kit product: traversal stops at the first
+    named product, so the kit carries every part's actives and parts are not emitted separately.
+    """
+    out: list[ProductIngredientRecord] = []
+
+    def walk(node: ET.Element) -> None:
+        for child in node:
+            tag = _local(child.tag)
+            if tag in ("manufacturedProduct", "manufacturedMedicine") and any(
+                _local(c.tag) == "name" for c in child
+            ):
+                out.extend(_product_ingredients(child))
+                continue  # nested partProducts belong to this product
+            walk(child)
+
+    walk(elem)
+    return out
+
+
+def _product_display_name(name: ET.Element) -> str:
+    """Render a product ``<name>``: the label splits the suffix into a nested ``<suffix>``
+    element (``ALBUTEROL SULFATE<suffix>HFA</suffix>``), so the pieces join with a space
+    instead of concatenating (``ALBUTEROL SULFATE HFA``)."""
+    parts: list[str] = []
+    if name.text:
+        piece = _collapse_ws(name.text)
+        if piece:
+            parts.append(piece)
+    for child in name:
+        if _local(child.tag) == "suffix":
+            piece = _text(child)
+            if piece:
+                parts.append(piece)
+    return _collapse_ws(" ".join(parts))
+
+
+def _product_ingredients(product: ET.Element) -> list[ProductIngredientRecord]:
+    """Read one named product element into (product, active ingredient) records."""
+    product_name = ""
+    for name in _direct_children(product, "name"):
+        product_name = _product_display_name(name)
+        break
+    if not product_name:
+        return []
+    product_code = ""
+    for code in _direct_children(product, "code"):
+        product_code = _attr(code, "code")
+        break
+    generic_name = ""
+    for holder in _descendants(product, "genericMedicine"):
+        for name in _direct_children(holder, "name"):
+            generic_name = _text(name)
+            break
+        if generic_name:
+            break
+
+    out: list[ProductIngredientRecord] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(substance: ET.Element, kind: str) -> None:
+        name, unii = _substance_identity(substance)
+        if not name:
+            return
+        key = (kind, unii, name.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(
+            ProductIngredientRecord(
+                product_code=product_code,
+                product_name=product_name,
+                generic_name=generic_name,
+                ingredient_name=name,
+                ingredient_unii=unii,
+                kind=kind,
+            )
+        )
+
+    def add_substance_and_moiety(substance: ET.Element) -> None:
+        add(substance, "substance")
+        for moiety in _descendants(substance, "activeMoiety"):
+            for inner in _descendants(moiety, "activeMoiety"):
+                add(inner, "moiety")
+
+    for ing in _descendants(product, "ingredient"):
+        if _attr(ing, "classCode") not in _ACTIVE_INGREDIENT_CLASS_CODES:
+            continue
+        for substance in _descendants(ing, "ingredientSubstance"):
+            add_substance_and_moiety(substance)
+    # Legacy (pre-2009) labels declare actives as activeIngredient/activeIngredientSubstance.
+    for ing in _descendants(product, "activeIngredient"):
+        for substance in _descendants(ing, "activeIngredientSubstance"):
+            add_substance_and_moiety(substance)
     return out
 
 
@@ -608,6 +801,36 @@ def _ingredient_rows(
             "xml_path": release_file,
         }
         for ing in record.ingredients
+    ]
+
+
+def _product_rows(
+    record: DocumentRecord, source_artifact_id: str, release_file: str
+) -> list[dict[str, str]]:
+    """Product x active-ingredient rows (empty when no named manufactured products exist)."""
+    return [
+        {
+            "source_record_id": _source_record_id(
+                source_artifact_id,
+                "product",
+                record.set_id,
+                p.product_code,
+                p.product_name,
+                p.ingredient_unii,
+                p.ingredient_name,
+                p.kind,
+            ),
+            "spl_set_id": record.set_id,
+            "product_code": p.product_code,
+            "product_name": p.product_name,
+            "generic_name": p.generic_name,
+            "ingredient_name": p.ingredient_name,
+            "ingredient_unii": p.ingredient_unii,
+            "ingredient_kind": p.kind,
+            "release_file": release_file,
+            "xml_path": release_file,
+        }
+        for p in record.products
     ]
 
 

@@ -432,8 +432,88 @@ def test_pinned_edge_categories_match_the_category_override() -> None:
     real build that resolves the new object category would be rejected by the gate that exists
     to accept it.
     """
-    from dakp_pipeline.tablassert import OBJECT_CATEGORY_OVERRIDE
+    from dakp_pipeline.tablassert import COMPOSITION_CATEGORY_OVERRIDE, OBJECT_CATEGORY_OVERRIDE
 
-    assert {f"biolink:{pinned}" for pinned in OBJECT_CATEGORY_OVERRIDE.values()} == set(
-        PINNED_EDGE_CATEGORIES
-    )
+    pinned = {
+        f"biolink:{cls}"
+        for cls in (*OBJECT_CATEGORY_OVERRIDE.values(), *COMPOSITION_CATEGORY_OVERRIDE.values())
+    }
+    assert pinned == set(PINNED_EDGE_CATEGORIES)
+
+
+# --- drug composition (has_active_ingredient): chemical object, FDA upstream chain -------
+
+
+def _composition_nodes() -> list[dict[str, object]]:
+    return [
+        {"id": "UMLS:C1527845", "name": "Vytorin", "category": ["biolink:ChemicalEntity"]},
+        {"id": "CHEBI:49040", "name": "Ezetimibe", "category": ["biolink:SmallMolecule"]},
+        {"id": "MONDO:0000001", "name": "a disease", "category": ["biolink:Disease"]},
+    ]
+
+
+def _composition_edge(**overrides: object) -> dict[str, object]:
+    edge: dict[str, object] = {
+        "id": "uuid-composition-0001",
+        "subject": "UMLS:C1527845",
+        "original_subject": "VYTORIN",
+        "predicate": "biolink:has_active_ingredient",
+        "object": "CHEBI:49040",
+        "original_object": "EZETIMIBE",
+        "category": ["biolink:ChemicalEntityToChemicalEntityAssociation"],
+        "publications": ["dailymed:89b860d2-de83-468e-b7e8-76aeec2edca2"],
+        "knowledge_level": "knowledge_assertion",
+        "agent_type": "manual_validation_of_automated_agent",
+        "primary_knowledge_source": "infores:drugapprovals-kp",
+        "sources": [
+            {
+                "resource_id": "infores:drugapprovals-kp",
+                "resource_role": "primary_knowledge_source",
+                "upstream_resource_ids": ["infores:dailymed", "infores:drugs-at-fda"],
+                "source_record_urls": [
+                    "https://linkouts.skyelanegoetz.com/edges/uuid-composition-0001"
+                ],
+            },
+            {"resource_id": "infores:dailymed", "resource_role": "supporting_data_source"},
+            {"resource_id": "infores:drugs-at-fda", "resource_role": "supporting_data_source"},
+        ],
+    }
+    edge.update(overrides)
+    return edge
+
+
+def test_composition_edge_passes_the_contract() -> None:
+    report = validate_kgx(_composition_nodes(), [_composition_edge()])
+    assert report.kgx_problems == []
+    assert report.ok is True
+
+
+def test_composition_edge_rejects_a_disease_object() -> None:
+    # The composition family is the one whose object must be a chemical, not a disease.
+    edge = _composition_edge(object="MONDO:0000001")
+    report = validate_kgx(_composition_nodes(), [edge])
+    assert INCOMPATIBLE_OBJECT_CATEGORY in _codes(report)
+
+
+def test_composition_edge_rejects_a_bare_association_category() -> None:
+    edge = _composition_edge(category=["biolink:Association"])
+    report = validate_kgx(_composition_nodes(), [edge])
+    assert INCOMPATIBLE_EDGE_CATEGORY in _codes(report)
+
+
+def test_composition_rows_require_both_fda_upstreams() -> None:
+    from dakp_pipeline.translator import check_rows
+
+    row = {
+        "predicate": "biolink:has_active_ingredient",
+        "clinical_approval_status": "",
+        "knowledge_level": "knowledge_assertion",
+        "primary_knowledge_source": "infores:drugapprovals-kp",
+        "upstream_resource_ids": "infores:dailymed",
+    }
+    report = check_rows([row])
+    assert [(v.family, v.invariant) for v in report.violations] == [
+        ("biolink:has_active_ingredient", "upstream_provenance")
+    ]
+    row["upstream_resource_ids"] = "infores:dailymed|infores:drugs-at-fda"
+    assert check_rows([row]).ok is True

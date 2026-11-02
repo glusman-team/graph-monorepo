@@ -11,7 +11,12 @@ from pathlib import Path
 
 import polars as pl
 
-from dakp_pipeline.assertions import approved_treats, contraindications, observed_uses
+from dakp_pipeline.assertions import (
+    active_ingredients,
+    approved_treats,
+    contraindications,
+    observed_uses,
+)
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
 from dakp_pipeline.translator import (
@@ -55,6 +60,10 @@ def _valid_rows() -> list[dict[str, str]]:
             upstream="infores:faers|infores:dailymed",
         ),
         _row("biolink:contraindicated_in", upstream="infores:dailymed"),
+        _row(
+            "biolink:has_active_ingredient",
+            upstream="infores:dailymed|infores:drugs-at-fda",
+        ),
     ]
 
 
@@ -70,7 +79,7 @@ def test_valid_rows_pass_all_invariants() -> None:
     assert report.ok is True
     assert report.violations == []
     assert report.families_seen == sorted(EXPECTED_FAMILIES)
-    assert report.row_count == 3
+    assert report.row_count == 4
 
 
 def test_real_assertion_tables_preserve_invariants(
@@ -83,8 +92,11 @@ def test_real_assertion_tables_preserve_invariants(
     approved = approved_treats.transform([*dailymed_refs, *drugsfda_refs, *ema_refs], ctx)
     uses = observed_uses.transform([*faers_refs, *dailymed_refs], ctx)
     contra = contraindications.transform([*dailymed_refs], ctx)
+    composition = active_ingredients.HasActiveIngredientShaper().transform(
+        [*dailymed_refs, *drugsfda_refs], ctx
+    )
 
-    report = check_assertion_tables([*approved, *uses, *contra])
+    report = check_assertion_tables([*approved, *uses, *contra, *composition])
     assert report.violations == []
     assert report.ok is True
     assert report.families_seen == sorted(EXPECTED_FAMILIES)

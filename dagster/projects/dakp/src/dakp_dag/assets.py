@@ -494,6 +494,25 @@ def shape_contraindications(context: AssetExecutionContext) -> dg.MaterializeRes
     )
 
 
+@dg.asset(
+    name="shape_has_active_ingredient",
+    description=(
+        "Shape drug-product/active-ingredient composition assertions (family: "
+        "has_active_ingredient) from DailyMed manufactured products and the Drugs@FDA product "
+        "register. Structured label data: no NER, no qualifiers."
+    ),
+    deps=[EXTRACT_ASSETS["dailymed"], EXTRACT_ASSETS["drugsfda"]],
+)
+def shape_has_active_ingredient(context: AssetExecutionContext) -> dg.MaterializeResult:
+    return _run_shape(
+        context,
+        stage="shape_has_active_ingredient",
+        family_name="has_active_ingredient",
+        operation="shape_has_active_ingredient",
+        input_stages=[extract_stage("dailymed"), extract_stage("drugsfda")],
+    )
+
+
 # --- NER training-data export --------------------------------------------------------
 
 
@@ -533,13 +552,19 @@ SHAPE_STAGES: tuple[str, ...] = (
     "shape_approved_treats",
     "shape_faers_uses",
     "shape_contraindications",
+    "shape_has_active_ingredient",
 )
 
 
 @dg.asset(
     name=TABLASSERT_CONFIGS,
     description="Generate the Tablassert graph and per-table YAML configs for the assertion tables.",
-    deps=[shape_approved_treats, shape_faers_uses, shape_contraindications],
+    deps=[
+        shape_approved_treats,
+        shape_faers_uses,
+        shape_contraindications,
+        shape_has_active_ingredient,
+    ],
 )
 def tablassert_configs(context: AssetExecutionContext) -> dg.MaterializeResult:
     from dakp_pipeline import tablassert
@@ -564,7 +589,13 @@ def _kgx_pair(config: RunConfig) -> tuple[Path, Path]:
         "Without a configured fullmap ($DAKP_FULLMAP) the handoff is deferred: no KGX is "
         "produced and downstream KG stages report the deferral instead of failing."
     ),
-    deps=[shape_approved_treats, shape_faers_uses, shape_contraindications, tablassert_configs],
+    deps=[
+        shape_approved_treats,
+        shape_faers_uses,
+        shape_contraindications,
+        shape_has_active_ingredient,
+        tablassert_configs,
+    ],
 )
 def kg_build(context: AssetExecutionContext) -> dg.MaterializeResult:
     from dakp_pipeline import tablassert
@@ -708,6 +739,7 @@ all_assets: list[dg.AssetsDefinition] = [
     shape_approved_treats,
     shape_faers_uses,
     shape_contraindications,
+    shape_has_active_ingredient,
     ner_training_export,
     tablassert_configs,
     kg_build,

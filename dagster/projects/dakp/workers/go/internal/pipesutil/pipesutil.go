@@ -19,10 +19,13 @@ import (
 // behavior changes so content-addressed artifacts invalidate correctly.
 // It tracks the bytes written to the output artifact only: reporting or
 // logging changes do not invalidate anything, so they do not bump it.
+// 0.2.0: extract_dailymed gains spl_products.parquet (manufactured product x active
+// ingredient, substance + moiety) and spl_documents gains the label_type column the
+// Python contract already declared.
 // 0.1.1: extract_faers warnings.parquet carries real rows (was empty) and
 // extract_drugsfda extract_warnings.jsonl carries one JSON line per parse
 // warning (was an empty file).
-const WorkerVersion = "0.1.1"
+const WorkerVersion = "0.2.0"
 
 // CacheInfo describes a content-addressed artifact decision.
 type CacheInfo struct {

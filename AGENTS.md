@@ -87,6 +87,12 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
   (key, acquire function, `go:<stage>` or `py:<module>` extractor) plus the
   pipeline-side fetcher/extractor; the acquire/extract assets, their narrow
   jobs, and the published refs appear from the table.
+- **Drug composition**: `has_active_ingredient` edges come from
+  `assertions/active_ingredients.py` (DailyMed `spl_products` + Drugs@FDA products;
+  substance AND moiety, no qualifiers, no CURIE columns). Product/ingredient pairs
+  that resolve to one CURIE are removed post-build by `selfloops.py`, and
+  Tablassert's study assertions then run on the filtered pair (build-kg runs without
+  `--qc` for that reason).
 - **New edge predicate**: one `EdgeFamily` in
   `projects/dakp/pipeline/src/dakp_pipeline/families.py` (table, predicate,
   knowledge level, agent type, NER profile, shaper class) plus a thin
@@ -115,7 +121,7 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
 python package (io/CAS + op index, sources, extractors, NER, assertion shapers
 behind the `families` registry, Tablassert handoff, legacy TSV export),
 `workers/go/` holds the ported parsers plus the `cmd/dakp-extract` pipes worker,
-and `src/dakp_dag/` is the asset graph (21 assets, `dakp_build` + one narrow job
+and `src/dakp_dag/` is the asset graph (22 assets, `dakp_build` + one narrow job
 per stage). Airflow is gone: no DAG/task/XCom code remains, and release-tag
 versioning is replaced by explicit publication parameters. CTKP follows
 (requires repo privacy decision).

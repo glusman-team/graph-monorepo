@@ -120,6 +120,7 @@ def test_shaping_deps_match_the_dakp_dag():
             "extract_ema",
             "acquire_ner_models",
         },
+        "shape_has_active_ingredient": {"extract_dailymed", "extract_drugsfda"},
         assets.NER_TRAINING_EXPORT: {
             "extract_dailymed",
             "extract_faers",
