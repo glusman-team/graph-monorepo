@@ -287,7 +287,7 @@ def test_epar_patient_clause_populates_disease_context(
 
     "for the treatment of A in patients with B" -> B is the disease context of the A edge,
     classified by the shared :func:`~dakp_pipeline.assertions.contexts.patient_clause_contexts`
-    template (the contraindication shaper and NER export already use it). Without this the
+    template (the contraindication shaper already uses it). Without this the
     EPAR rows would ship the qualifier column empty while the mined B mention is dropped.
     """
     frame = _ema_frame(

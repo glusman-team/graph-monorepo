@@ -15,13 +15,13 @@ description: Run the dakp pipeline locally through dg dev and verify KGX output.
    the whole DAG. For one output only, Launch run on `dakp_build_<stage>`
    (`dakp_build_acquire_dailymed`, `dakp_build_extract_faers`,
    `dakp_build_shape_approved_treats`, `dakp_build_tablassert_configs`,
-   `dakp_build_kg_build`, `dakp_build_kg_qc`, `dakp_build_legacy_tsv_export`,
+   `dakp_build_kg_build`, `dakp_build_kg_qc`,
    ...), or Materialize a single asset node.
 5. Verify output under `dagster/projects/dakp/published/dakp/` (or `$MO_PUBLISHED_ROOT`):
    `refs/<stage>.refs.json` per stage (the ArtifactRef handoff), and after a real
    Tablassert build `kg/kg.nodes.ndjson`, `kg/kg.edges.ndjson`,
    `kg/tablassert_handoff.json`, `kg/qc.json`. Without `$DAKP_FULLMAP` the
-   handoff is deferred: `kg_build`/`kg_qc`/`legacy_tsv_export` report
+   handoff is deferred: `kg_build`/`kg_qc` report
    `deferred: true` metadata instead of failing, and no `kg/` files appear.
 6. Cache check: re-run an `extract_*` or `shape_*` stage -> metadata should show
    `cache_hit: true` (the pipeline operation index in `$DAKP_WORKDIR` keys on the

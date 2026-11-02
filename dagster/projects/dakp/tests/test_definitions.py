@@ -13,11 +13,9 @@ from dakp_dag.definitions import defs
 
 EXPLICIT_STAGES = [
     *assets.SHAPE_STAGES,
-    assets.NER_TRAINING_EXPORT,
     assets.TABLASSERT_CONFIGS,
     assets.KG_BUILD,
     assets.KG_QC,
-    assets.LEGACY_TSV_EXPORT,
 ]
 
 EXPECTED_STAGES = [
@@ -121,17 +119,9 @@ def test_shaping_deps_match_the_dakp_dag():
             "acquire_ner_models",
         },
         "shape_has_active_ingredient": {"extract_dailymed", "extract_drugsfda"},
-        assets.NER_TRAINING_EXPORT: {
-            "extract_dailymed",
-            "extract_faers",
-            "extract_ema",
-            "acquire_ner_models",
-            "shape_contraindications",
-        },
         assets.TABLASSERT_CONFIGS: set(assets.SHAPE_STAGES),
         assets.KG_BUILD: {*assets.SHAPE_STAGES, assets.TABLASSERT_CONFIGS},
         assets.KG_QC: {assets.KG_BUILD},
-        assets.LEGACY_TSV_EXPORT: {assets.KG_BUILD},
     }
     by_name = {asset.key.to_user_string(): asset for asset in assets.all_assets}
     for stage, deps in expected.items():

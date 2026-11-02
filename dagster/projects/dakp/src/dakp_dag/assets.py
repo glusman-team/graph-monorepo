@@ -109,11 +109,9 @@ SOURCES: tuple[Source, ...] = (
 SOURCE_BY_KEY: dict[str, Source] = {source.key: source for source in SOURCES}
 
 ACQUIRE_NER_MODELS = "acquire_ner_models"
-NER_TRAINING_EXPORT = "ner_training_export"
 TABLASSERT_CONFIGS = "tablassert_configs"
 KG_BUILD = "kg_build"
 KG_QC = "kg_qc"
-LEGACY_TSV_EXPORT = "legacy_tsv_export"
 
 KG_NODES = "kg.nodes.ndjson"
 KG_EDGES = "kg.edges.ndjson"
@@ -513,40 +511,8 @@ def shape_has_active_ingredient(context: AssetExecutionContext) -> dg.Materializ
     )
 
 
-# --- NER training-data export --------------------------------------------------------
-
-
-@dg.asset(
-    name=NER_TRAINING_EXPORT,
-    description=(
-        "Export the GLiNER2 training-data bundle. Runs after shaping so the disease mention "
-        "cache is warm and its re-extraction of the same section texts lands on cache hits. "
-        "The shape dependency is ordering only; the extracts are the data inputs."
-    ),
-    deps=[
-        EXTRACT_ASSETS["dailymed"],
-        EXTRACT_ASSETS["faers"],
-        EXTRACT_ASSETS["ema"],
-        acquire_ner_models,
-        shape_contraindications,
-    ],
-)
-def ner_training_export(context: AssetExecutionContext) -> dg.MaterializeResult:
-    from dakp_pipeline import ner_export
-
-    config = run_config()
-    in_refs = _load(
-        config, [extract_stage("dailymed"), extract_stage("faers"), extract_stage("ema")]
-    )
-    ctx = task_context(config)
-    ner = _ner("contraindications", config, ctx)
-    run_ctx = _with_ner(ctx, ner) if ner is not None else ctx
-    with _stage_logs(context):
-        out_refs = ner_export.export(in_refs, run_ctx)
-    return _publish(config, context, NER_TRAINING_EXPORT, out_refs)
-
-
-# --- Tablassert handoff, KG build, QC, legacy export ---------------------------------
+# --- Tablassert handoff, KG build, QC -------------------------------------------------
+# --- Tablassert handoff, KG build, QC -------------------------------------------------
 
 SHAPE_STAGES: tuple[str, ...] = (
     "shape_approved_treats",
@@ -700,36 +666,6 @@ def kg_qc(context: AssetExecutionContext) -> dg.MaterializeResult:
     )
 
 
-@dg.asset(
-    name=LEGACY_TSV_EXPORT,
-    description=(
-        "Retrofit the published KGX pair into the legacy DAKP TSV schema. Reports the "
-        "deferral when kg_build produced no KGX (there is nothing to convert)."
-    ),
-    deps=[kg_build],
-)
-def legacy_tsv_export(context: AssetExecutionContext) -> dg.MaterializeResult:
-    from dakp_pipeline import legacy_tsv
-
-    config = run_config()
-    kgx_refs = refsio.load_refs(config, KG_BUILD)
-    ctx = task_context(config)
-    with _stage_logs(context):
-        out_refs = legacy_tsv.export(kgx_refs, ctx)
-    if not out_refs:
-        context.log.warning(
-            "legacy_tsv_export: Tablassert handoff was deferred; nothing to retrofit"
-        )
-        return dg.MaterializeResult(
-            metadata={
-                "stage": LEGACY_TSV_EXPORT,
-                "deferred": True,
-                "reason": "no KGX to retrofit (deferred handoff)",
-            }
-        )
-    return _publish(config, context, LEGACY_TSV_EXPORT, out_refs)
-
-
 # --- graph surface: assets, jobs, resources ------------------------------------------
 
 all_assets: list[dg.AssetsDefinition] = [
@@ -740,11 +676,9 @@ all_assets: list[dg.AssetsDefinition] = [
     shape_faers_uses,
     shape_contraindications,
     shape_has_active_ingredient,
-    ner_training_export,
     tablassert_configs,
     kg_build,
     kg_qc,
-    legacy_tsv_export,
 ]
 
 # The published artifact each stage produces (used by the narrow jobs below and by the
@@ -754,7 +688,6 @@ stage_outputs: dict[str, list[str]] = {
     ACQUIRE_NER_MODELS: [f"refs/{ACQUIRE_NER_MODELS}.refs.json"],
     **{extract_stage(key): [f"refs/{extract_stage(key)}.refs.json"] for key in SOURCE_BY_KEY},
     **{stage: [f"refs/{stage}.refs.json"] for stage in SHAPE_STAGES},
-    NER_TRAINING_EXPORT: [f"refs/{NER_TRAINING_EXPORT}.refs.json"],
     TABLASSERT_CONFIGS: [f"refs/{TABLASSERT_CONFIGS}.refs.json"],
     KG_BUILD: [
         f"refs/{KG_BUILD}.refs.json",
@@ -763,7 +696,6 @@ stage_outputs: dict[str, list[str]] = {
         "kg/tablassert_handoff.json",
     ],
     KG_QC: [f"kg/{QC_REPORT}"],
-    LEGACY_TSV_EXPORT: [f"refs/{LEGACY_TSV_EXPORT}.refs.json"],
 }
 
 dakp_build = dg.define_asset_job(

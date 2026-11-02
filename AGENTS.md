@@ -119,9 +119,9 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
 
 `projects/dakp` carries the DAKP v1.25.0 port: `pipeline/` is the dagster-free
 python package (io/CAS + op index, sources, extractors, NER, assertion shapers
-behind the `families` registry, Tablassert handoff, legacy TSV export),
+behind the `families` registry, Tablassert handoff),
 `workers/go/` holds the ported parsers plus the `cmd/dakp-extract` pipes worker,
-and `src/dakp_dag/` is the asset graph (22 assets, `dakp_build` + one narrow job
+and `src/dakp_dag/` is the asset graph (20 assets, `dakp_build` + one narrow job
 per stage). Airflow is gone: no DAG/task/XCom code remains, and release-tag
 versioning is replaced by explicit publication parameters. CTKP follows
 (requires repo privacy decision).
