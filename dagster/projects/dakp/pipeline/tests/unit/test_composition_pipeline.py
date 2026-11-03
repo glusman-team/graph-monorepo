@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from dakp_pipeline import tablassert as tablassert_configs
-from dakp_pipeline.selfloops import drop_self_loop_edges
+from dakp_pipeline.selfloops import drop_screened_edges, drop_self_loop_edges
 
 _TABLE = "has_active_ingredient_assertions"
 
@@ -196,3 +196,51 @@ def test_drop_self_loop_edges_ignores_other_predicates_and_bad_lines(tmp_path: P
     # Untouched: another family's self-loop (should not exist) and corrupt lines are the
     # contract/study gates' business, not this filter's.
     assert edges.read_text(encoding="utf-8") == treats_loop + "\nnull\nnot json\n"
+
+
+def test_drop_screened_edges_covers_both_endpoints_and_subject_names(tmp_path: Path) -> None:
+    nodes = tmp_path / "nodes.ndjson"
+    edges = tmp_path / "edges.ndjson"
+    nodes.write_text(
+        "\n".join(
+            json.dumps({"id": curie, "name": name})
+            for curie, name in [
+                ("CHEBI:15377", "Water"),
+                ("RXCUI:1", "ethanol 0.7 ML/ML Topical Spray"),
+                ("RXCUI:2", "Alcohol"),  # explicitly label-backed exception
+                ("CHEBI:1", "Safe ingredient"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    rows = [
+        {"id": "water-object", "subject": "CHEBI:1", "object": "CHEBI:15377"},
+        {"id": "water-subject", "subject": "CHEBI:15377", "object": "CHEBI:1"},
+        {"id": "poison-name", "subject": "RXCUI:1", "object": "CHEBI:1"},
+        {"id": "exception", "subject": "RXCUI:2", "object": "CHEBI:1"},
+        {"id": "safe", "subject": "CHEBI:1", "object": "RXCUI:2"},
+    ]
+    edges.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    assert drop_screened_edges(nodes, edges) == {
+        "screened_edges_dropped": 3,
+        "screened_orphan_nodes_dropped": 2,
+    }
+    assert [json.loads(line)["id"] for line in edges.read_text().splitlines()] == [
+        "exception",
+        "safe",
+    ]
+    assert {json.loads(line)["id"] for line in nodes.read_text().splitlines()} == {
+        "RXCUI:2",
+        "CHEBI:1",
+    }
+
+
+def test_drop_screened_edges_noop_preserves_bytes(tmp_path: Path) -> None:
+    nodes, edges = _write_pair(tmp_path)
+    before = (nodes.read_bytes(), edges.read_bytes())
+    assert drop_screened_edges(nodes, edges) == {
+        "screened_edges_dropped": 0,
+        "screened_orphan_nodes_dropped": 0,
+    }
+    assert (nodes.read_bytes(), edges.read_bytes()) == before

@@ -2635,6 +2635,10 @@ class TablassertRunner:
         contract_error: str | None = None
         approval_promotions = 0
         self_loop_report: dict[str, int] = {"self_loop_edges_dropped": 0, "orphan_nodes_dropped": 0}
+        screen_report: dict[str, int] = {
+            "screened_edges_dropped": 0,
+            "screened_orphan_nodes_dropped": 0,
+        }
         study_command: list[str] = []
         study_exit_code: int | None = None
         if completed.returncode == 0:  # reconcile only a build that actually emitted a KGX pair
@@ -2660,6 +2664,13 @@ class TablassertRunner:
                     self_loop_report = drop_self_loop_edges(
                         kgx_dir / f"{stem}.nodes.ndjson", edges_path
                     )
+                # Apply the poison/water screens to BOTH endpoints after resolution. In
+                # particular, composition objects need the same screen as subjects.
+                from dakp_pipeline.selfloops import drop_screened_edges
+
+                screen_report = drop_screened_edges(
+                    edges_path.with_name(f"{stem}.nodes.ndjson"), edges_path
+                )
                 approval_promotions = reconcile_approval_status(edges_path)
                 stats(logger, "resolved_approval_status", promoted=approval_promotions)
                 contract_problems = validate_kgx_contract(ctx, graph_yaml)
@@ -2709,6 +2720,7 @@ class TablassertRunner:
             }
             stats(logger, event, study_exit_code=study.returncode)
         report.update(self_loop_report)
+        report.update(screen_report)
         refs = [_write_report(report, assertion_refs, ctx)]
         if study_exit_code:
             raise TablassertError(

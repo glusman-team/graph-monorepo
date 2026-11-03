@@ -90,9 +90,10 @@ uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  
 - **Drug composition**: `has_active_ingredient` edges come from
   `assertions/active_ingredients.py` (DailyMed `spl_products` + Drugs@FDA products;
   substance AND moiety, no qualifiers, no CURIE columns). Product/ingredient pairs
-  that resolve to one CURIE are removed post-build by `selfloops.py`, and
-  Tablassert's study assertions then run on the filtered pair (build-kg runs without
-  `--qc` for that reason).
+  that resolve to one CURIE are removed post-build by `selfloops.py`; the same post-build
+  gate removes screened poison/water CURIEs on either endpoint and screened subject names,
+  then drops orphaned nodes. Tablassert's study assertions run on the filtered pair
+  (build-kg runs without `--qc` for that reason).
 - **New edge predicate**: one `EdgeFamily` in
   `projects/dakp/pipeline/src/dakp_pipeline/families.py` (table, predicate,
   knowledge level, agent type, NER profile, shaper class) plus a thin
