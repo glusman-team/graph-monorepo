@@ -1,5 +1,7 @@
 # graph-monorepo
 
+[![CI](https://github.com/glusman-team/graph-monorepo/actions/workflows/ci.yml/badge.svg)](https://github.com/glusman-team/graph-monorepo/actions/workflows/ci.yml) [![HF likes](https://img.shields.io/badge/dynamic/json?label=HF%20likes&query=likes&url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2FSkyeAv%2Fdrug-approvals-kp&color=yellow)](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp) [![GitHub stars](https://img.shields.io/github/stars/glusman-team/graph-monorepo?label=GitHub%20stars)](https://github.com/glusman-team/graph-monorepo)
+
 Docs: https://glusman-team.github.io/graph-monorepo/ (first entry: DAKP).
 
 Monorepo for ISB multiomics knowledge-graph pipelines: a Dagster deployment
