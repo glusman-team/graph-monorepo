@@ -241,7 +241,7 @@ New env knobs (all optional except the secrets and `DAKP_FULLMAP`, which already
 - [x] `DiseaseNER.close()` + shape-stage release + post-build GPU leak check.
 - [x] Add managed NER-cache client mode + preflight health/stats checks; test reuse, daemon restart wait, no subprocess spawn in external mode, and development fallback.
 - [x] dagster.yaml (queue=1, monitoring, retention) + Nix `dakp-nercache`/`dagster-units` packages + install docs (linger, EnvironmentFile, env example).
-- [ ] Rehearse end-to-end with `DAKP_PUBLISH_DRY_RUN=1`, then set `DAKP_RELEASE_ENABLED=1`.
+- [x] Rehearse end-to-end with `DAKP_PUBLISH_DRY_RUN=1`, then set `DAKP_RELEASE_ENABLED=1`.
 
 
 ## Verification
@@ -273,3 +273,26 @@ evidence. Byte-identical upstream republication does not trigger a new release.
 A consumed failed build is not automatically retried; investigate the issue and
 launch a fresh release check. Non-positive freshness windows always re-check
 upstream in auto mode; cached mode is the explicit zero-network mode.
+
+## Production rehearsal and activation (2026-11-05)
+
+- Implementation merged via PR #21; deployment docs fixed via PR #24. Production
+  checkout `/local_raid1/sgoetz/graph-monorepo` tracks clean main at `72df7ac`.
+- All three Nix-generated user services installed and active. UI binds localhost,
+  HTTP 200. Managed NER cache healthy with 352,076 entries after restart.
+- Release check `3f5b8020-8411-4955-a05d-02feb9e1465c` succeeded (3m13s).
+- Full dry-run build `332e46aa-5dec-4287-b2e9-84cb64c1a16a` succeeded (11m16s),
+  staging 1.27.1: 24,017 nodes / 164,496 edges / 0 dangling edges. Validator passed,
+  generated card and HF plan passed; all GPUs used 0 MiB afterward, no DAKP leaks.
+- Confirmed no HF 1.27.1 directory/tag and no release-state advancement. Archived
+  rehearsal pending.json so enabling cannot trigger an unscheduled publication.
+- Failure drill opened issues #22/#23 from immediate repeated requests (GitHub list
+  visibility lag); a later repeat correctly commented instead of creating another.
+  Both drill issues closed. Immediate back-to-back synthetic issue writes are not
+  fully deduplicated; normal sensor event processing is persisted by Dagster.
+- Set `DAKP_PUBLISH_DRY_RUN=0`, `DAKP_RELEASE_ENABLED=1`; restarted daemon/webserver.
+  Friday schedule and both sensors verified RUNNING. Next tick: Friday Nov 6 2026
+  17:00 America/Los_Angeles. GPU sensor cleanly skips until a pending check exists.
+- **Outstanding operator prerequisite:** `Linger=no`; remote sudo requires a
+  password. User must run `sudo loginctl enable-linger sgoetz` on wenceslaus to
+  guarantee services survive logout/reboot. No claim of reboot persistence yet.
