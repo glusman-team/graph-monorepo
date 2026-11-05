@@ -46,6 +46,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,6 +56,7 @@ from dakp_pipeline.io.manifests import SourceBlock
 from dakp_pipeline.io.refs import REFS_FILE_MEDIA_TYPE, refs_to_dicts
 from dakp_pipeline.logging_setup import logger, progress, stats, step
 from dakp_pipeline.paths import Workdir
+from dakp_pipeline.sources.policy import require_cached, source_policy
 
 # DailyMed "all drug labels" full-release listing (legacy getFullRelease.pl target).
 FULL_RELEASE_INDEX_URL = "https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm"
@@ -108,6 +110,13 @@ def _download_full_release(ctx: TaskContext) -> list[ArtifactRef]:
     """
     with step(logger, _EVENT):
         store = ArtifactStore(Workdir(ctx.workdir))
+        policy = source_policy(ctx, _max_age_days(ctx))
+        if policy.cached_only:
+            cached = require_cached(
+                store.cached_ref(_REFS_ALIAS), source="DailyMed", alias=_REFS_ALIAS
+            )
+            stats(logger, _EVENT, cache_hit=True, source_refresh=policy.mode, blake3=cached.blake3)
+            return [replace(cached, media_type=REFS_FILE_MEDIA_TYPE)]
         staging = Workdir(ctx.workdir).root / ".staging" / "dailymed"
         staging.mkdir(parents=True, exist_ok=True)
 
@@ -119,8 +128,8 @@ def _download_full_release(ctx: TaskContext) -> list[ArtifactRef]:
             msg = "no DailyMed full-release ZIPs found in index (the listing page layout may have changed)"
             raise RuntimeError(msg)
 
-        max_age_days = _max_age_days(ctx)
-        force = bool(ctx.params.get("force", False))
+        max_age_days = policy.max_age_days
+        force = policy.force
         with ThreadPoolExecutor(max_workers=min(_DOWNLOAD_CONCURRENCY, len(release_urls))) as pool:
             futures = [
                 pool.submit(

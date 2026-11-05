@@ -13,6 +13,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.contracts import TaskContext
 from dakp_pipeline.io.manifests import read_manifest
@@ -33,6 +35,13 @@ def _fixture_zip(
     return zip_path
 
 
+_PARENT_HTML = """
+<a href='2026/'>2026</a><a href='2026-update/'>2026-update</a>
+<a href='2027/'>2027</a><a href='CM-%20Committee/'>committee</a>
+"""
+_FY2027_HTML = "<a href='icd10cm-table-and-index-2027.zip'>table</a>"
+
+
 def _patch_download(monkeypatch, fixture_zip: Path) -> list[str]:
     captured: list[str] = []
 
@@ -41,7 +50,11 @@ def _patch_download(monkeypatch, fixture_zip: Path) -> list[str]:
         shutil.copyfile(fixture_zip, dest)
         return dest
 
+    def fake_listing(self, url: str) -> str:
+        return _PARENT_HTML if url == icd10cm.ICD10CM_INDEX_URL else _FY2027_HTML
+
     monkeypatch.setattr(icd10cm, "download_icd10cm_zip", fake_download)
+    monkeypatch.setattr(icd10cm.ICD10CMFetcher, "fetch_listing", fake_listing)
     return captured
 
 
@@ -78,9 +91,9 @@ def test_release_pinned_artifact_is_reused_without_an_age_gate(monkeypatch, tmp_
     assert store.cached_ref(f"icd10cm/{Path(icd10cm.ICD10CM_DRUG_TABLE_ZIP_URL).name}") is not None
 
 
-def test_max_age_days_defaults_to_no_gate_and_honours_the_param() -> None:
-    """The release URL is version-pinned, so the gate is off unless a caller asks for one."""
-    assert icd10cm._max_age_days(_ctx(Path("unused"))) is None
+def test_max_age_days_defaults_to_discovery_gate_and_honours_the_param() -> None:
+    """Discovery is refreshed weekly; selected immutable ZIPs still have no age gate."""
+    assert icd10cm._max_age_days(_ctx(Path("unused"))) == 7.0
     assert icd10cm._max_age_days(_ctx(Path("unused"), params={"icd10cm_max_age_days": 30})) == 30.0
     assert icd10cm._max_age_days(_ctx(Path("unused"), params={"icd10cm_max_age_days": 0})) is None
     assert (
@@ -127,8 +140,48 @@ def test_url_override_acquires_under_its_own_alias(monkeypatch, tmp_path: Path) 
 
 
 def test_pinned_release_member_matches_the_prefix_constant() -> None:
-    """The pinned URL's release must carry the drug table member the extractor looks for."""
+    """The offline fallback URL carries the drug table member the extractor looks for."""
     name = Path(icd10cm.ICD10CM_DRUG_TABLE_ZIP_URL).name
     assert name.endswith(".zip")
     assert icd10cm.ICD10CM_RELEASE in name or icd10cm.ICD10CM_RELEASE[-2:] in name
     assert icd10cm.ICD10CM_DRUG_XML_PREFIX == "icd10cm-drug-"
+
+
+def test_discovery_prefers_newer_fy_over_older_april_update() -> None:
+    year, april, directory = icd10cm.discover_release_directory(_PARENT_HTML)
+    assert (year, april) == (2027, False)
+    assert directory.endswith("/2027/")
+
+
+def test_discovery_prefers_april_update_within_same_fy() -> None:
+    year, april, directory = icd10cm.discover_release_directory(
+        "<a href='2026/'>base</a><a href='2026-update/'>April</a>"
+    )
+    assert (year, april) == (2026, True)
+    assert directory.endswith("/2026-update/")
+
+
+def test_table_zip_selection_tolerates_spaces_and_april_names() -> None:
+    base = "<a href='icd10cm-table%20and%20index-2026.zip'>base</a>"
+    april = "<a href='icd10cm-table-and-index-April-1-2026.zip'>april</a>"
+    assert "table%20and%20index" in icd10cm.select_table_zip(base, directory_url="https://x/")
+    assert "April-1-2026" in icd10cm.select_table_zip(april, directory_url="https://x/")
+    with pytest.raises(RuntimeError, match="exactly one"):
+        icd10cm.select_table_zip(base + april, directory_url="https://x/")
+
+
+def test_cached_mode_uses_selection_and_zip_without_network(monkeypatch, tmp_path: Path) -> None:
+    captured = _patch_download(monkeypatch, _fixture_zip(tmp_path))
+    workdir = tmp_path / "work"
+    Workdir(workdir).create()
+    first = icd10cm.fetch(_ctx(workdir))
+    assert captured == [icd10cm.ICD10CM_DRUG_TABLE_ZIP_URL]
+
+    def no_network(*args, **kwargs):
+        pytest.fail("cached-only ICD-10-CM acquisition touched the network")
+
+    monkeypatch.setattr(icd10cm.ICD10CMFetcher, "fetch_listing", no_network)
+    monkeypatch.setattr(icd10cm, "download_icd10cm_zip", no_network)
+    second = icd10cm.fetch(_ctx(workdir, params={"source_refresh": "cached"}))
+    assert second[0].blake3 == first[0].blake3
+    assert icd10cm.selected_release(workdir).release == "FY2027"

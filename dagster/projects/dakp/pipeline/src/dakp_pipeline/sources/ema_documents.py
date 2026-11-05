@@ -52,6 +52,7 @@ from dakp_pipeline.io.downloader import download
 from dakp_pipeline.io.manifests import SourceBlock
 from dakp_pipeline.logging_setup import logger, stats, step
 from dakp_pipeline.paths import Workdir
+from dakp_pipeline.sources.policy import cached_source_ref, source_policy
 
 #: The EMA EPAR documents report (fixed name, regenerated nightly from the website content).
 EMA_DOCUMENTS_URL = "https://www.ema.europa.eu/en/documents/report/documents-output-epar_documents_json-report_en.json"
@@ -199,29 +200,18 @@ class EmaDocumentsFetcher:
         with step(logger, _EVENT):
             store = ArtifactStore(Workdir(ctx.workdir))
             url = str(ctx.params.get("ema_documents_url", self.url))
-            force = bool(ctx.params.get("force", False))
-            stats(logger, _EVENT, url=url, force=force)
-            cached = store.cached_ref(DOCUMENTS_ALIAS)
-            manifest = store.read_manifest(cached.blake3) if cached is not None else None
-            age = _cache_age_days(manifest)
-            max_age = _max_age_days(ctx)
-            if (
-                not force
-                and max_age is not None
-                and cached is not None
-                and cached.uri.exists()
-                and manifest is not None
-                and manifest.source.url == url
-                and age is not None
-                and age < max_age
-            ):
+            policy = source_policy(ctx, _max_age_days(ctx))
+            stats(logger, _EVENT, url=url, source_refresh=policy.mode)
+            cached = cached_source_ref(
+                store,
+                alias=DOCUMENTS_ALIAS,
+                url=url,
+                source="EMA documents",
+                policy=policy,
+            )
+            if cached is not None:
                 stats(
-                    logger,
-                    _EVENT,
-                    cache_hit=True,
-                    age_days=round(age, 2),
-                    max_age_days=max_age,
-                    blake3=cached.blake3,
+                    logger, _EVENT, cache_hit=True, source_refresh=policy.mode, blake3=cached.blake3
                 )
                 return [cached]
 

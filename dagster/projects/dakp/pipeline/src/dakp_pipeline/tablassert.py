@@ -751,7 +751,41 @@ RIG_TARGET_ADDITIONAL_NOTES: tuple[str, ...] = (
 )
 
 
-def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict[str, Any]:
+def _icd10cm_release_metadata(value: Any, *, release: str | None, url: str | None) -> Any:
+    """Recursively replace the offline ICD release fallback in generated metadata."""
+    if isinstance(value, str):
+        replaced = value
+        if url:
+            replaced = replaced.replace(icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL, url)
+        if release:
+            replaced = replaced.replace(icd10cm_source.ICD10CM_RELEASE, release)
+        return replaced
+    if isinstance(value, list):
+        return [_icd10cm_release_metadata(item, release=release, url=url) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_icd10cm_release_metadata(item, release=release, url=url) for item in value)
+    if isinstance(value, dict):
+        return {
+            key: _icd10cm_release_metadata(item, release=release, url=url)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _table_source_urls(table: str, icd10cm_url: str | None = None) -> list[str]:
+    return [
+        icd10cm_url if icd10cm_url and url == icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL else url
+        for url in _TABLE_SOURCE_URLS[table]
+    ]
+
+
+def _rig_config(
+    tables: list[str],
+    artifact_base_url: str | None = None,
+    *,
+    icd10cm_release: str | None = None,
+    icd10cm_url: str | None = None,
+) -> dict[str, Any]:
     """The required ``rig:`` graph-config section (Tablassert >= 11), all constants.
 
     Content is ADAPTED from the DINGO-reviewed upstream DAKP RIG (``NCATSTranslator/
@@ -780,7 +814,7 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
         url
         for table in _TABLE_ORDER
         if any(Path(t).name == f"{_TABLE_SPECS[table][0]}.yaml" for t in tables)
-        for url in _TABLE_SOURCE_URLS[table]
+        for url in _table_source_urls(table, icd10cm_url)
     }
     relevant_files = [
         {
@@ -824,82 +858,86 @@ def _rig_config(tables: list[str], artifact_base_url: str | None = None) -> dict
         # section sources them here, so Tablassert's RIG audit would fail the build
         # (``rig-validation-failed``).
     ]
-    return {
-        # Deep copies: the returned config dict must never alias the module-level constants.
-        "supporting_data_source_info": [
-            copy.deepcopy(entry) for entry in RIG_SUPPORTING_DATA_SOURCES
-        ],
-        "source_info": {
-            "infores_id": INFORES_DAKP,
-            "name": RIG_SOURCE_NAME,
-            "description": GRAPH_DESCRIPTION,
-            "citations": list(RIG_CITATIONS),
-            "terms_of_use_info": {
-                "terms_of_use_url": "https://www.nlm.nih.gov/terms.html",
-                "terms_of_use_description": (
-                    "DAKP is derived from DailyMed (NLM), Drugs@FDA, and FAERS (FDA): US government "
-                    "public-domain data; the NLM and FDA terms of use apply. EMA content is reused under "
-                    "the European Medicines Agency's public reuse policy with source acknowledgement."
-                ),
+    return _icd10cm_release_metadata(
+        {
+            # Deep copies: the returned config dict must never alias the module-level constants.
+            "supporting_data_source_info": [
+                copy.deepcopy(entry) for entry in RIG_SUPPORTING_DATA_SOURCES
+            ],
+            "source_info": {
+                "infores_id": INFORES_DAKP,
+                "name": RIG_SOURCE_NAME,
+                "description": GRAPH_DESCRIPTION,
+                "citations": list(RIG_CITATIONS),
+                "terms_of_use_info": {
+                    "terms_of_use_url": "https://www.nlm.nih.gov/terms.html",
+                    "terms_of_use_description": (
+                        "DAKP is derived from DailyMed (NLM), Drugs@FDA, and FAERS (FDA): US government "
+                        "public-domain data; the NLM and FDA terms of use apply. EMA content is reused under "
+                        "the European Medicines Agency's public reuse policy with source acknowledgement."
+                    ),
+                },
+                "data_access_locations": [
+                    f"DailyMed SPL releases - {dailymed_source.FULL_RELEASE_INDEX_URL}",
+                    f"FAERS quarterly ASCII extracts - {faers_source.FDA_FAERS_INDEX_URL}",
+                    f"Canada Vigilance data extract - {canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL}",
+                    f"Drugs@FDA data files - {drugsfda_source.DRUGSFDA_DATA_FILES_URL}",
+                    f"EMA medicines report - {ema_source.EMA_MEDICINES_URL}",
+                    f"EMA EPAR documents report - {ema_documents_source.EMA_DOCUMENTS_URL}",
+                    f"ICD-10-CM Table of Drugs and Chemicals - {icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL}",
+                ],
+                "data_provision_mechanisms": ["file_download"],
+                "data_formats": ["kgx"],
+                "data_versioning_and_releases": RIG_DATA_VERSIONING_AND_RELEASES,
+                "source_status": "maintained_regular_updates",
             },
-            "data_access_locations": [
-                f"DailyMed SPL releases - {dailymed_source.FULL_RELEASE_INDEX_URL}",
-                f"FAERS quarterly ASCII extracts - {faers_source.FDA_FAERS_INDEX_URL}",
-                f"Canada Vigilance data extract - {canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL}",
-                f"Drugs@FDA data files - {drugsfda_source.DRUGSFDA_DATA_FILES_URL}",
-                f"EMA medicines report - {ema_source.EMA_MEDICINES_URL}",
-                f"EMA EPAR documents report - {ema_documents_source.EMA_DOCUMENTS_URL}",
-                f"ICD-10-CM Table of Drugs and Chemicals - {icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL}",
-            ],
-            "data_provision_mechanisms": ["file_download"],
-            "data_formats": ["kgx"],
-            "data_versioning_and_releases": RIG_DATA_VERSIONING_AND_RELEASES,
-            "source_status": "maintained_regular_updates",
+            "ingest_info": {
+                # Explicit even though it equals the ``RIGIngestInfo`` default: DAKP CREATES
+                # knowledge (the assertion tables this pipeline builds) rather than passing a source
+                # through, and the upstream DAKP RIG declares the same category.
+                "ingest_categories": ["translator_knowledge_creator"],
+                "utility": (
+                    "Provides FDA- and EMA-approved drug-disease treatment relationships, FAERS- and Canada "
+                    "Vigilance-observed applied-to-treat uses, SPL-mined contraindications, and FDA "
+                    "drug-product/active-ingredient composition for Translator querying."
+                ),
+                "scope": (
+                    "Approved-treats edges (DailyMed SPL indications joined to Drugs@FDA applications and "
+                    "FAERS cases, plus EMA centrally-authorised medicines' MeSH therapeutic areas, mined "
+                    "EPAR indication text, and mined EMA SmPC product-information indications), FAERS and "
+                    "Canada Vigilance observed-use edges, and contraindication edges text-mined from "
+                    "DailyMed SPL sections "
+                    "and EMA SmPC product-information sections, plus product/active-ingredient composition "
+                    "from DailyMed manufactured products and the Drugs@FDA product register; all other "
+                    "content of the upstream feeds is out of scope."
+                ),
+                "relevant_files": [
+                    entry for entry in relevant_files if entry["location"] in included_urls
+                ],
+                "included_content": [copy.deepcopy(entry) for entry in RIG_INCLUDED_CONTENT],
+                "filtered_content": [copy.deepcopy(entry) for entry in RIG_FILTERED_CONTENT],
+                "future_considerations": [
+                    copy.deepcopy(entry) for entry in RIG_INGEST_FUTURE_CONSIDERATIONS
+                ],
+            },
+            "target_info": {
+                "future_considerations": [
+                    copy.deepcopy(entry) for entry in RIG_TARGET_FUTURE_CONSIDERATIONS
+                ],
+                "additional_notes": list(RIG_TARGET_ADDITIONAL_NOTES),
+            },
+            "provenance_info": {
+                "contributions": list(RIG_CONTRIBUTIONS),
+                "artifacts": list(RIG_PROVENANCE_ARTIFACTS),
+            },
+            "artifact_base_url": artifact_base_url
+            if artifact_base_url is not None
+            else RIG_ARTIFACT_BASE_URL,
+            "artifact_base_path": RIG_ARTIFACT_BASE_PATH,
         },
-        "ingest_info": {
-            # Explicit even though it equals the ``RIGIngestInfo`` default: DAKP CREATES
-            # knowledge (the assertion tables this pipeline builds) rather than passing a source
-            # through, and the upstream DAKP RIG declares the same category.
-            "ingest_categories": ["translator_knowledge_creator"],
-            "utility": (
-                "Provides FDA- and EMA-approved drug-disease treatment relationships, FAERS- and Canada "
-                "Vigilance-observed applied-to-treat uses, SPL-mined contraindications, and FDA "
-                "drug-product/active-ingredient composition for Translator querying."
-            ),
-            "scope": (
-                "Approved-treats edges (DailyMed SPL indications joined to Drugs@FDA applications and "
-                "FAERS cases, plus EMA centrally-authorised medicines' MeSH therapeutic areas, mined "
-                "EPAR indication text, and mined EMA SmPC product-information indications), FAERS and "
-                "Canada Vigilance observed-use edges, and contraindication edges text-mined from "
-                "DailyMed SPL sections "
-                "and EMA SmPC product-information sections, plus product/active-ingredient composition "
-                "from DailyMed manufactured products and the Drugs@FDA product register; all other "
-                "content of the upstream feeds is out of scope."
-            ),
-            "relevant_files": [
-                entry for entry in relevant_files if entry["location"] in included_urls
-            ],
-            "included_content": [copy.deepcopy(entry) for entry in RIG_INCLUDED_CONTENT],
-            "filtered_content": [copy.deepcopy(entry) for entry in RIG_FILTERED_CONTENT],
-            "future_considerations": [
-                copy.deepcopy(entry) for entry in RIG_INGEST_FUTURE_CONSIDERATIONS
-            ],
-        },
-        "target_info": {
-            "future_considerations": [
-                copy.deepcopy(entry) for entry in RIG_TARGET_FUTURE_CONSIDERATIONS
-            ],
-            "additional_notes": list(RIG_TARGET_ADDITIONAL_NOTES),
-        },
-        "provenance_info": {
-            "contributions": list(RIG_CONTRIBUTIONS),
-            "artifacts": list(RIG_PROVENANCE_ARTIFACTS),
-        },
-        "artifact_base_url": artifact_base_url
-        if artifact_base_url is not None
-        else RIG_ARTIFACT_BASE_URL,
-        "artifact_base_path": RIG_ARTIFACT_BASE_PATH,
-    }
+        release=icd10cm_release,
+        url=icd10cm_url,
+    )
 
 
 # Canonical emission order for the four assertion tables.
@@ -1850,7 +1888,7 @@ def column_letter(table: str, column: str) -> str:
 # --- config dict builders (single source of truth) --------------------------------
 
 
-def table_config(table: str) -> dict[str, Any]:
+def table_config(table: str, *, icd10cm_url: str | None = None) -> dict[str, Any]:
     """Build the Tablassert ``Section`` body (the ``template:`` value) for an assertion table.
 
     Shape verified against ``tablassert.models.Section``: ``source`` (text), ``statement``
@@ -1941,7 +1979,7 @@ def table_config(table: str) -> dict[str, Any]:
     source: dict[str, Any] = {
         "kind": "text",
         "local": f"tabular/{table}.tsv",
-        "url": list(_TABLE_SOURCE_URLS[table]),
+        "url": _table_source_urls(table, icd10cm_url),
         "delimiter": "\t",
     }
     reindex: list[dict[str, Any]] = []
@@ -1994,6 +2032,9 @@ def graph_config(
     version: str | None = None,
     fullmap: str = FULLMAP_DEFAULT,
     rig_artifact_base_url: str | None = None,
+    *,
+    icd10cm_release: str | None = None,
+    icd10cm_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the Tablassert ``Graph`` config dict (verified against ``tablassert.models.Graph``).
 
@@ -2014,7 +2055,12 @@ def graph_config(
         "name": GRAPH_NAME,
         "version": version if version is not None else DEFAULT_PUBLICATION_VERSION,
         "fullmap": fullmap,
-        "rig": _rig_config(tables, rig_artifact_base_url),
+        "rig": _rig_config(
+            tables,
+            rig_artifact_base_url,
+            icd10cm_release=icd10cm_release,
+            icd10cm_url=icd10cm_url,
+        ),
         "uuid_fields": list(UUID_FIELDS),
         "uuid_domain": UUID_DOMAIN,
         "uuid_on_collision": "merge",
@@ -2136,9 +2182,9 @@ def _dump_yaml(data: dict[str, Any]) -> str:
 # --- serialized config strings ----------------------------------------------------
 
 
-def table_yaml(table: str) -> str:
+def table_yaml(table: str, *, icd10cm_url: str | None = None) -> str:
     """Serialized table config YAML: the ``Section`` body wrapped in a top-level ``template:``."""
-    return _dump_yaml({"template": table_config(table)})
+    return _dump_yaml({"template": table_config(table, icd10cm_url=icd10cm_url)})
 
 
 def graph_yaml(
@@ -2146,6 +2192,8 @@ def graph_yaml(
     version: str | None = None,
     fullmap: str = FULLMAP_DEFAULT,
     rig_artifact_base_url: str | None = None,
+    icd10cm_release: str | None = None,
+    icd10cm_url: str | None = None,
 ) -> str:
     """Serialized Graph config YAML."""
     return _dump_yaml(
@@ -2154,6 +2202,8 @@ def graph_yaml(
             version=version,
             fullmap=fullmap,
             rig_artifact_base_url=rig_artifact_base_url,
+            icd10cm_release=icd10cm_release,
+            icd10cm_url=icd10cm_url,
         )
     )
 
@@ -2174,6 +2224,7 @@ def generate(assertion_refs: list[ArtifactRef], ctx: TaskContext) -> list[Artifa
     """
     workdir = Workdir(ctx.workdir)
     store = ArtifactStore(workdir)
+    icd10cm_selection = icd10cm_source.selected_release(workdir.root)
     tables_dir = workdir.root / "tables"
     tables_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2187,7 +2238,9 @@ def generate(assertion_refs: list[ArtifactRef], ctx: TaskContext) -> list[Artifa
     for table in _TABLE_ORDER:
         basename = _TABLE_SPECS[table][0]
         config_path = tables_dir / f"{basename}.yaml"
-        config_path.write_text(table_yaml(table), encoding="utf-8")
+        config_path.write_text(
+            table_yaml(table, icd10cm_url=icd10cm_selection.url), encoding="utf-8"
+        )
         table_paths.append(f"tables/{basename}.yaml")
         inputs = [input_ids[table]] if table in input_ids else []
         table_refs.append(
@@ -2211,6 +2264,8 @@ def generate(assertion_refs: list[ArtifactRef], ctx: TaskContext) -> list[Artifa
                 if publication_version
                 else None
             ),
+            icd10cm_release=icd10cm_selection.release,
+            icd10cm_url=icd10cm_selection.url,
         ),
         encoding="utf-8",
     )

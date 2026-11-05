@@ -240,3 +240,58 @@ def test_download_quarter_redownloads_when_alias_points_at_missing_file(
     ref = faers_source.FAERSFetcher().download_quarter(_ctx(tmp_path), source)
     assert ref.uri.exists()
     assert ref.blake3 == primed.blake3
+
+
+def test_fresh_discovery_index_is_reused_and_new_quarter_is_discovered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetcher = faers_source.FAERSFetcher()
+    index_calls: list[str] = []
+    downloads: list[str] = []
+    html = "<a href='faers_ascii_2024q3.zip'>q3</a>"
+
+    def fake_index(url: str, *, timeout: float) -> str:
+        index_calls.append(url)
+        return html
+
+    def fake_download(url: str, dest: Path, *, timeout: float) -> Path:
+        downloads.append(url)
+        _build_fake_zip(dest)
+        return dest
+
+    monkeypatch.setattr(faers_source, "_http_get_text", fake_index)
+    monkeypatch.setattr(faers_source, "_http_download", fake_download)
+    ctx = _ctx(tmp_path)
+    fetcher.fetch(ctx)
+    fetcher.fetch(ctx)
+    assert len(index_calls) == 1  # fresh discovery index reused
+    assert len(downloads) == 1  # immutable quarter reused
+
+    html = "<a href='faers_ascii_2024q4.zip'>q4</a><a href='faers_ascii_2024q3.zip'>q3</a>"
+    fetcher.fetch(_ctx(tmp_path, faers_max_age_days=0))  # force rediscovery only
+    assert len(index_calls) == 2
+    assert len(downloads) == 2
+    assert downloads[-1].endswith("faers_ascii_2024q4.zip")
+
+
+def test_cached_only_faers_enumerates_quarters_without_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source()
+    primed = _ingest_fake_zip(tmp_path, source)
+    fetcher = faers_source.FAERSFetcher()
+    monkeypatch.setattr(
+        fetcher, "fetch_index", lambda ctx: pytest.fail("cached-only FAERS fetched its index")
+    )
+    monkeypatch.setattr(
+        faers_source,
+        "_http_download",
+        lambda *args, **kwargs: pytest.fail("cached-only FAERS downloaded a quarter"),
+    )
+    refs = fetcher.fetch(_ctx(tmp_path, source_refresh="cached"))
+    assert [ref.blake3 for ref in refs] == [primed.blake3]
+
+
+def test_cached_only_faers_fails_loudly_on_empty_cache(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="cached-only"):
+        faers_source.FAERSFetcher().fetch(_ctx(tmp_path, source_refresh="cached"))

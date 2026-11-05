@@ -49,6 +49,7 @@ from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
 from dakp_pipeline.io.manifests import OperationBlock
 from dakp_pipeline.paths import Workdir
+from dakp_pipeline.sources import icd10cm as icd10cm_source
 
 DENYLIST_OPERATION = "derive_icd10cm_screen"
 CURIES_OPERATION = "derive_icd10cm_curies"
@@ -233,7 +234,8 @@ def derive_denylist(inputs: list[ArtifactRef], ctx: TaskContext) -> list[Artifac
     approved-treats table (its subject texts are the label-side exemption corpus).
     """
     from dakp_pipeline import icd10cm_denylist
-    from dakp_pipeline.sources.icd10cm import ICD10CM_DRUG_TABLE_ZIP_URL, ICD10CM_RELEASE
+
+    selection = icd10cm_source.selected_release(ctx.workdir)
     # nothing below needs the tablassert package (the wording screen runs ungated)
 
     tiers_ref = next(
@@ -263,9 +265,9 @@ def derive_denylist(inputs: list[ArtifactRef], ctx: TaskContext) -> list[Artifac
         raise ValueError(msg)
 
     payload = {
-        "release": ICD10CM_RELEASE,
-        "source_url": ICD10CM_DRUG_TABLE_ZIP_URL,
-        "source_blake3": zip_ref.blake3,
+        "release": selection.release,
+        "source_url": selection.url,
+        "source_blake3": selection.artifact_id or "",
         "screened": [list(row) for row in entries],
         "exempt": [list(row) for row in exempt],
         "wordings": list(wordings),

@@ -34,6 +34,7 @@ from dakp_pipeline.io.downloader import download
 from dakp_pipeline.io.manifests import SourceBlock
 from dakp_pipeline.logging_setup import logger, stats, step
 from dakp_pipeline.paths import Workdir
+from dakp_pipeline.sources.policy import require_cached, source_policy
 
 # FDA quarterly-data-extract listing page (anchors discovery of the ASCII zips). The old
 # ``https://fis.fda.gov/content/Exports`` index now 404s; the listing moved here. The quarterly
@@ -47,6 +48,8 @@ FDA_FAERS_INDEX_URL = "https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAER
 FDA_FAERS_DOWNLOAD_BASE = "https://fis.fda.gov/content/Exports"
 _FAERS_ZIP_RE = re.compile(r"f?aers_ascii_(\d{4})q(\d)\.zip", re.IGNORECASE)
 _DEFAULT_TIMEOUT = 120.0
+_DEFAULT_MAX_AGE_DAYS = 7.0
+_INDEX_ALIAS = "faers/discovery-index.html"
 #: Max concurrent quarter downloads/cache checks within one FAERS acquisition.
 _DOWNLOAD_CONCURRENCY = 4
 #: Narration prefix for every log line this fetcher emits (one stat per line).
@@ -99,22 +102,93 @@ class FAERSFetcher:
 
     def fetch(self, ctx: TaskContext) -> list[ArtifactRef]:
         with step(logger, _EVENT):
-            index_html = self.fetch_index(ctx)
-            discovered = discover_quarters(index_html)
-            stats(logger, _EVENT, quarters_discovered=len(discovered))
+            policy = source_policy(ctx, _max_age_days(ctx))
+            if policy.cached_only:
+                discovered = self.cached_quarters(ctx)
+            else:
+                index_html = self._discovery_index(ctx, policy)
+                discovered = discover_quarters(index_html)
+            stats(logger, _EVENT, quarters_discovered=len(discovered), source_refresh=policy.mode)
             for source in discovered:
                 stats(logger, _EVENT, level="DEBUG", quarter=source.quarter, url=source.url)
             quarters = _apply_quarter_limit(discovered, ctx)
             stats(logger, _EVENT, quarters_to_acquire=len(quarters))
             if not quarters:
+                if policy.cached_only:
+                    msg = (
+                        "FAERS: cached-only acquisition found no faers/faers_ascii_<Q>.zip "
+                        "aliases; run once with DAKP_SOURCE_REFRESH=auto"
+                    )
+                    raise FileNotFoundError(msg)
                 logger.warning("{}: no FAERS quarters discovered from index", _EVENT)
                 return []
-            with ThreadPoolExecutor(max_workers=min(_DOWNLOAD_CONCURRENCY, len(quarters))) as pool:
-                futures = [pool.submit(self.download_quarter, ctx, source) for source in quarters]
-                # Collect in discovery order even though downloads complete out of order.
-                refs = [future.result() for future in futures]
+            if policy.cached_only:
+                store = ArtifactStore(Workdir(ctx.workdir))
+                refs = [
+                    require_cached(
+                        store.cached_ref(f"faers/faers_ascii_{source.quarter}.zip"),
+                        source="FAERS",
+                        alias=f"faers/faers_ascii_{source.quarter}.zip",
+                    )
+                    for source in quarters
+                ]
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(_DOWNLOAD_CONCURRENCY, len(quarters))
+                ) as pool:
+                    futures = [
+                        pool.submit(self.download_quarter, ctx, source) for source in quarters
+                    ]
+                    # Collect in discovery order even though downloads complete out of order.
+                    refs = [future.result() for future in futures]
             stats(logger, _EVENT, artifacts=len(refs))
             return refs
+
+    def cached_quarters(self, ctx: TaskContext) -> list[QuarterSource]:
+        """Enumerate cached quarter aliases without any network access."""
+        store = ArtifactStore(Workdir(ctx.workdir))
+        alias_root = Workdir(ctx.workdir).aliases / "faers"
+        if not alias_root.exists():
+            return []
+        found: dict[str, str] = {}
+        for path in alias_root.glob("faers_ascii_*.zip"):
+            match = re.fullmatch(r"faers_ascii_(\d{2}Q[1-4])\.zip", path.name)
+            if match is None:
+                continue
+            quarter = match.group(1)
+            cached = store.cached_ref(f"faers/{path.name}")
+            if cached is None or not cached.uri.exists():
+                continue
+            manifest = store.read_manifest(cached.blake3)
+            url = (
+                manifest.source.url
+                if manifest is not None and manifest.source.url
+                else f"{FDA_FAERS_DOWNLOAD_BASE}/faers_ascii_20{quarter[:2]}q{quarter[-1]}.zip"
+            )
+            found[quarter] = url
+        return [QuarterSource(label, found[label]) for label in sorted(found, reverse=True)]
+
+    def _discovery_index(self, ctx: TaskContext, policy) -> str:
+        """Reuse a fresh discovery index, otherwise fetch and content-address it."""
+        store = ArtifactStore(Workdir(ctx.workdir))
+        cached = store.cached_ref(_INDEX_ALIAS)
+        manifest = store.read_manifest(cached.blake3) if cached is not None else None
+        age = _cache_age_days(manifest)
+        if cached is not None and cached.uri.exists() and policy.reusable(age):
+            stats(logger, f"{_EVENT} index", cache_hit=True, age_days=round(age, 2))
+            return cached.uri.read_text(encoding="utf-8", errors="replace")
+        index_html = self.fetch_index(ctx)
+        dest = Workdir(ctx.workdir).raw / "downloads" / "faers-discovery-index.html"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(index_html, encoding="utf-8")
+        store.ingest(
+            dest,
+            media_type="text/html",
+            alias=_INDEX_ALIAS,
+            source=SourceBlock(url=FDA_FAERS_INDEX_URL, retrieved_at=datetime.now(UTC).isoformat()),
+        )
+        dest.unlink(missing_ok=True)
+        return index_html
 
     def fetch_index(self, ctx: TaskContext) -> str:
         """Fetch the FDA exports index HTML. Network boundary; monkeypatchable."""
@@ -142,7 +216,8 @@ class FAERSFetcher:
         store = ArtifactStore(wd)
         alias = f"faers/faers_ascii_{source.quarter}.zip"
         quarter_event = f"{_EVENT} quarter"
-        if not bool(ctx.params.get("force", False)):
+        policy = source_policy(ctx, None)
+        if not policy.force:
             cached = store.cached_ref(alias)
             if cached is not None and cached.uri.exists():
                 stats(
@@ -153,6 +228,8 @@ class FAERSFetcher:
                     blake3=cached.blake3,
                 )
                 return cached
+        if policy.cached_only:
+            return require_cached(store.cached_ref(alias), source="FAERS", alias=alias)
         stats(logger, quarter_event, quarter=source.quarter)
         stats(logger, quarter_event, level="DEBUG", url=source.url)
         dest = wd.raw / "downloads" / f"faers_ascii_{source.quarter}.zip"
@@ -173,6 +250,25 @@ class FAERSFetcher:
         dest.unlink(missing_ok=True)  # staged copy no longer needed once content-addressed
         stats(logger, quarter_event, blake3=ref.blake3, cache_hit=cache_hit)
         return ref
+
+
+def _max_age_days(ctx: TaskContext) -> float | None:
+    value = ctx.params.get("faers_max_age_days")
+    if value is None:
+        return _DEFAULT_MAX_AGE_DAYS
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value) if value > 0 else None
+    return None
+
+
+def _cache_age_days(manifest: object | None) -> float | None:
+    retrieved_at = getattr(getattr(manifest, "source", None), "retrieved_at", None)
+    if not retrieved_at:
+        return None
+    try:
+        return (datetime.now(UTC) - datetime.fromisoformat(retrieved_at)).total_seconds() / 86400.0
+    except (TypeError, ValueError):
+        return None
 
 
 # --- HTTP helpers (index HTML via stdlib urllib; bulk downloads via io.downloader) -----

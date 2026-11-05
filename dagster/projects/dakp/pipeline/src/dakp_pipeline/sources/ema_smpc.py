@@ -55,6 +55,7 @@ from dakp_pipeline.sources.ema_documents import (
     load_documents,
     product_information_documents,
 )
+from dakp_pipeline.sources.policy import source_policy
 
 #: Fan-out source alias. Member aliases are ``<this>::<document stem>.pdf`` (the store's
 #: fan-out convention, which also lets it prune members that left the selection).
@@ -103,9 +104,10 @@ class EmaSmpcFetcher:
     def fetch(self, ctx: TaskContext) -> list[ArtifactRef]:
         with step(logger, _EVENT):
             store = ArtifactStore(Workdir(ctx.workdir))
-            force = bool(ctx.params.get("force", False))
+            policy = source_policy(ctx, _max_age_days(ctx))
+            force = policy.force
             concurrency = _concurrency(ctx)
-            max_age = _max_age_days(ctx)
+            max_age = policy.max_age_days
 
             # The manifest fetcher has its own freshness gate, so this is a store hit on a re-run.
             manifest_ref = ema_documents.fetch(ctx)[0]
@@ -134,10 +136,23 @@ class EmaSmpcFetcher:
                 store.invalidate_cached_refs(SMPC_FANOUT_ALIAS)
 
             plan = [
-                (doc, None if force else _current_ref(store, doc, max_age)) for doc in documents
+                (
+                    doc,
+                    None
+                    if force
+                    else _current_ref(store, doc, max_age, cached_only=policy.cached_only),
+                )
+                for doc in documents
             ]
             missing = [doc for doc, ref in plan if ref is None]
             stats(logger, _EVENT, reused=len(documents) - len(missing), to_fetch=len(missing))
+            if policy.cached_only and missing:
+                examples = ", ".join(doc.stem for doc in missing[:5])
+                msg = (
+                    f"EMA product-information: cached-only acquisition is missing {len(missing)} "
+                    f"of {len(documents)} PDFs ({examples}); run with DAKP_SOURCE_REFRESH=auto"
+                )
+                raise FileNotFoundError(msg)
 
             staging = Workdir(ctx.workdir).root / ".staging" / "ema_smpc"
             staging.mkdir(parents=True, exist_ok=True)
@@ -196,7 +211,11 @@ class EmaSmpcFetcher:
 
 
 def _current_ref(
-    store: ArtifactStore, doc: EparDocument, max_age: float | None
+    store: ArtifactStore,
+    doc: EparDocument,
+    max_age: float | None,
+    *,
+    cached_only: bool = False,
 ) -> ArtifactRef | None:
     """The stored PDF for ``doc`` when we already hold the version the report points at.
 
@@ -208,6 +227,8 @@ def _current_ref(
     cached = store.cached_ref(alias)
     if cached is None or not cached.uri.exists():
         return None
+    if cached_only:
+        return cached
     manifest = store.read_manifest(cached.blake3)
     retrieved_at = _parse_datetime(getattr(getattr(manifest, "source", None), "retrieved_at", None))
     updated_at = _parse_datetime(doc.last_updated_date)
