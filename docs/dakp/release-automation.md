@@ -90,7 +90,9 @@ cp dagster/deployments/local/dagster.yaml ~/.local/state/dagster/dagster.yaml
 # Keep a persistent out-link as a GC root for the generated services and launchers.
 nix build .#dagster-units --out-link "$HOME/.local/state/dagster-units"
 nix build .#dakp-nercache --out-link "$HOME/.local/state/dakp-nercache"
-systemctl --user link "$HOME/.local/state/dagster-units/share/systemd/user/"*.service
+mkdir -p ~/.config/systemd/user
+install -m 0644 "$HOME/.local/state/dagster-units/share/systemd/user/"*.service \
+  ~/.config/systemd/user/
 systemctl --user daemon-reload
 sudo loginctl enable-linger "$USER"
 systemctl --user enable --now dakp-nercache dagster-daemon dagster-webserver
