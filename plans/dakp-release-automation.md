@@ -246,6 +246,9 @@ New env knobs (all optional except the secrets and `DAKP_FULLMAP`, which already
 - [x] Rehearse end-to-end with `DAKP_PUBLISH_DRY_RUN=1`, then set `DAKP_RELEASE_ENABLED=1`.
 - [ ] Add a Nix-generated tmux supervisor with devshell auto-start for hosts
   without sudo/linger; deploy it and verify service health after SSH logout.
+- [ ] After supervision is verified, rebuild FULLMAP from scratch with the latest
+  Tablassert default thread count, validate and replace the production database,
+  remove intermediate build files, and verify DAKP can still use it.
 
 
 ## Verification

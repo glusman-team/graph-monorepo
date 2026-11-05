@@ -59,7 +59,11 @@
       auto_start="''${DAKP_TMUX_AUTOSTART:-auto}"
       if [[ ( "$auto_start" == 1 || ( "$auto_start" == auto && $- == *i* ) ) && \
             -f "''${DAKP_SERVICE_ENV:-$HOME/.config/dagster/dagster.env}" ]]; then
-        dakp-services up
+        if ! dakp-services up; then
+          # Explicit non-interactive activation must fail the requested command.
+          [[ "$auto_start" == 1 ]] && exit 1
+          echo "DAKP service auto-start failed; run 'dakp-services status'" >&2
+        fi
       fi
 
       echo "graph-monorepo devshell ready: make help"

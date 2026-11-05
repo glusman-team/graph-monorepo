@@ -131,6 +131,7 @@ in
       ];
       text = ''
         session="dakp"
+        target="=$session"
         env_file="''${DAKP_SERVICE_ENV:-$HOME/.config/dagster/dagster.env}"
         pc="${pc}"
 
@@ -160,7 +161,7 @@ in
         }
 
         running() {
-          tmux has-session -t "$session" 2>/dev/null
+          tmux has-session -t "$target" 2>/dev/null
         }
 
         acquire_lock() {
@@ -200,9 +201,9 @@ in
         wait_ready() {
           local dead
           for _ in {1..30}; do
-            dead="$(tmux display-message -p -t "$session:services" '#{pane_dead}')"
+            dead="$(tmux display-message -p -t "$target:services" '#{pane_dead}')"
             if [[ "$dead" == 1 ]]; then
-              tmux capture-pane -p -t "$session:services" -S -50 >&2
+              tmux capture-pane -p -t "$target:services" -S -50 >&2
               return 1
             fi
             if [[ -S "$PC_SOCKET_PATH" ]] && \
@@ -212,7 +213,7 @@ in
             sleep 1
           done
           echo "process-compose did not become ready within 30 seconds" >&2
-          tmux capture-pane -p -t "$session:services" -S -50 >&2 || true
+          tmux capture-pane -p -t "$target:services" -S -50 >&2 || true
           return 1
         }
 
@@ -221,9 +222,9 @@ in
           load_config
           check_no_systemd
           if running; then
-            tmux set-environment -t "$session" DAKP_SERVICE_ENV "$env_file"
-            if [[ "$(tmux display-message -p -t "$session:services" '#{pane_dead}')" == 1 ]]; then
-              tmux respawn-pane -k -t "$session:services" "${composeLauncher}"
+            tmux set-environment -t "$target" DAKP_SERVICE_ENV "$env_file"
+            if [[ "$(tmux display-message -p -t "$target:services" '#{pane_dead}')" == 1 ]]; then
+              tmux respawn-pane -k -t "$target:services" "${composeLauncher}"
             fi
             wait_ready
             echo "DAKP tmux session $session is already running"
@@ -231,10 +232,12 @@ in
           fi
           # Create an idle pane first so remain-on-exit is set before the
           # orchestrator can fail (for example, because of a bad env file).
-          tmux new-session -d -s "$session" -n services
-          tmux set-option -t "$session" remain-on-exit on
-          tmux set-environment -t "$session" DAKP_SERVICE_ENV "$env_file"
-          tmux respawn-pane -k -t "$session:services" "${composeLauncher}"
+          # A new tmux server must not inherit the lock, or every pane would
+          # hold it forever after this command exits.
+          tmux new-session -d -s "$session" -n services {lock_fd}>&-
+          tmux set-option -t "$target:services" remain-on-exit on
+          tmux set-environment -t "$target" DAKP_SERVICE_ENV "$env_file"
+          tmux respawn-pane -k -t "$target:services" "${composeLauncher}"
           wait_ready
           echo "started DAKP services in tmux session $session"
         }
@@ -245,7 +248,7 @@ in
             if ! load_config || ! timeout 130 "$pc" --use-uds down; then
               # Fall back to the pane's process group if the control socket is bad.
               local pid
-              pid="$(tmux display-message -p -t "$session:services" '#{pane_pid}')"
+              pid="$(tmux display-message -p -t "$target:services" '#{pane_pid}')"
               kill -TERM -- "-$pid" 2>/dev/null || true
               for _ in {1..120}; do
                 kill -0 -- "-$pid" 2>/dev/null || break
@@ -253,7 +256,7 @@ in
               done
               kill -KILL -- "-$pid" 2>/dev/null || true
             fi
-            tmux kill-session -t "$session"
+            tmux kill-session -t "$target"
             echo "stopped DAKP tmux session $session"
           fi
         }
@@ -263,7 +266,7 @@ in
           down) down ;;
           restart) "$0" down; sleep 2; exec "$0" up ;;
           status) status ;;
-          attach) exec tmux attach-session -t "$session" ;;
+          attach) exec tmux attach-session -t "$target" ;;
           logs)
             if [[ -n "''${2:-}" ]]; then
               case "$2" in
