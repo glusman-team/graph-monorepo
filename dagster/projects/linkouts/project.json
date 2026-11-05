@@ -1,0 +1,37 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "linkouts",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run pytest -q",
+        "cwd": "dagster/projects/linkouts"
+      },
+      "cache": true,
+      "inputs": [
+        "pythonInputs",
+        "{workspaceRoot}/dagster/projects/linkouts/pipeline/**/*.py",
+        "{workspaceRoot}/dagster/projects/linkouts/pipeline/pyproject.toml",
+        "{workspaceRoot}/dagster/projects/linkouts/workers/go/**/*.go",
+        "{workspaceRoot}/dagster/projects/linkouts/contracts/**",
+        "{workspaceRoot}/dagster/projects/linkouts/workers/go/go.mod",
+        "{workspaceRoot}/dagster/projects/linkouts/workers/go/go.sum",
+        "{workspaceRoot}/dagster/projects/linkouts/fixtures/kgx/**"
+      ],
+      "outputs": []
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check src tests scripts && uv run ruff format --check src tests scripts",
+        "cwd": "dagster/projects/linkouts"
+      },
+      "cache": true,
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
+    }
+  }
+}

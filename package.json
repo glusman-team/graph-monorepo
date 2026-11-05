@@ -3,14 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "sites/docs"
+  ],
   "scripts": {
-    "test": "nx run-many -t test",
-    "lint": "nx run-many -t lint",
+    "test": "nx run-many -t test --parallel=4",
+    "lint": "nx run-many -t lint --parallel=4",
     "graph": "nx graph",
-    "affected": "nx affected -t test"
+    "affected": "nx affected -t test lint --parallel=4",
+    "docs:dev": "npm run dev --workspace @graph-monorepo/docs",
+    "docs:build": "npm run build --workspace @graph-monorepo/docs",
+    "docs:check": "npm run check --workspace @graph-monorepo/docs",
+    "docs:format": "npm run format --workspace @graph-monorepo/docs",
+    "docs:format:check": "npm run format:check --workspace @graph-monorepo/docs",
+    "docs:verify": "npm run verify --workspace @graph-monorepo/docs"
   },
   "devDependencies": {
-    "@naxodev/gonx": "^4.1.2",
-    "nx": "^24.0.3"
+    "@naxodev/gonx": "4.1.2",
+    "nx": "23.3.1"
+  },
+  "overrides": {
+    "minimatch": "11.0.4",
+    "nx": {
+      "undici": "7.30.2"
+    }
   }
 }

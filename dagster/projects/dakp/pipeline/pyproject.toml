@@ -64,6 +64,8 @@ packages = ["src/dakp_pipeline"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+# Byte-generated golden; DAKP_UPDATE_CARD_GOLDEN owns its exact formatting.
+extend-exclude = ["tests/fixtures/release/dataset_card.md"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B", "SIM", "C4", "PT", "RUF", "UP", "RET", "PIE"]

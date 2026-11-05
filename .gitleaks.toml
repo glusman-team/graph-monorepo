@@ -1,0 +1,37 @@
+# gitleaks configuration.
+#
+# The default rule set stays fully enabled (see [extend] below). The only thing allowlisted
+# here is one specific value shape that this domain produces constantly and that cannot be a
+# credential: a KGX version key.
+#
+# Real secrets in this project are Azure Cosmos DB account keys (88-character base64, so they
+# contain '+', '/' or '=' padding) and Fly API tokens. Neither can match the pattern below,
+# which admits only lowercase alphanumerics, hyphens, underscores and dots, and requires a
+# semver suffix. If a rule ever needs loosening further, that is a conversation, not an edit.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "KGX version keys ('<kg>-<version>') are identifiers, not credentials"
+regexes = [
+  '''\b[a-z][a-z0-9_]*(?:-[a-z0-9_]+)*-\d+\.\d+\.\d+(?:-[0-9a-z.]+)?\b''',
+]
+
+[[allowlists]]
+description = "the committed env template documents variable names, never values"
+paths = ['''\.envrc\.example$''']
+
+# gitleaks has no Fly.io rule, and this project deploys with FLY_API_TOKEN. A leaked deploy
+# token is worth an app someone else can push to, so it gets one.
+[[rules]]
+id = "fly-api-token"
+description = "Fly.io API token"
+regex = '''\bfm2_[A-Za-z0-9]{20,}\b'''
+keywords = ["fm2_"]
+
+[[rules]]
+id = "cosmos-account-key"
+description = "Azure Cosmos DB account key in a connection string"
+regex = '''AccountKey=[A-Za-z0-9+/]{40,}={0,2}'''
+keywords = ["AccountKey="]

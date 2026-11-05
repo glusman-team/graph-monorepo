@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../../../node_modules/nx/schemas/project-schema.json",
+  "name": "linkouts-pipeline",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run pytest -q",
+        "cwd": "dagster/projects/linkouts/pipeline"
+      },
+      "cache": true,
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check . && uv run ruff format --check .",
+        "cwd": "dagster/projects/linkouts/pipeline"
+      },
+      "cache": true,
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
+    }
+  }
+}

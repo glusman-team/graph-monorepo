@@ -53,7 +53,7 @@ class KGEdge(BaseModel):
 EXPORTED_MODELS = [ExtractionRecord, ExtractedEntity, KGNode, KGEdge]
 
 
-def export_json_schema(out_path) -> list:  # noqa: ANN001 - path-like
+def export_json_schema(out_path) -> list:
     """Write each exported model's JSON Schema to out_path/<name>.json.
 
     Called per-DAG by a `go generate` hook (quicktype reads the JSON).

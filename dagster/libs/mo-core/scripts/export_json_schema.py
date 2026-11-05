@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mo_core.models import export_json_schema  # noqa: E402
+from mo_core.models import export_json_schema
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

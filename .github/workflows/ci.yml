@@ -5,70 +5,191 @@ on:
     branches: [main]
   pull_request:
 
-# Cancel superseded runs on the same ref instead of queueing behind them.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # One runner, all four packages: each job in the old matrix waited on
-  # runner availability separately, and uv's wheel cache is shared within
-  # a runner, so sequential sync+test of small packages costs ~1-2 min total.
-  python:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      dakp_python: ${{ steps.paths.outputs.dakp_python }}
+      dakp_go: ${{ steps.paths.outputs.dakp_go }}
+      linkouts_python: ${{ steps.paths.outputs.linkouts_python }}
+      linkouts_go: ${{ steps.paths.outputs.linkouts_go }}
+      linkouts_web: ${{ steps.paths.outputs.linkouts_web }}
+      docs: ${{ steps.paths.outputs.docs }}
+      deploy: ${{ steps.paths.outputs.deploy }}
+      dagster: ${{ steps.paths.outputs.dagster }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          enable-cache: true
-      - name: sync + test
+          fetch-depth: 0
+      - id: paths
+        name: Classify changed components
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          set -e
-          # nested globs cover packages inside a project (e.g. projects/dakp/pipeline);
-          # dirs without a pyproject.toml are skipped by the guard.
-          for dir in dagster/libs/*/ dagster/projects/*/ dagster/projects/*/*/; do
-            [ -f "$dir/pyproject.toml" ] || continue
-            echo "::group::uv lock --check: $dir"
-            (cd "$dir" && uv lock --check)
-            echo "::group::pytest: $dir"
-            (cd "$dir" && uv sync --group dev --quiet && uv run pytest -q)
-            echo "::endgroup::"
-          done
-      - name: dg check defs (every code location loads)
-        run: |
-          cd dagster/deployments/local
-          uv sync --quiet
-          uv run dg check defs
+          set -euo pipefail
+          if [ "$EVENT_NAME" = pull_request ]; then
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/changed-files
+          elif [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            git diff-tree --no-commit-id --name-only -r "$HEAD_SHA" > /tmp/changed-files
+          else
+            git diff --name-only "$BEFORE_SHA" "$HEAD_SHA" > /tmp/changed-files
+          fi
+          python3 scripts/ci_changes.py --files /tmp/changed-files --github-output "$GITHUB_OUTPUT"
 
-  go:
+  dakp-python:
+    needs: changes
+    if: needs.changes.outputs.dakp_python == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: dagster/projects/dakp/workers/go/go.mod
-          cache-dependency-path: dagster/projects/dakp/workers/go/go.sum
-      - name: build + test
-        run: |
-          go build ./...
-          go test ./...
-        working-directory: dagster/projects/dakp/workers/go
-      - name: lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          # v1 binaries are built with go1.24 and refuse go 1.26 targets.
-          # Pin the v2 line (matches the devshell toolchain) instead of the
-          # action's default v1.
-          version: v2.14.0
-          working-directory: dagster/projects/dakp/workers/go
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=dakp,dakp-pipeline,mo-core,mo-kg,mo-dagster --parallel=4'
 
-  nix:
+  dakp-go:
+    needs: changes
+    if: needs.changes.outputs.dakp_go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
-      - run: nix flake check --no-build --no-warn-dirty
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - working-directory: dagster/projects/dakp/workers/go
+        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; go build ./...; go test -race -count=1 ./...; golangci-lint run ./...; golangci-lint fmt --diff ./...; go mod tidy -diff'
+
+  linkouts-python:
+    needs: changes
+    if: needs.changes.outputs.linkouts_python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=linkouts,linkouts-pipeline --parallel=2'
+
+  linkouts-go:
+    needs: changes
+    if: needs.changes.outputs.linkouts_go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - working-directory: dagster/projects/linkouts/workers/go
+        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; go build ./...; go test -race -count=1 ./...; golangci-lint run ./...; golangci-lint fmt --diff ./...; go mod tidy -diff'
+
+  linkouts-web:
+    needs: changes
+    if: needs.changes.outputs.linkouts_web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: sites/linkouts/priv/plts
+          key: linkouts-plt-${{ runner.os }}-${{ hashFiles('flake.lock', 'sites/linkouts/mix.lock') }}
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); npx nx run-many -t test lint dialyzer --projects=linkouts-web --parallel=1'
+
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npm run docs:verify'
+
+  dagster:
+    needs: changes
+    if: needs.changes.outputs.dagster == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - working-directory: dagster/deployments/local
+        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; uv sync; uv run dg check defs'
+
+  deploy-build:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; python3 sites/linkouts/scripts/check_deploy.py; hadolint sites/linkouts/Dockerfile'
+      - env:
+          DOCKER_BUILDKIT: "1"
+          LINKOUTS_IMAGE: linkouts:ci
+        run: |
+          set -euo pipefail
+          docker build --cpuset-cpus=0-3 -f sites/linkouts/Dockerfile -t "$LINKOUTS_IMAGE" .
+          sites/linkouts/scripts/smoke_preview.sh
+
+  repository:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); prek run --all-files --hook-stage pre-commit; python3 scripts/test_ci_changes.py; scripts/check-locks.sh; prek run shellcheck --all-files --hook-stage pre-push; actionlint; hadolint sites/linkouts/Dockerfile; python3 sites/linkouts/scripts/check_deploy.py; nix flake check --no-build --no-warn-dirty'
+
+  security:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd dagster/projects/dakp/workers/go && govulncheck ./...); (cd dagster/projects/linkouts/workers/go && govulncheck ./...); (cd sites/linkouts && mix local.hex --force && mix hex.audit); npm audit'
+
+  ci-required:
+    name: CI Required
+    if: always()
+    needs: [changes, dakp-python, dakp-go, linkouts-python, linkouts-go, linkouts-web, docs, dagster, deploy-build, repository, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every applicable job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          failures = {
+              name: value["result"]
+              for name, value in json.loads(os.environ["RESULTS"]).items()
+              if value["result"] not in {"success", "skipped"}
+          }
+          if failures:
+              raise SystemExit(f"Required CI jobs failed or were cancelled: {failures}")
+          print("All applicable CI jobs passed; unrelated scoped jobs were skipped.")
+          PY

@@ -1,34 +1,90 @@
-# Publishes docs/ to GitHub Pages. No build step: docs/ is plain static HTML.
-# Requires Pages enabled with Source: GitHub Actions (Settings -> Pages), or
-# `gh api -X POST repos/{owner}/{repo}/pages -f build_type=workflow` once.
-name: pages
+name: Pages
 
 on:
-  push:
-    branches: [main]
-    paths: [docs/**, .github/workflows/pages.yml]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      publish: ${{ steps.changes.outputs.publish }}
+    permissions:
+      actions: read
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+
+      - name: Verify CI for manual publication
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          successful="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}" \
+            --jq '[.workflow_runs[] | select(.name == "CI" and .conclusion == "success")] | length')"
+          if [ "$successful" -lt 1 ]; then
+            echo "No successful CI run exists for ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+
+      - name: Detect documentation inputs
+        id: changes
+        if: github.event_name == 'workflow_run'
+        run: |
+          head_sha="$(git rev-parse HEAD)"
+          if git diff --quiet "${head_sha}^" "$head_sha" -- \
+            sites/docs package.json package-lock.json .github/workflows/pages.yml; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            echo 'No documentation inputs changed.'
+          else
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: steps.changes.outputs.publish != 'false'
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: steps.changes.outputs.publish != 'false'
+      - if: steps.changes.outputs.publish != 'false'
+        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npm run docs:verify'
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+        if: steps.changes.outputs.publish != 'false'
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        if: steps.changes.outputs.publish != 'false'
+        with:
+          path: sites/docs/dist
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.publish != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: docs
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

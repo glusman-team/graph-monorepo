@@ -1,12 +1,43 @@
-# Two stages, matching ISB/DAKP's .pre-commit-config.yaml convention:
-# pre-commit -- fast, auto-fixing checks only. Committing must stay cheap.
-# pre-push   -- whole-repo gates that most often break CI. Run once per push,
-#               not once per commit.
+# pre-commit: fast formatting and metadata checks.
+# pre-push: module-aware tests, lint, locks, workflow, and deployment gates.
 default_install_hook_types = ["pre-commit", "pre-push"]
 
 [[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+exclude = '''^dagster/projects/.*/(contracts|fixtures|testdata)/'''
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+exclude = '''^dagster/projects/.*/(contracts|fixtures|testdata)/'''
+
+[[repos.hooks]]
+id = "check-yaml"
+
+[[repos.hooks]]
+id = "check-json"
+exclude = '''^sites/linkouts/assets/tsconfig\.json$'''
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+
+[[repos.hooks]]
+id = "check-added-large-files"
+args = ["--maxkb=1024"]
+
+[[repos]]
+repo = "https://github.com/gitleaks/gitleaks"
+rev = "v8.30.1"
+
+[[repos.hooks]]
+id = "gitleaks"
+
+[[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
-# Keep in sync with the ruff version resolved in each uv.lock.
+# Keep in sync with the Ruff version resolved in each uv.lock.
 rev = "v0.16.0"
 
 [[repos.hooks]]
@@ -21,48 +52,106 @@ language = "python"
 [[repos]]
 repo = "local"
 
-# go lint + format (gofmt via golangci-lint formatters)
-# Module-wide lint (golangci-lint cannot typecheck named files from
-# different packages) with filenames off; types=[go] still scopes it.
 [[repos.hooks]]
-id = "golangci-lint"
-name = "golangci-lint"
-entry = "bash -c 'cd dagster/projects/dakp/workers/go && golangci-lint run --fix ./...'"
+id = "go-module-format"
+name = "golangci-lint fmt (changed modules)"
+entry = "scripts/run-go-format.sh"
 language = "system"
-pass_filenames = false
-types = ["go"]
+files = '''\.go$|(^|/)\.golangci\.yml$'''
+pass_filenames = true
+stages = ["pre-commit"]
 
-# nix formatting (treefmt runner with nixfmt)
+[[repos.hooks]]
+id = "mix-module-format"
+name = "mix format (changed projects)"
+entry = "scripts/run-mix-format.sh"
+language = "system"
+files = '''^sites/linkouts/.*\.(ex|exs|heex)$'''
+pass_filenames = true
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "docs-format"
+name = "Prettier (documentation)"
+entry = "npm run docs:format"
+language = "system"
+files = '''^sites/docs/|^package(-lock)?\.json$'''
+pass_filenames = false
+stages = ["pre-commit"]
+
 [[repos.hooks]]
 id = "treefmt"
 name = "treefmt"
 entry = "treefmt"
 language = "system"
 types = ["nix"]
+stages = ["pre-commit"]
 
-# pyproject edits must be re-locked (per python package under dagster/)
 [[repos.hooks]]
 id = "check-locks"
-name = "check-locks"
+name = "recursive language lock checks"
 entry = "scripts/check-locks.sh"
 language = "system"
-files = '''^dagster/(libs|projects)/.*/(pyproject\.toml|uv\.lock)$'''
+files = '''(^|/)(pyproject\.toml|uv\.lock|go\.mod|go\.sum|package(-lock)?\.json|mix\.exs|mix\.lock)$'''
 pass_filenames = false
 stages = ["pre-push"]
 
-# cached tests for everything the change touches (python + go via nx)
 [[repos.hooks]]
-id = "nx-affected-test"
-name = "nx-affected-test"
-entry = "npx nx affected -t test"
+id = "go-module-test-race"
+name = "go test -race (changed modules)"
+entry = "scripts/run-go-tests.sh"
+language = "system"
+files = '''\.go$|(^|/)(go\.mod|go\.sum|\.golangci\.yml)$'''
+pass_filenames = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "nx-affected"
+name = "Nx affected test and lint"
+entry = "scripts/run-nx-affected.sh"
 language = "system"
 pass_filenames = false
 stages = ["pre-push"]
 
-# flake evaluates cleanly
+[[repos.hooks]]
+id = "linkouts-dialyzer"
+name = "Phoenix Dialyzer"
+entry = "make linkouts-dialyzer"
+language = "system"
+files = '''^sites/linkouts/(mix\.(exs|lock)|lib/|config/|test/)'''
+pass_filenames = false
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "actionlint"
+name = "actionlint"
+entry = "actionlint"
+language = "system"
+files = '''^\.github/workflows/.*\.ya?ml$'''
+pass_filenames = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "deploy-config"
+name = "Linkouts deployment config"
+entry = "python3 sites/linkouts/scripts/check_deploy.py"
+language = "system"
+files = '''^sites/linkouts/(Dockerfile|fly(\.dev)?\.toml)$|^\.dockerignore$'''
+pass_filenames = false
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "shellcheck"
+name = "shellcheck"
+entry = "shellcheck"
+language = "system"
+types = ["shell"]
+pass_filenames = true
+stages = ["pre-push"]
+
 [[repos.hooks]]
 id = "nix-flake-check"
-name = "nix-flake-check"
+name = "nix flake check"
 entry = "nix flake check --no-build --no-warn-dirty"
 language = "system"
 files = '''\.nix$|flake\.lock$'''

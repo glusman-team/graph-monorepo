@@ -1,147 +1,107 @@
 # graph-monorepo
 
-[![CI](https://github.com/glusman-team/graph-monorepo/actions/workflows/ci.yml/badge.svg)](https://github.com/glusman-team/graph-monorepo/actions/workflows/ci.yml) [![HF likes](https://img.shields.io/badge/dynamic/json?label=HF%20likes&query=likes&url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2FSkyeAv%2Fdrug-approvals-kp&color=yellow)](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp) [![GitHub stars](https://img.shields.io/github/stars/glusman-team/graph-monorepo?label=GitHub%20stars)](https://github.com/glusman-team/graph-monorepo)
+[![CI](https://github.com/glusman-team/graph-monorepo/actions/workflows/ci.yml/badge.svg)](https://github.com/glusman-team/graph-monorepo/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/github/deployments/glusman-team/graph-monorepo/github-pages?label=docs)](https://glusman-team.github.io/graph-monorepo/)
+[![HF likes](https://img.shields.io/badge/dynamic/json?label=HF%20likes&query=likes&url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2FSkyeAv%2Fdrug-approvals-kp&color=yellow)](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp)
+[![GitHub stars](https://img.shields.io/github/stars/glusman-team/graph-monorepo?label=GitHub%20stars)](https://github.com/glusman-team/graph-monorepo)
 
-Docs: https://glusman-team.github.io/graph-monorepo/ (first entry: DAKP).
+**[Start with the documentation homepage](https://glusman-team.github.io/graph-monorepo/)**. It routes readers by task: use DAKP data, browse Linkouts, build a KG, publish a serving index, configure a display, operate a store, or contribute.
 
-Monorepo for ISB multiomics knowledge-graph pipelines: a Dagster deployment
-hosting several independent DAG code locations (each builds its own knowledge
-graph as KGX ndjson), shared Python libs, Go extraction workers, Nx as the
-task graph + cached test runner, and a single nix devshell providing every tool.
+## Components
 
-Agent context lives in [AGENTS.md](AGENTS.md) (pi + Claude Code both read it).
-Long-term design + review history in [PLAN.md](PLAN.md).
+| Component | Source | Purpose |
+| --- | --- | --- |
+| DAKP | `dagster/projects/dakp/` | Build and validate the Drug Approvals Knowledge Provider as KGX NDJSON. |
+| Linkouts orchestration | `dagster/projects/linkouts/` | Manually launch typed staging, publication, verification, inspection, and dictionary jobs. |
+| Linkouts worker | `dagster/projects/linkouts/workers/go/` | Hidden argument-free Go Pipes worker; preserves the tested ingestion implementation. |
+| Linkouts web | `sites/linkouts/` | Dynamic Phoenix LiveView edge pages, version history, random pools, and declarative display configs. |
+| Documentation | `sites/docs/` | Static Astro Starlight site with Pagefind, deployed to GitHub Pages. |
+| Shared Python | `dagster/libs/` | Generic domain models, KGX writing/QC, and Dagster helpers. |
 
-## Layout
+DAKP-style pipelines publish **KGX NDJSON only**. Linkouts consumes KGX and writes a compressed serving index for Phoenix; that envelope is not another KG publication format.
 
-```
-dagster/
-  projects/<name>/    one DAG = one code location = one self-contained workspace
-    src/              dagster defs (assets, jobs, run config)
-    pipeline/         the dagster-free python package the assets call (own venv + tests)
-    workers/<lang>/   go workers today (own go.mod), scala later (mill)
-    project.json      cached nx test target (pipeline/ and workers/ have their own)
-  libs/
-    mo-core/          pydantic models, canonical for Go codegen (no dagster dep)
-    mo-kg/            KGX ndjson writer + QC (the only sink)
-    mo-dagster/       pipes helpers (only lib importing dagster)
-  deployments/local/  dg / dagster-webserver environment for the whole workspace
-nix/modules/          devshell.nix (all tools), dagster.nix (runtime apps)
-```
+Every Dagster project is an independent code location with its own uv environment. `src/<name>_dag/` holds Dagster definitions, `pipeline/` holds Dagster-free logic, and `workers/<lang>/` holds language-specific workers. Never import implementation across independent projects. Go modules stay independent; there is no root `go.work`.
 
-## Quickstart
+## Documentation
 
 ```sh
-direnv allow          # or: nix develop
-make hooks            # install prek git hooks (two-stage)
-make dev              # dagster dg dev -> http://localhost:3000
-make test             # nx run-many -t test (python + go, cached)
+npm ci
+npm run docs:dev       # local Starlight site
+npm run docs:verify    # typed content + production build + generated-link checks
 ```
 
-First-time worker build (fetches deps, then cached):
+Pages publishes `sites/docs/dist` after CI succeeds on `main`. The old hand-written HTML site and generated Cobra/ExDoc machinery are removed. Phoenix remains dynamic.
+
+## Local development
+
+Prerequisites: Nix with flakes, and optionally direnv.
 
 ```sh
-cd dagster/projects/dakp/workers/go
-go mod download
-go build -o bin/dakp-extract ./cmd/dakp-extract && go test ./...
+direnv allow           # or nix develop
+make hooks
+npm ci
+make test
+make lint
 ```
 
-Then `make dev`, pick the `dakp` location, launch `dakp_build` for the whole
-DAG (or a `dakp_build_<stage>` job for one output), and find the per-stage
-artifacts in `dagster/projects/dakp/published/dakp/` (or wherever
-`$MO_PUBLISHED_ROOT` points).
-
-## DAKP sources
-
-| Source | infores | Role |
-|---|---|---|
-| DailyMed SPL labels | `infores:dailymed` | indications, contraindications, warnings (assertion text) |
-| FAERS | `infores:faers` | observed-use (`biolink:applied_to_treat`) reports |
-| Drugs@FDA | (none; folded into approval reconciliation) | FDA approval backing for approved-treats edges |
-| EMA medicines registry, EPAR documents, SmPCs | `infores:ema` (EPAR evidence also as `infores:epar` upstream id) | EU authorisations and label text |
-| Health Canada Canada Vigilance | `infores:canada-vigilance` | observed-use reports |
-| CDC/NCHS ICD-10-CM Table of Drugs and Chemicals (FY2027) | `infores:icd10cm` | poison screen: supporting data source on observed-use edges, contributes no assertion text |
-
-The ICD-10-CM screen (added in DAKP 1.25.1) keeps poisons out of the graph two ways;
-both screens are derived inside the DAG at build time (`derive_icd10cm_screen` +
-`derive_icd10cm_curies` assets), not baked into the code:
-
-- Wording: observed-use rows whose subject text names a substance the Table lists with no
-  Adverse-effect code (T36-T65, `icd10cm_denylist.py`) are dropped at load by one Tablassert
-  `antijoin` filter.
-- Identifier: every table's subject resolution excludes the fullmap CURIEs whose own name is such a
-  substance (`icd10cm_curies.py`), so a reporter spelling that resolves to a poison (`LEVOXINE` ->
-  hydrazine) or a label ingredient (`TURPENTINE`) cannot surface as a node.
-
-Substances that regulator label text names as medicines are exempt (lithium, zinc, permethrin).
-Water-as-substance identifiers and wordings are excluded separately. GHB/GBL (sodium oxybate) are
-allowed: it is an approved medicine. Regenerate both snapshots with the scripts in
-`dagster/projects/dakp/pipeline/tests/eval/` when the ICD-10-CM release or fullmap changes.
-
-## Build one output
-
-Each stage publishes its own artifact and each stage gets a narrow job, so a
-single output can be rebuilt without running any of the others. From
-`dagster/projects/dakp` (stages: `acquire_<source>` for dailymed, faers,
-drugsfda, ema, ema_smpc, canada_vigilance, icd10cm and `acquire_ner_models`;
-`extract_<source>`; `shape_approved_treats`, `shape_faers_uses`,
-`shape_contraindications`, `shape_has_active_ingredient`; `tablassert_configs`;
-`kg_build`, `kg_qc`):
+The devshell pins Node, Go 1.26.10, Elixir 1.19/OTP 28, uv, and repository tools. Commands are limited to four parallel tasks/CPUs for shared build hosts. Run heavy Linkouts builds and tests on `wenceslaus`, not an interactive workstation.
 
 ```sh
-uv run dagster job execute -j dakp_build_kg_build -m dakp_dag.definitions    # only kg_build
-uv run dagster asset materialize --select kg_build -m dakp_dag.definitions   # only kg_build
-uv run dagster asset materialize --select '*+kg_build' -m dakp_dag.definitions  # kg_build + whole chain
+make dev               # Dagster UI on http://localhost:3000
+make up                # daemon + webserver
+make check             # offline aggregate verification
+make locks             # recursive uv/npm/Go/Mix lock checks
+make go-test-race      # both independent Go modules
+make docs-test
+make linkouts-test
+make linkouts-contract-test
+make linkouts-web-build
+make linkouts-check-deploy
 ```
 
-In the UI it is Launch run on `dakp_build_<stage>`, or Materialize on a single
-asset node. Stages hand off through files under `$MO_PUBLISHED_ROOT` (each
-stage's ArtifactRef list at `dakp/refs/<stage>.refs.json`, the KGX pair at
-`dakp/kg/`) and declare lineage-only `deps` (no value inputs), so a narrow run
-reads upstream artifacts instead of rebuilding them and fails with `upstream
-artifact missing` when one has not been published yet. `dakp_build` still runs
-the whole DAG, and `tests/test_single_output.py` pins both properties.
+Use `make help` for component commands. `.envrc.example` documents public local settings; the committed `.envrc` contains only `use flake`. Keep real credentials in an untracked parent environment. Never put secrets in Dagster configuration, Pipes extras, asset metadata, logs, or committed files.
 
-Run knobs are environment variables read at materialization time
-(`src/dakp_dag/config.py`): `MO_PUBLISHED_ROOT`, `DAKP_WORKDIR` (BLAKE3 CAS +
-op index, the cache), `DAKP_EXTRACT_WORKER_BIN`, `DAKP_FULLMAP` (without it the
-Tablassert handoff is deferred and reported, not failed), `DAKP_FORCE` (bypass
-the op-index skip), `DAKP_NER_OFFLINE=1` (gazetteer-only NER, torch-free),
-`DAKP_THREADS`, `DAKP_MEMORY_BUDGET_GB`, `DAKP_QUARTER_LIMIT`,
-`DAKP_RELEASE_LIMIT`, `DAKP_PUBLICATION_VERSION`.
+## Linkouts manual workflows
 
-## Commands
+Build the hidden worker and start Dagster:
 
-| Command | Does |
-|---|---|
-| `make dev` | dg dev, all code locations, UI on :3000 |
-| `make up` | process-compose: dagster-daemon + webserver (same ports) |
-| `make test` | every cached test (pytest + go test) |
-| `npx nx affected -t test` | only tests affected by the current change (fast loop) |
-| `make lint` / `make fmt` | golangci-lint + ruff via nx; nixfmt-tree |
-| `prek run --all-files` | the same hooks CI runs |
+```sh
+make linkouts-worker-build
+cd dagster/projects/linkouts && uv sync --group dev
+make dev               # from the repository root
+```
 
-## Add a new KG/DAG
+Launch `linkouts_upload` manually for a complete release: `stage_release` -> `push_staged_release` -> `status_report` -> `probe_release`. Narrow jobs materialize one output and read published artifact references without rebuilding upstream stages.
 
-See `.pi/skills/add-dag/SKILL.md` (or ask an agent to): `uvx create-dagster
-project projects/<name>`, wire libs, add `project.json`. Never import across
-projects; shared code goes in `libs/*`. KGX ndjson is the only sink.
+Staging is content-addressed and publication is resumable. Filtered or dry-run staging cannot enter normal publication. Provisioning (`linkouts_init_store`) is separate. Destructive definitions are absent unless `LINKOUTS_ENABLE_DESTRUCTIVE_JOBS=1` is set at code-location load, and execution still requires exact target confirmation. No schedule or sensor is installed.
 
-## Add a Go worker
+See the [operation reference](https://glusman-team.github.io/graph-monorepo/linkouts/operations/reference/) and [upload guide](https://glusman-team.github.io/graph-monorepo/linkouts/operations/upload/).
 
-See `.pi/skills/add-worker-go/SKILL.md`: new cmd under `workers/go/`, pipes +
-BLAKE3 cache via `internal/pipesutil`, bump `WorkerVersion` on behavior change.
+## Phoenix preview
 
-## CI
+Run against the public canonical contract with no cloud credentials:
 
-`.github/workflows/ci.yml`: python (uv lock check + sync + pytest per package,
-including packages nested inside a project, then `dg check defs` so every code
-location must load), go (build/test/golangci-lint per workers module),
-`nix flake check`. Issue templates in `.github/ISSUE_TEMPLATE/`.
+```sh
+cd sites/linkouts
+mix setup
+COSMOS_BACKEND=file \
+COSMOS_DOCS=../../dagster/projects/linkouts/contracts/docs.ndjson \
+  mix phx.server
+```
 
-## Contributing
+Open `http://localhost:4000`. The canonical corpus also has a Go byte-regeneration test and an Elixir decoding suite. The Fly preview uses the same public fixture and never receives production Cosmos credentials.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the daily edit/check loop,
-repo rules, and the quality gates. PRs use
-[.github/pull_request_template.md](.github/pull_request_template.md); all
-contributors are held to the [Code of Conduct](CODE_OF_CONDUCT.md).
+## Deployment
+
+The production Docker image builds from the monorepo root with a narrow `.dockerignore` allowlist, digest-pinned bases, and a non-root runtime user:
+
+```sh
+docker build -f sites/linkouts/Dockerfile -t linkouts .
+LINKOUTS_IMAGE=linkouts sites/linkouts/scripts/smoke_preview.sh
+```
+
+Real Cosmos and Fly operations are explicit later deployment steps, not test targets. Production Fly deploys require successful CI for the selected commit and the authorized environment/token. Preview deployment is manual and remains public/credential-free apart from its own generated Phoenix signing key.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and `AGENTS.md`. CI includes scoped fan-out, contract regeneration/readback, race tests, strict Phoenix checks, Dialyzer, Docker smoke, Actionlint, ShellCheck, Hadolint, secret scanning, and blocking Go/Hex/npm vulnerability audits. No vulnerability gate is permanently informational.

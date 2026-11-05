@@ -1,0 +1,1032 @@
+/* See the Tailwind configuration guide for advanced usage
+   https://tailwindcss.com/docs/configuration */
+
+@import "tailwindcss" source(none);
+@import "phoenix-colocated/edge_linkouts/colocated.css";
+@source "../css";
+@source "../js";
+@source "../../lib/edge_linkouts_web";
+/* Required for Tailwind to automatically pick up changes in colocated CSS files in dev */
+@source "../../_build/dev/phoenix-colocated/edge_linkouts/*/";
+
+/* A Tailwind plugin that makes "hero-#{ICON}" classes available.
+   The heroicons installation itself is managed by your mix.exs */
+@plugin "../vendor/heroicons";
+
+/* daisyUI Tailwind Plugin. */
+@plugin "daisyui/packages/bundle/daisyui" {
+  themes: false;
+}
+
+/* daisyUI theme plugin.
+   Two themes tuned for long reading sessions over scientific content: a cool paper light
+   theme and a slate dark theme, both with one deep-teal accent. Colour carries meaning
+   only where the markup also spells it out (diff markers, state kickers). */
+@plugin "daisyui/packages/bundle/daisyui-theme" {
+  name: "dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: "dark";
+  --color-base-100: oklch(16% 0.012 180);
+  --color-base-200: oklch(21% 0.014 180);
+  --color-base-300: oklch(29% 0.016 180);
+  --color-base-content: oklch(92% 0.012 180);
+  --color-primary: oklch(78% 0.13 175);
+  --color-primary-content: oklch(16% 0.03 175);
+  --color-secondary: oklch(70% 0.02 250);
+  --color-secondary-content: oklch(16% 0.01 250);
+  --color-accent: oklch(78% 0.13 175);
+  --color-accent-content: oklch(16% 0.03 175);
+  --color-neutral: oklch(38% 0.02 180);
+  --color-neutral-content: oklch(96% 0.008 180);
+  --color-info: oklch(72% 0.12 230);
+  --color-info-content: oklch(16% 0.02 230);
+  --color-success: oklch(76% 0.14 155);
+  --color-success-content: oklch(16% 0.03 155);
+  --color-warning: oklch(78% 0.13 75);
+  --color-warning-content: oklch(18% 0.04 75);
+  --color-error: oklch(72% 0.16 25);
+  --color-error-content: oklch(16% 0.03 25);
+  --radius-selector: 0.375rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.625rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/packages/bundle/daisyui-theme" {
+  name: "light";
+  default: true;
+  prefersdark: false;
+  color-scheme: "light";
+  --color-base-100: oklch(98.5% 0.004 180);
+  --color-base-200: oklch(95.5% 0.006 180);
+  --color-base-300: oklch(89% 0.01 180);
+  --color-base-content: oklch(22% 0.02 180);
+  --color-primary: oklch(48% 0.1 175);
+  --color-primary-content: oklch(98% 0.01 175);
+  --color-secondary: oklch(45% 0.02 250);
+  --color-secondary-content: oklch(98% 0.005 250);
+  --color-accent: oklch(48% 0.1 175);
+  --color-accent-content: oklch(98% 0.01 175);
+  --color-neutral: oklch(42% 0.02 180);
+  --color-neutral-content: oklch(98% 0.005 180);
+  --color-info: oklch(50% 0.11 230);
+  --color-info-content: oklch(98% 0.01 230);
+  --color-success: oklch(45% 0.12 155);
+  --color-success-content: oklch(98% 0.01 155);
+  --color-warning: oklch(50% 0.12 75);
+  --color-warning-content: oklch(98% 0.02 75);
+  --color-error: oklch(50% 0.17 25);
+  --color-error-content: oklch(98% 0.01 25);
+  --radius-selector: 0.375rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.625rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/* Add variants based on LiveView classes */
+@custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
+@custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
+@custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
+
+/* Use the data attribute for dark mode  */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* Make LiveView wrapper divs transparent for layout */
+[data-phx-session], [data-phx-teleported-src] { display: contents }
+
+/* ------------------------------------------------------------------ EdgeLinkouts */
+
+/* Atkinson Hyperlegible Next, self-hosted (SIL OFL 1.1, vendored from Google Fonts).
+   Chosen for legibility of long scientific prose and of look-alike characters in
+   identifiers; the variable file covers every weight the app sets. */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/atkinson-hyperlegible-next-latin.woff2") format("woff2");
+}
+
+:root {
+  --font-sans: "Atkinson Hyperlegible Next", system-ui, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", monospace;
+  /* Minor third: one 1.2 ratio, anchored to the reader's default body size.
+     Metadata stops at the first step below body, rather than shrinking identifiers.
+     --type-micro is the second step down and stays off content: it sizes only the
+     uppercase badge micro-labels, which are short, bold, and never carry an identifier. */
+  --type-micro: calc(1rem / 1.44);
+  --type-small: calc(1rem / 1.2);
+  --type-body: 1rem;
+  --type-lead: 1.2rem;
+  --type-title: 1.44rem;
+  --type-claim: 1.728rem;
+  --leading-body: 1.7;
+  --leading-heading: 1.4;
+  --leading-ui: 1.5;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+}
+
+code, kbd, pre {
+  font-family: var(--font-mono);
+}
+
+/* Visible keyboard focus in both themes. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The browser's own surface: selection carries the accent as a tint, so even highlighted
+   text stays inside the world instead of falling back to the UA blue. */
+::selection {
+  background: color-mix(in oklab, var(--color-primary) 25%, transparent);
+}
+
+/* --- shell ------------------------------------------------------------------- */
+
+.preview-notice {
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: var(--type-small);
+  line-height: var(--leading-ui);
+  color: var(--color-primary-content);
+  background: var(--color-primary);
+}
+
+/* The research-use disclaimer is a legal boundary, not a footnote: banner treatment, a
+   warning icon and bold text, but in the theme's own colors — amber washed out badly in
+   dark mode, and unreadable beats thematic. */
+.research-notice {
+  margin: 0;
+  /* The strip stays full-bleed, but its content rides the same 64rem rail as main: at wide
+     viewports the horizontal padding grows to the rail edge plus main's own 2rem, so the
+     banner text never outruns the column below it. */
+  padding: 0.55rem max(1rem, calc((100% - 64rem) / 2 + 2rem));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-align: center;
+  font-size: var(--type-small);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+  color: var(--color-base-content);
+  background: var(--color-base-200);
+  border-bottom: 1px solid var(--color-base-300);
+}
+
+.research-notice svg {
+  flex: none;
+}
+
+/* One line: the banner is a single declaration, and a centered wrap reads as two stray
+   fragments. The rail padding above leaves room for it wherever the rail itself fits;
+   under that width the text wraps again, balanced, rather than clipping off-screen. */
+.research-notice span {
+  white-space: nowrap;
+}
+
+@media (max-width: 72rem) {
+  .research-notice span {
+    white-space: normal;
+    text-wrap: balance;
+  }
+}
+
+.research-notice strong {
+  font-weight: 700;
+}
+
+.site-header {
+  border-bottom: 1px solid var(--color-base-300);
+  background: var(--color-base-100);
+}
+
+.site-header-inner {
+  margin-inline: auto;
+  max-width: 64rem;
+  /* 2rem of padding-inline matches main's, so the brand and the page content share one
+     left rail at every width. */
+  padding: 0.65rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+/* One height for every header control (button, link-button, toggle), so the random-edge
+   button and the theme toggle sit as an aligned pair on one row. */
+.site-header-inner .btn {
+  height: 2.25rem;
+  min-height: 2.25rem;
+  font-size: var(--type-small);
+  display: inline-flex;
+  align-items: center;
+  padding-inline: 0.75rem;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: var(--type-body);
+  letter-spacing: -0.01em;
+  color: var(--color-base-content);
+  overflow-wrap: anywhere;
+}
+
+/* Narrow phones: tighten the rail and let the die carry the random button; its label
+   stays available to screen readers. The header may wrap when the reader enlarges text. */
+@media (max-width: 30rem) {
+  .site-header-inner {
+    padding-inline: 1rem;
+    gap: 0.5rem;
+  }
+
+  .site-header-inner .btn {
+    padding-inline: 0.6rem;
+  }
+
+  .site-header-inner .random-btn span:not(.sr-only) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+.site-footer {
+  border-top: 1px solid var(--color-base-300);
+  margin-top: 4rem;
+}
+
+.site-footer p {
+  margin-inline: auto;
+  max-width: 64rem;
+  padding: 1.25rem 2rem;
+  font-size: var(--type-small);
+  color: color-mix(in oklab, var(--color-base-content) 65%, var(--color-base-100));
+}
+
+/* --- shared bits -------------------------------------------------------------- */
+
+.section-title {
+  /* The edge-page sections share one anchored kicker: the uppercase label language the page
+     already uses for node roles and diff group headings, tied to the column by a hairline
+     rule, so a heading never floats as a stray bold line between blocks. */
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: var(--type-small);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 60%, var(--color-base-100));
+  margin-bottom: 0.6rem;
+}
+
+.section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-base-300);
+}
+
+.ext-link {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.ext-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.ext-icon {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-left: 0.15em;
+  margin-right: 0.15em;
+  vertical-align: baseline;
+  opacity: 0.75;
+}
+
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--color-primary);
+  font-size: var(--type-small);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--color-base-300);
+  border-radius: var(--radius-field);
+  background: var(--color-base-200);
+  color: var(--color-base-content);
+  font-size: var(--type-small);
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.copy-btn.is-copied {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.count-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--type-small);
+  line-height: var(--leading-heading);
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: var(--color-base-200);
+  border: 1px solid var(--color-base-300);
+  color: color-mix(in oklab, var(--color-base-content) 75%, var(--color-base-100));
+  vertical-align: middle;
+}
+
+.version-pill {
+  font-family: var(--font-mono);
+  font-size: var(--type-small);
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-primary) 14%, var(--color-base-100));
+  color: var(--color-primary);
+  border: 1px solid color-mix(in oklab, var(--color-primary) 35%, var(--color-base-300));
+}
+
+/* --- state pages (empty pool, throttle, outage) -------------------------------- */
+
+.state-page {
+  max-width: 34rem;
+  margin-inline: auto;
+  padding: 4rem 1rem;
+  text-align: center;
+}
+
+.state-kicker {
+  font-size: var(--type-small);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 60%, var(--color-base-100));
+  margin-bottom: 0.5rem;
+}
+
+.state-kicker-warning { color: var(--color-warning); }
+.state-kicker-error { color: var(--color-error); }
+
+.state-title {
+  font-size: var(--type-title);
+  line-height: var(--leading-heading);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin-bottom: 0.75rem;
+}
+
+.state-body {
+  color: color-mix(in oklab, var(--color-base-content) 78%, var(--color-base-100));
+  line-height: 1.6;
+}
+
+.state-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* --- the edge page --------------------------------------------------------------
+   One measure for every text block and one vertical rhythm, so the page reads as a
+   grid: the article caps the line length, sections step by a fixed gap, and the
+   evidence table keeps a single label column every row aligns to. */
+
+.edge-page {
+  /* No width cap: the article spans main's content column, so the headline, the boxes, and
+     the header controls above them share one right edge as well as the left rail. */
+  margin-inline: 0;
+}
+
+.edge-head {
+  /* Same step as .edge-body's row gap, so the page keeps one vertical rhythm. */
+  margin-bottom: 3rem;
+}
+
+.edge-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: var(--type-small);
+  line-height: var(--leading-heading);
+  margin-bottom: 0.75rem;
+}
+
+/* The "DrugApprovals KP asserts:" lead-in above the sentence: body text, not a heading,
+   with a colon the template adds after the rendered segments. One step above body scale so
+   it hands off to the sentence, and clearly under it. */
+.edge-asserts {
+  font-size: var(--type-lead);
+  line-height: var(--leading-heading);
+  margin-bottom: 0.35rem;
+}
+
+.edge-sentence {
+  /* Interpolate between scale steps at 22.5rem and 67.5rem viewport widths. */
+  font-size: clamp(var(--type-title), 1.296rem + 0.64vw, var(--type-claim));
+  font-weight: 600;
+  line-height: var(--leading-heading);
+  overflow-wrap: anywhere;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.9rem;
+}
+
+.edge-idline {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: var(--type-small);
+}
+
+.edge-idline code {
+  background: var(--color-base-200);
+  border: 1px solid var(--color-base-300);
+  border-radius: var(--radius-field);
+  padding: 0.15rem 0.5rem;
+  font-size: var(--type-small);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Explicit single column with a zero floor: an implicit auto track sizes to the widest
+   line's max-content, which lets one long evidence line stretch the page past the
+   viewport and drag the centered container off-centre. */
+.edge-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3rem;
+}
+
+/* The claim and its evidence sit together, as on the legacy page: sentence, then the facts
+   beneath it, before anything a reader has to scroll for. */
+.edge-claim {
+  display: grid;
+  gap: 0.9rem;
+}
+
+/* The text relationship line: subject, relation, object and qualifiers, identifiers inline. */
+.edge-relation {
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+}
+
+.edge-relation code {
+  background: var(--color-base-200);
+  border-radius: var(--radius-field);
+  padding: 0.1rem 0.45rem;
+  font-size: var(--type-small);
+  overflow-wrap: anywhere;
+}
+
+/* One step below the pill it trails, so the badge reads as an annotation on the version
+   rather than a second pill of equal weight. */
+.latest-badge {
+  display: inline-block;
+  font-size: var(--type-micro);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.05rem 0.42rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-success) 18%, var(--color-base-100));
+  color: var(--color-success);
+  border: 1px solid color-mix(in oklab, var(--color-success) 40%, var(--color-base-300));
+  vertical-align: middle;
+}
+
+/* The counts line's badge trails the version number inline ("edges in 1.23.4 latest"); the
+   pill row's badge is a flex sibling, so only this one needs its own gap. */
+.kg-counts .latest-badge {
+  margin-left: 0.35rem;
+}
+
+/* Relationship diagram: wrapping HTML cards, not clipped SVG text. */
+.edge-diagram {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.edge-node {
+  border: 1px solid var(--color-base-300);
+  border-radius: var(--radius-box);
+  background: var(--color-base-100);
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.edge-node-role {
+  font-size: var(--type-small);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 55%, var(--color-base-100));
+}
+
+.edge-node-name {
+  font-size: var(--type-lead);
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.edge-node-cat {
+  font-size: var(--type-small);
+  color: color-mix(in oklab, var(--color-base-content) 70%, var(--color-base-100));
+}
+
+.edge-node-id {
+  margin-top: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: var(--type-small);
+}
+
+.edge-node-id code {
+  background: var(--color-base-200);
+  border-radius: var(--radius-field);
+  padding: 0.1rem 0.45rem;
+  overflow-wrap: anywhere;
+}
+
+.edge-node-id .ext-link,
+.raw-doc-notice,
+.state-reason {
+  font-size: var(--type-small);
+}
+
+.edge-rel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0 0.25rem;
+  min-width: 7rem;
+}
+
+.edge-rel-arrow {
+  width: 1.6rem;
+  height: 1.6rem;
+  color: color-mix(in oklab, var(--color-base-content) 60%, var(--color-base-100));
+}
+
+.edge-rel-predicate {
+  font-size: var(--type-small);
+  font-weight: 600;
+  text-align: center;
+}
+
+.edge-rel-raw {
+  font-size: var(--type-small);
+  color: color-mix(in oklab, var(--color-base-content) 60%, var(--color-base-100));
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 48rem) {
+  .edge-diagram {
+    grid-template-columns: 1fr;
+  }
+
+  .edge-rel {
+    min-width: 0;
+    padding: 0.25rem 0;
+  }
+
+  .edge-rel-arrow {
+    transform: rotate(90deg);
+  }
+}
+
+/* Versions timeline */
+.timeline ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Each li is a step pill plus its "latest" badge, the same pairing as the home page's pill row:
+   two chips side by side, never a badge nested inside the pill. */
+.timeline li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.timeline-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--color-base-300);
+  border-radius: 999px;
+  background: var(--color-base-100);
+  padding: 0.25rem 0.8rem;
+  font-size: var(--type-small);
+  color: var(--color-base-content);
+}
+
+.timeline-step:hover {
+  border-color: var(--color-primary);
+}
+
+.timeline-step[aria-current="page"] {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-content);
+  font-weight: 600;
+}
+
+.timeline-step[aria-current="page"] .count-badge {
+  background: color-mix(in oklab, var(--color-primary-content) 18%, var(--color-primary));
+  border-color: transparent;
+  color: var(--color-primary-content);
+}
+
+.timeline-label {
+  font-family: var(--font-mono);
+}
+
+/* Diff body sits at the section scale, like Methods and Known issues: 1rem/1.7, the
+   size the rest of the page reads at. */
+.diff-summary {
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+  margin-bottom: 0.6rem;
+}
+
+.diff-group {
+  margin-bottom: 0.75rem;
+}
+
+.diff-group h3 {
+  font-size: var(--type-small);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 60%, var(--color-base-100));
+  margin-bottom: 0.3rem;
+}
+
+.diff-group ul, .diff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.diff-group li, .diff-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+}
+
+.diff-field {
+  font-weight: 600;
+}
+
+/* The field label is also the scoping link (see diff_label): quiet until hovered, so it
+   reads as data first and reveals the affordance only to a reader looking for it. */
+a.diff-field {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.diff-field:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The scope's way back out, beside the summary it explains. */
+.diff-scope-clear {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.diff-scope-clear:hover {
+  text-decoration-thickness: 2px;
+}
+
+.diff-group code, .diff-list code {
+  background: var(--color-base-200);
+  border-radius: var(--radius-field);
+  padding: 0.05rem 0.4rem;
+  font-size: var(--type-small);
+  overflow-wrap: anywhere;
+}
+
+/* Old values keep the strike-through with the error hue on the line itself, not a tinted
+   chip: the pair reads as two whole page-text lines, one struck. */
+.diff-old {
+  text-decoration: line-through;
+  text-decoration-color: var(--color-error);
+}
+
+.diff-path {
+  font-family: var(--font-mono);
+  font-size: var(--type-small);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.diff-list {
+  margin-top: 0.2rem;
+}
+
+/* Understated like the sections around it: the diff carries no tinted slabs, and the +/-
+   markers alone carry the colour, so the changes never out-shout the claim. Colour still
+   never carries meaning alone: every line keeps its marker and a visually-hidden word
+   (added/removed) for screen readers. */
+.diff-line-added > span[aria-hidden="true"] {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.diff-line-removed > span[aria-hidden="true"] {
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.diff-line-changed {
+  color: var(--color-base-content);
+}
+
+/* Methods, provenance, and tips share one body scale and the existing section heading. */
+.edge-prose p {
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+  color: color-mix(in oklab, var(--color-base-content) 80%, var(--color-base-100));
+}
+
+/* A release the config flags with a known error: one plain prose section like Methods or
+   Tips, in the curator's own words. Only the stacked-paragraph spacing is bespoke; the
+   body text comes from .edge-prose. */
+.edge-issues p + p {
+  margin-top: 0.75rem;
+}
+
+/* A list fold lives inside its sentence: the items past the cap sit behind an inline button
+   (a <details> was block-shaped in some engines and opened a vertical gap), so "…, C,
+   [Show 22 more]" reads as a chip in the middle of the paragraph, and clicking continues the
+   same comma-separated run. */
+.linkout-more {
+  display: inline;
+}
+
+.linkout-more-btn {
+  display: inline;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid color-mix(in oklab, var(--color-primary) 35%, var(--color-base-300));
+  border-radius: var(--radius-field);
+  background: color-mix(in oklab, var(--color-primary) 10%, var(--color-base-100));
+  color: var(--color-primary);
+  font-size: var(--type-small);
+  font-weight: 600;
+  padding: 0.05rem 0.5rem;
+  margin: 0 0 0 0.15rem;
+  line-height: inherit;
+}
+
+.linkout-more-btn:hover {
+  border-color: var(--color-primary);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 16rem;
+  border: 1px solid var(--color-base-300);
+  border-radius: var(--radius-field);
+  background: var(--color-base-200);
+  padding: 0.12rem 0.55rem;
+  font-family: var(--font-mono);
+  font-size: var(--type-small);
+  color: var(--color-base-content);
+  overflow-wrap: anywhere;
+}
+
+a.chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+@media (max-width: 40rem) {
+  .edge-body {
+    gap: 2.25rem;
+  }
+}
+
+/* About block */
+.edge-about p {
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+  color: color-mix(in oklab, var(--color-base-content) 82%, var(--color-base-100));
+  margin-bottom: 0.6rem;
+}
+
+/* This file is for your main application CSS */
+
+/* --- the KG bar (root page) ------------------------------------------------------
+   One row per knowledge graph: the name, the identifier it is registered under, and its
+   releases as pills. A pill is a random relationship from that release and the name a random
+   one from any release, so the bar is the entry point for "show me something from this graph".
+   The pill row is measured in the browser (assets/js/app.js) because only the browser knows
+   the window width and the real font metrics; whatever does not fit collapses behind the "…"
+   chip and the chip expands the row on click. */
+
+.bar-notice {
+  margin-bottom: 1.25rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--radius-field);
+  border: 1px solid color-mix(in oklab, var(--color-warning) 45%, var(--color-base-300));
+  background: color-mix(in oklab, var(--color-warning) 12%, var(--color-base-100));
+  color: color-mix(in oklab, var(--color-base-content) 85%, var(--color-base-100));
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
+}
+
+.bar-head {
+  margin-bottom: 1.5rem;
+}
+
+.bar-title {
+  font-size: var(--type-title);
+  line-height: var(--leading-heading);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.bar-sub {
+  margin-top: 0.4rem;
+  line-height: 1.6;
+  color: color-mix(in oklab, var(--color-base-content) 72%, var(--color-base-100));
+}
+
+.bar-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.kg-row {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--color-base-300);
+  border-radius: var(--radius-box);
+  background: var(--color-base-100);
+}
+
+.kg-ident {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.kg-name {
+  font-size: var(--type-lead);
+  font-weight: 650;
+  color: var(--color-base-content);
+  overflow-wrap: anywhere;
+}
+
+a.kg-name:hover {
+  color: var(--color-primary);
+}
+
+.kg-source {
+  font-size: var(--type-small);
+}
+
+.kg-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: var(--type-small);
+  color: color-mix(in oklab, var(--color-base-content) 65%, var(--color-base-100));
+}
+
+.kg-canonical {
+  font-family: var(--font-mono);
+  font-size: var(--type-small);
+  overflow-wrap: anywhere;
+  color: color-mix(in oklab, var(--color-base-content) 70%, var(--color-base-100));
+}
+
+/* One measured line. .is-expanded wraps and shows every pill, which is what the "…" chip does. */
+.version-pills {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.version-pills.is-expanded {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+/* Each release renders as pill + optional badge inside a display:contents group, so the pair
+   is one flex item and the badge can never land on the pill's border. */
+.version-pill-group {
+  display: contents;
+}
+
+.version-pills .version-pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+
+.version-pills .version-pill.is-hidden {
+  display: none;
+}
+
+/* The "…" button in the pill row: an inline button, not a chip block. */
+.kg-more {
+  flex: 0 0 auto;
+  cursor: pointer;
+  font-size: var(--type-small);
+  line-height: 1;
+}
+
+/* The KG name on an edge page: a link back into that graph's random pick. */
+a.kg-link {
+  color: inherit;
+  font-weight: 600;
+}
+
+a.kg-link:hover {
+  color: var(--color-primary);
+}

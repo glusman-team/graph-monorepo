@@ -1,0 +1,20 @@
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:5855","name":"Ibuprofen","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:2904","name":"Atenolol","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:39867","name":"Valproic acid","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:64019","name":"Nebivolol","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:3387","name":"Carbamazepine","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:6904","name":"Metoprolol","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:ChemicalEntity"],"id":"UMLS:C0700583","name":"diclofenac sodium","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:5118","name":"Fluoxetine","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:Disease"],"id":"MONDO:0005044","in_taxon":["NCBITaxon:9606"],"name":"hypertensive disorder","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:Disease"],"id":"MESH:D059352","name":"Musculoskeletal Pain","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:Disease"],"id":"UMLS:C0409679","name":"Seronegative arthritis","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:PhenotypicFeature"],"id":"HP:0001681","in_taxon":["NCBITaxon:9606"],"name":"Angina pectoris","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:PhenotypicFeature"],"id":"HP:0012531","in_taxon":["NCBITaxon:9606"],"name":"Pain","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:Disease"],"id":"MONDO:0004979","in_taxon":["NCBITaxon:9606"],"name":"asthma","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:Disease"],"id":"UMLS:C0038663","name":"Suicide attempt","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:28901","name":"Busulfan","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:SmallMolecule"],"id":"CHEBI:4445","name":"Desflurane","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:GenomicEntity"],"id":"UMLS:C0678941","name":"Gene Mutant","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:Disease"],"id":"MONDO:0018075","in_taxon":["NCBITaxon:9606"],"name":"neural tube defect","provided_by":["infores:multiomics-drugapprovals"]}
+{"category":["biolink:Disease"],"id":"MONDO:0011191","name":"capillary infantile hemangioma","provided_by":["infores:multiomics-drugapprovals"]}

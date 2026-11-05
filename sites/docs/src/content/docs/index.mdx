@@ -1,0 +1,69 @@
+---
+title: Graph Monorepo
+description: Start with the knowledge-graph task you need to complete.
+template: splash
+hero:
+  tagline: Start with what you need to do. The guides route you to the right dataset, Dagster job, display configuration, or operating procedure.
+  actions:
+    - text: Use a knowledge graph
+      link: /graph-monorepo/dakp/
+      icon: right-arrow
+      variant: primary
+    - text: Understand the repository
+      link: /graph-monorepo/architecture/
+      icon: open-book
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <LinkCard
+    title="Use approved-treatment data"
+    description="Download DAKP KGX releases, inspect provenance, and understand FDA, EMA, FAERS, Canada Vigilance, DailyMed, and ICD-10-CM sources."
+    href="/graph-monorepo/dakp/"
+  />
+  <LinkCard
+    title="Read a relationship in Linkouts"
+    description="Open the live human-readable edge browser, or run the public fixture preview without cloud credentials."
+    href="/graph-monorepo/linkouts/"
+  />
+  <LinkCard
+    title="Build or publish a release"
+    description="Choose DAKP to build a KGX knowledge graph. Choose Linkouts to stage and publish its compressed serving index."
+    href="/graph-monorepo/linkouts/operations/upload/"
+  />
+  <LinkCard
+    title="Add a knowledge graph"
+    description="Create a Dagster project for a new KGX producer, or add a display configuration for a graph already served by Linkouts."
+    href="/graph-monorepo/linkouts/display/add-a-kg/"
+  />
+  <LinkCard
+    title="Operate and deploy"
+    description="Verify stores, roll out dictionaries, resume uploads, recover safely, and deploy Phoenix without mixing preview and production."
+    href="/graph-monorepo/linkouts/deployment/"
+  />
+  <LinkCard
+    title="Change the code"
+    description="Follow component ownership, scoped checks, contract rules, and the manual-job safety model before opening a pull request."
+    href="/graph-monorepo/contributing/"
+  />
+</CardGrid>
+
+## Choose the right system
+
+| Your goal                                                               | System             | Output                                             |
+| ----------------------------------------------------------------------- | ------------------ | -------------------------------------------------- |
+| Build a drug-approval knowledge graph from regulator and safety sources | DAKP               | Validated KGX `nodes.ndjson` and `edges.ndjson`    |
+| Give an existing KGX relationship a readable permanent page             | Linkouts           | Compressed serving-index documents read by Phoenix |
+| Understand fields shared by the Go writer and Elixir reader             | Linkouts contracts | Byte-stable stored-document fixtures               |
+
+<Card title="The format rule matters">
+  DAKP-style pipelines publish KGX NDJSON only. Linkouts consumes KGX and materializes a serving
+  index. Its zstd envelopes are not another knowledge-graph publication format.
+</Card>
+
+<div class="task-note">
+  Looking for source code? Browse the [glusman-team/graph-monorepo
+  repository](https://github.com/glusman-team/graph-monorepo). Documentation is static; the Linkouts
+  Phoenix application remains dynamic.
+</div>

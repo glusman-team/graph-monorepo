@@ -1,0 +1,67 @@
+<%!-- One knowledge graph: its name (a random edge from its latest release), the identifier it is
+     registered under, and one pill per release. The pills live in a single row that the
+     browser measures; whatever does not fit collapses behind the "..." chip, which expands the
+     row on click (assets/js/app.js). The counts come from the pool index, so this whole row
+     costs one point read no matter how many releases the graph has. Older releases are
+     reachable as random picks only through their pill's explicit ?version= link. --%>
+<article class="kg-row">
+  <div class="kg-ident">
+    <a
+      class="kg-name"
+      href={~p"/#{@row.slug}/random?version=#{@row.newest}"}
+      title={"A random relationship from the latest release of #{@row.name}"}
+    >
+      {@row.name}
+    </a>
+    <a
+      :if={@row.url}
+      class="ext-link kg-source"
+      href={@row.url}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      source<.icon name="hero-arrow-top-right-on-square" class="ext-icon" /><span class="sr-only">
+        (opens the knowledge source's documentation in a new tab)
+      </span>
+    </a>
+  </div>
+
+  <p class="kg-meta">
+    <code class="kg-canonical" title="The identifier this graph is registered under">
+      {@row.canonical}
+    </code>
+    <span class="kg-counts" title="Edges in the newest release">
+      {length(@row.releases)} {plural(length(@row.releases), "release")} - {thousands(@row.edges)} edges in {@row.newest}
+    </span>
+  </p>
+
+  <div class="version-pills" id={"kg-pills-#{@row.slug}"} data-kg-pills>
+    <%!-- Pill + badge live in a display:contents group, so the badge is a row-level chip next
+         to the pill, never an inner element landing on the pill's border. It trails the pill on
+         the right, matching the edge page timeline ("1.23.4, latest"). --%>
+    <div :for={release <- @row.releases} class="version-pill-group">
+      <a
+        class="version-pill"
+        href={~p"/#{@row.slug}/random?version=#{release.label}"}
+        title={
+          "A random relationship from #{@row.name} #{release.label} (#{thousands(release.edges)} edges)"
+        }
+      >
+        {release.label}
+      </a>
+      <span :if={release.latest?} class="latest-badge">latest</span>
+    </div>
+
+    <button
+      type="button"
+      class="chip kg-more"
+      data-kg-more
+      hidden
+      aria-expanded="false"
+      aria-controls={"kg-pills-#{@row.slug}"}
+      aria-label="Show every release"
+    >
+      ...
+    </button>
+  </div>
+</article>

@@ -2,11 +2,20 @@
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "namedInputs": {
     "default": ["{projectRoot}/**/*", "sharedGlobals"],
-    "sharedGlobals": ["{workspaceRoot}/.golangci.yml", "{workspaceRoot}/nx.json"],
+    "sharedGlobals": [
+      "{workspaceRoot}/.golangci.yml",
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/flake.nix",
+      "{workspaceRoot}/flake.lock",
+      "{workspaceRoot}/nix/**/*"
+    ],
     "pythonInputs": [
       "{projectRoot}/**/*.py",
       "{projectRoot}/pyproject.toml",
-      "{workspaceRoot}/dagster/libs/**"
+      "{projectRoot}/uv.lock",
+      "{workspaceRoot}/dagster/libs/**",
+      "{workspaceRoot}/flake.nix",
+      "{workspaceRoot}/flake.lock"
     ]
   },
   "targetDefaults": {

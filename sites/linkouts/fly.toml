@@ -1,0 +1,50 @@
+# fly.toml app configuration file generated for edge-linkouts on 2026-10-08T11:26:59-07:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'edge-linkouts'
+primary_region = 'lax'
+kill_signal = 'SIGTERM'
+kill_timeout = '5s'
+
+# Run from the monorepo root. This path does not change the repository-root build context.
+[build]
+  dockerfile = 'sites/linkouts/Dockerfile'
+
+[env]
+  PHX_SERVER = 'true'
+  PHX_HOST = 'linkouts.skyelanegoetz.com'
+  PORT = '8080'
+  # The web app's slice of the free tier's 1000 RU/s. During ingestion the Go worker paces
+  # itself at 900 (RU_BUDGET_CLI), leaving exactly this much: never raise it while an
+  # upload runs, because the shared database throughput is 1000 RU/s and exceeding it
+  # throttles both apps. Outside a load the app idles well below this ceiling.
+  RU_BUDGET_WEB = '100'
+  # Clustering: DNSPoll discovers peers on Fly's private network. With one machine the
+  # query resolves to itself, so the cluster supervisor is present but inert (see
+  # the clustering ADR). Requires RELEASE_COOKIE as a secret to actually form a cluster.
+  CLUSTER_QUERY = 'edge-linkouts.internal'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = 'requests'
+    hard_limit = 1000
+    soft_limit = 500
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '10s'
+    method = 'GET'
+    path = '/healthz'
+    timeout = '2s'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'

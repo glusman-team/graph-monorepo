@@ -1,0 +1,68 @@
+name: Request a knowledge graph
+description: Ask for display support for a new KG or a new release of one we already serve.
+title: "[kg] "
+labels: ["kg-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adding a knowledge graph here means adding one **declarative display config** in
+        `sites/linkouts/kgs/*.exs`: data with no functions, templates, or HTML. See the
+        [display guide](https://glusman-team.github.io/graph-monorepo/linkouts/display/add-a-kg/).
+
+        **Ingestion is maintainer-run through Dagster.** Publishing writes to Azure Cosmos DB with
+        the read-write key, which contributors do not have. This issue is how you ask for a graph and
+        hand over what is needed; a maintainer stages and publishes it, and you (or they) write the config. If you
+        want to write the config yourself, say so below and include a link to your branch or PR.
+  - type: input
+    id: kg-name
+    attributes:
+      label: KG name and infores key
+      description: The canonical infores form, exactly as the wiki lists it. The name without the prefix is the slug used in URLs.
+      placeholder: "infores:drugapprovals-kp-1.23.4"
+    validations:
+      required: true
+  - type: input
+    id: release
+    attributes:
+      label: Release or version
+      description: The version you want linkable. If the graph has several releases, list them in order.
+      placeholder: "1.23.4"
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Where to get the KGX files
+      description: A direct URL, or a Hugging Face repo plus the file names. We need both nodes.ndjson and edges.ndjson.
+      placeholder: "https://huggingface.co/datasets/<org>/<kg>/tree/main/1.23.4 (drug_approvals_kg_nodes_v1.23.4.ndjson, ..._edges_v1.23.4.ndjson)"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why should this be linkable from a page
+      description: Who reads it, and what a reviewer gets from seeing the edge as prose rather than as a row in a TSV.
+      placeholder: "Curators cite these edges in approvals; a stable per-edge URL beats a link to a 400 MB download."
+    validations:
+      required: true
+  - type: textarea
+    id: properties
+    attributes:
+      label: Notes on its edge and node properties
+      description: Which predicates appear, which fields carry the evidence, any field a release renamed, and anything that needs an alias. This is what the config's sentences are written from.
+      placeholder: |
+        Predicates: biolink:treats, biolink:contraindicated_for
+        Evidence fields: FDA_regulatory_approvals (list of CURIEs), approval_status, citation
+        Renamed in 1.20.0: regulatory_approvals -> FDA_regulatory_approvals
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you submit
+      options:
+        - label: I checked the root page and this graph or release is not already served.
+          required: true
+        - label: I understand the load is run by a maintainer, and that this issue does not change anything on the live site by itself.
+          required: true

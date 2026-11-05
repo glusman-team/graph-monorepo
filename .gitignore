@@ -20,17 +20,21 @@ dagster/.dagster-home/
 # local env overrides (never committed)
 .env
 
-# built go worker binaries
+# built worker and Nx outputs
+/dist/
 dagster/projects/*/workers/go/bin/
 
 # os
 .DS_Store
 .nx/
 
-# published pipeline artifacts (per-DAG default under the project, or $MO_PUBLISHED_ROOT)
+# published pipeline artifacts and local operation state
+/.artifacts/
+/.work/
 /published/
 dagster/published/
 dagster/projects/*/published/
 .ralph/
 .pi-wt/
 .tablassert/
+erl_crash.dump
