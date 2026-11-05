@@ -244,9 +244,9 @@ New env knobs (all optional except the secrets and `DAKP_FULLMAP`, which already
 - [x] Add managed NER-cache client mode + preflight health/stats checks; test reuse, daemon restart wait, no subprocess spawn in external mode, and development fallback.
 - [x] dagster.yaml (queue=1, monitoring, retention) + Nix `dakp-nercache`/`dagster-units` packages + install docs (linger, EnvironmentFile, env example).
 - [x] Rehearse end-to-end with `DAKP_PUBLISH_DRY_RUN=1`, then set `DAKP_RELEASE_ENABLED=1`.
-- [ ] Add a Nix-generated tmux supervisor with devshell auto-start for hosts
+- [x] Add a Nix-generated tmux supervisor with devshell auto-start for hosts
   without sudo/linger; deploy it and verify service health after SSH logout.
-- [ ] After supervision is verified, rebuild FULLMAP from scratch with the latest
+- [x] After supervision is verified, rebuild FULLMAP from scratch with the latest
   Tablassert default thread count, validate and replace the production database,
   remove intermediate build files, and verify DAKP can still use it.
 
@@ -301,6 +301,35 @@ upstream in auto mode; cached mode is the explicit zero-network mode.
 - Set `DAKP_PUBLISH_DRY_RUN=0`, `DAKP_RELEASE_ENABLED=1`; restarted daemon/webserver.
   Friday schedule and both sensors verified RUNNING. Next tick: Friday Nov 6 2026
   17:00 America/Los_Angeles. GPU sensor cleanly skips until a pending check exists.
-- `Linger=no` and remote sudo is unavailable. Step 16 therefore migrates production
-  to detached tmux started by the Nix devshell. Logout persistence will be tested;
-  automatic host-reboot recovery remains unavailable without service permissions.
+- `Linger=no` and remote sudo is unavailable. Step 16 migrated production to
+  detached tmux started by the Nix devshell. Separate SSH connections verified
+  persistence; automatic host-reboot recovery remains unavailable without
+  service permissions.
+
+## No-sudo supervision deployment (2026-11-05)
+
+- PRs #26/#27 merged; production is clean main at `b0dc7c2`. The systemd user
+  units are disabled. `dakp` tmux runs process-compose with all three services.
+- Production crash recovery passed for NER cache and Dagster daemon. Cache retained
+  352,076 entries; UI returned HTTP 200 on fresh SSH connections. Schedule and
+  both sensors remained RUNNING, with live publication settings unchanged.
+- Fresh-server reentry completed without lock inheritance. Exact `=dakp` targeting
+  was regression-tested beside `dakp-bootstrap`. Interactive and explicitly forced
+  non-interactive `nix develop` activation both reused the healthy session.
+- Host reboot still requires one manual `nix develop`; no reboot persistence is
+  claimed.
+
+## FULLMAP 22.2.2 rebuild (2026-11-05)
+
+- Rebuilt from BABEL `2026jul22` with Tablassert 22.2.2 and default all-thread
+  parallelism: 24 classes, 25 synonym sources, 811,701,171 records in 59m30s.
+- `quick-map` passed with both 22.2.2 and DAKP's installed 22.2.0 before and after
+  installing the new primary + 16 shards at `DAKP_FULLMAP`.
+- Dagster run `77ac0ec3-fad1-432f-aa10-7f42b1fccf0e` (`dakp_build_kg_build`)
+  succeeded in 1m38s: 24,017 nodes / 164,496 edges / 0 contract problems. No HF
+  publication or release-state mutation occurred.
+- Deleted `FULLMAP.pre-22.2.2`, old/new download caches, the build venv and spill
+  files as explicitly approved. The external `RELMEDNER/outputs` target was not
+  touched. Only the new primary and shards remain (87 GiB); 319 GiB is free.
+- Build/smoke logs remain under `$DAGSTER_HOME` for audit. Final UI, cache, live
+  release settings, schedule and both sensors are healthy.

@@ -211,6 +211,57 @@ systemd and one under tmux. A managed restart is safe: Python external clients w
 for the live `server.json` endpoint and never spawn a competing server. Back up the
 store while the service is stopped.
 
+## FULLMAP rebuilds
+
+Use a fresh sibling directory and preserve the current database until both a
+`quick-map` and a narrow DAKP `kg_build` pass. The primary and all 16 shards are one
+artifact; keep them together. A from-scratch build downloads BABEL and can need more
+than 200 GiB transient space, so check the filesystem first. Tablassert uses all
+available threads by default; do not set a thread flag.
+
+Run inside a remote tmux session from the Nix devshell. This example records the
+2026-11-05 rebuild; select the current Tablassert version explicitly for later
+rebuilds.
+
+```bash
+FULLMAP_ROOT=/local_raid1/sgoetz/DBSTORE
+FULLMAP_VERSION=22.2.2
+PROD="$FULLMAP_ROOT/FULLMAP"
+NEW="$FULLMAP_ROOT/FULLMAP.v$FULLMAP_VERSION"
+OLD="$FULLMAP_ROOT/FULLMAP.pre-$FULLMAP_VERSION"
+uv venv "$NEW/venv"
+uv pip install --python "$NEW/venv/bin/python" \
+  "tablassert[cli,log,qc,aria2]==$FULLMAP_VERSION"
+"$NEW/venv/bin/tablassert" build-fullmap --force \
+  --output "$NEW/fullmap" --cache "$NEW/downloads"
+```
+
+`--force` bypasses the prebuilt archive. The download cache is resumable; the spill
+directory self-cleans on success. Validate with the builder and DAKP's installed
+Tablassert before swapping. `PYTHONIOENCODING=utf-8` avoids Rich terminal failures
+under the production host's Latin-1 locale.
+
+```bash
+export PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8
+"$NEW/venv/bin/tablassert" quick-map --fullmap "$NEW/fullmap" metformin
+/local_raid1/sgoetz/graph-monorepo/dagster/projects/dakp/.venv/bin/tablassert \
+  quick-map --fullmap "$NEW/fullmap" metformin
+# Confirm no Dagster runs are active, then rename PROD to OLD and NEW to PROD.
+# Roll back the directory rename if the second rename fails.
+```
+
+After the production-path quick-map passes, run `dakp_build_kg_build` with the
+intended `DAKP_PUBLICATION_VERSION`. This verifies DAKP without invoking the HF
+publish asset. Only after that run succeeds, remove intermediates and the old
+database:
+
+```bash
+rm -rf -- "$OLD" "$PROD/downloads" "$PROD/venv" "$PROD/fullmap.spill.d"
+```
+
+Directory removal does not follow symlinks; preserve any external targets separately
+and verify them afterward. Keep build and smoke logs under `$DAGSTER_HOME` for audit.
+
 ## Upstream cadence references
 
 - DailyMed full/periodic releases: https://dailymed.nlm.nih.gov/dailymed/spl-resources-all-drug-labels.cfm
