@@ -189,3 +189,17 @@ def test_go_worker_extras_carry_the_run_config(dag_env, stubbed_pipeline, monkey
 
     inputs = json.loads((dag_env.workdir / "pipes" / "extract_faers.inputs.json").read_text())
     assert inputs and all({"uri", "blake3", "media_type"} <= set(item) for item in inputs)
+
+
+def test_shape_stage_closes_parent_ner_backend(dag_env, stubbed_pipeline, monkeypatch):
+    class FakeNER:
+        closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    ner = FakeNER()
+    monkeypatch.setattr(assets, "_ner", lambda *args: ner)
+    result = run_job("dakp_build")
+    assert result.success
+    assert ner.closed == len(assets.SHAPE_STAGES)

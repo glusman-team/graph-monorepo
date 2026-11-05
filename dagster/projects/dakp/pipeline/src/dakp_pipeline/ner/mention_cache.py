@@ -36,6 +36,8 @@ from dakp_pipeline.ner.ner import DiseaseNER
 
 #: Environment variable overriding the server binary location (wins over all defaults).
 BINARY_ENV_VAR = "DAKP_NERCACHE_BIN"
+EXTERNAL_ENV_VAR = "DAKP_NERCACHE_EXTERNAL"
+REQUIRED_ENV_VAR = "DAKP_NERCACHE_REQUIRED"
 #: Cache directory (Pebble store + server.json), relative to the workdir.
 CACHE_DIRNAME = ("cache", "ner")
 #: Per-request HTTP timeout; the server is localhost so anything longer means trouble.
@@ -279,6 +281,35 @@ class MentionCache:
             self._base_url = existing
             stats(logger, "mention_cache", reused=True, url=existing)
             return self._base_url
+        external = os.environ.get(EXTERNAL_ENV_VAR, "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if external:
+            deadline = time.monotonic() + _START_WAIT_SECONDS
+            while time.monotonic() < deadline:
+                server_url = self._read_live_server()
+                if server_url is not None:
+                    self._base_url = server_url
+                    stats(
+                        logger,
+                        "mention_cache",
+                        reused=True,
+                        external=True,
+                        url=server_url,
+                    )
+                    return self._base_url
+                time.sleep(_START_POLL_SECONDS)
+            message = (
+                f"managed dakp-nercache is not healthy after {_START_WAIT_SECONDS}s; external mode never "
+                "spawns a competing Pebble process"
+            )
+            if os.environ.get(REQUIRED_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}:
+                raise RuntimeError(message)
+            self._warn_once("{}; caching disabled", message)
+            return None
         binary = self._find_binary()
         if binary is None:
             self._warn_once(
@@ -396,12 +427,32 @@ class MentionCache:
         self.close()
 
 
+def nercache_health(workdir: Path | str) -> dict[str, Any]:
+    """Health and entry stats for the already-running daemon; never starts one."""
+    cache = MentionCache(Path(workdir))
+    server_url = cache._read_live_server()
+    if server_url is None:
+        msg = (
+            f"no healthy dakp-nercache endpoint for {workdir}; "
+            "start the dakp-nercache systemd user service"
+        )
+        raise RuntimeError(msg)
+    with urllib.request.urlopen(
+        f"{server_url}/stats", timeout=_REQUEST_TIMEOUT_SECONDS
+    ) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return {"ok": True, "url": server_url, **payload}
+
+
 __all__ = [
     "BINARY_ENV_VAR",
     "CACHE_DIRNAME",
+    "EXTERNAL_ENV_VAR",
+    "REQUIRED_ENV_VAR",
     "MentionCache",
     "config_fingerprint",
     "mention_key",
     "ner_cache_material",
+    "nercache_health",
     "normalize_key_text",
 ]

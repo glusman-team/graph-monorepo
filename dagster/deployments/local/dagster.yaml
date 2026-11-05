@@ -1,0 +1,25 @@
+# Production instance config. Copy into the persistent $DAGSTER_HOME.
+# Dagster owns the Friday schedule; no crontab or systemd timer is used.
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 1
+run_monitoring:
+  enabled: true
+  start_timeout_seconds: 300
+  cancel_timeout_seconds: 120
+  poll_interval_seconds: 60
+  free_slots_after_run_end_seconds: 60
+run_retries:
+  enabled: false
+retention:
+  schedule:
+    purge_after_days: 90
+  sensor:
+    purge_after_days:
+      skipped: 7
+      success: 30
+      failure: 90
+telemetry:
+  enabled: false

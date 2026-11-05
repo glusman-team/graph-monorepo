@@ -57,11 +57,13 @@ from __future__ import annotations
 import bisect
 import contextlib
 import fcntl
+import gc
 import itertools
 import json
 import os
 import re
 import signal
+import sys
 import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
@@ -1855,6 +1857,49 @@ class DiseaseNER:
                 elapsed_s=round(time.monotonic() - started, 3),
             )
         return self._model
+
+    def close(self) -> None:
+        """Release the loaded model, CUDA cache, and per-device flock (idempotently).
+
+        Spawned mining workers also release everything at process exit. This explicit path
+        is for the parent-side backend used by cache probes and single-text mining: a shape
+        stage must not retain VRAM or its device lock into the next stage. The model reference
+        is dropped and CUDA's allocator is emptied BEFORE the lock is released so a waiter
+        cannot load onto a card whose previous model is still resident.
+        """
+        had_model = self._model is not None
+        self._model = None
+        self._schema = None
+        if had_model:
+            gc.collect()
+            torch = sys.modules.get("torch")
+            if torch is not None and hasattr(torch, "cuda"):
+                with contextlib.suppress(Exception):
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+        fd, self._gpu_lock_fd = self._gpu_lock_fd, None
+        if fd is not None:
+            with _GPU_LOCK_HELD_GUARD:
+                held_paths = [path for path, held_fd in _GPU_LOCK_HELD.items() if held_fd == fd]
+                for path in held_paths:
+                    _GPU_LOCK_HELD.pop(path, None)
+            with contextlib.suppress(OSError):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        stats(
+            logger,
+            "ner_model_close",
+            model_id=self._model_id,
+            had_model=had_model,
+            lock_released=fd is not None,
+        )
+
+    def __enter__(self) -> DiseaseNER:
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.close()
 
     def _config(self) -> dict[str, Any]:
         """Serializable construction kwargs (for multi-process GPU worker reconstruction).

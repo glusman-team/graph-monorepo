@@ -621,3 +621,69 @@ def test_span_cache_material_offline_is_none(tmp_path: Path) -> None:
     from dakp_pipeline.ner.ner import DiseaseNER
 
     assert span_cache_material(DiseaseNER()) is None
+
+
+def test_external_mode_reuses_daemon_and_never_spawns(monkeypatch, tmp_path):
+    cache = MentionCache(tmp_path)
+    monkeypatch.setenv("DAKP_NERCACHE_EXTERNAL", "1")
+    monkeypatch.setattr(cache, "_read_live_server", lambda: "http://127.0.0.1:43210")
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("external mode spawned dakp-nercache"),
+    )
+    assert cache._ensure() == "http://127.0.0.1:43210"
+    assert cache._base_url == "http://127.0.0.1:43210"
+
+
+def test_external_mode_waits_for_daemon_restart(monkeypatch, tmp_path):
+    cache = MentionCache(tmp_path)
+    monkeypatch.setenv("DAKP_NERCACHE_EXTERNAL", "1")
+    monkeypatch.setenv("DAKP_NERCACHE_REQUIRED", "1")
+    responses = iter([None, None, "http://127.0.0.1:43211"])
+    monkeypatch.setattr(cache, "_read_live_server", lambda: next(responses))
+    monkeypatch.setattr(mention_cache.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("external mode spawned dakp-nercache"),
+    )
+    assert cache._ensure() == "http://127.0.0.1:43211"
+
+
+def test_external_required_mode_fails_instead_of_spawning(monkeypatch, tmp_path):
+    cache = MentionCache(tmp_path)
+    monkeypatch.setenv("DAKP_NERCACHE_EXTERNAL", "1")
+    monkeypatch.setenv("DAKP_NERCACHE_REQUIRED", "1")
+    monkeypatch.setattr(mention_cache, "_START_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr(cache, "_read_live_server", lambda: None)
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("external mode spawned dakp-nercache"),
+    )
+    with pytest.raises(RuntimeError, match="never spawns"):
+        cache._ensure()
+
+
+def test_nercache_health_returns_daemon_stats(monkeypatch, tmp_path):
+    payload = json.dumps({"entries": 42}).encode()
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return payload
+
+    monkeypatch.setattr(MentionCache, "_read_live_server", lambda self: "http://127.0.0.1:43212")
+    monkeypatch.setattr(mention_cache.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    health = mention_cache.nercache_health(tmp_path)
+    assert health == {
+        "ok": True,
+        "url": "http://127.0.0.1:43212",
+        "entries": 42,
+    }

@@ -70,3 +70,11 @@ before mutating the public dataset when the request did not already authorize th
   `tests/fixtures/tables/*.yaml` goldens.
 - Changing table-config content changes the Tablassert config fingerprint: the tablassert and
   kg stages re-run warm-cached; shapes and extracts do not. Budget the run accordingly.
+
+## Automated releases
+
+For the Friday Dagster schedule, GPU gate, generated card, HF publication and
+managed NER cache, see `docs/dakp/release-automation.md`. Keep manual warm builds
+available with `DAKP_SOURCE_REFRESH=cached`; do not use cached-only mode for the
+scheduled release check. Production settings live in the mode-600
+`~/.config/dagster/dagster.env`, not in checked-in scripts.

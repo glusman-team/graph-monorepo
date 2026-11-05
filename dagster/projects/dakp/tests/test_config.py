@@ -46,3 +46,15 @@ def test_no_fullmap_keeps_the_handoff_deferred(monkeypatch: pytest.MonkeyPatch, 
     assert "publication_version" not in params
     # Release/QC stay on without a fullmap (kg_build would defer anyway).
     assert params["release"] is True and params["qc"] is True
+
+
+def test_release_run_tag_overrides_env_publication_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from dakp_dag.config import PUBLICATION_VERSION_TAG, run_config_for
+
+    monkeypatch.setenv("DAKP_PUBLICATION_VERSION", "1.0.0")
+    context = SimpleNamespace(run=SimpleNamespace(tags={PUBLICATION_VERSION_TAG: "1.27.1"}))
+    assert run_config_for(context).publication_version == "1.27.1"
+    context.run.tags = {}
+    assert run_config_for(context).publication_version == "1.0.0"

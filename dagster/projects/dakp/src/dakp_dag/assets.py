@@ -38,7 +38,7 @@ from mo_dagster import pipes as mo_pipes
 from mo_kg import kgx
 
 from dakp_dag import refsio
-from dakp_dag.config import RunConfig, run_config, task_context
+from dakp_dag.config import RunConfig, run_config_for, task_context
 
 # --- source table (the extension seam for new sources) -------------------------------
 
@@ -308,7 +308,7 @@ def _make_acquire_asset(source: Source) -> dg.AssetsDefinition:
 
     @dg.asset(name=stage, description=f"Acquire {source.key}: {source.doc}")
     def _acquire_asset(context: AssetExecutionContext) -> dg.MaterializeResult:
-        return _run_acquisition(context, run_config(), stage, source.acquire)
+        return _run_acquisition(context, run_config_for(context), stage, source.acquire)
 
     return _acquire_asset
 
@@ -324,7 +324,7 @@ def _make_extract_asset(source: Source, acquire_asset: dg.AssetsDefinition) -> d
         description=f"Extract {source.key} via the {kind} worker: {source.doc}",
     )
     def _extract_asset(context: AssetExecutionContext) -> dg.MaterializeResult:
-        config = run_config()
+        config = run_config_for(context)
         inputs = refsio.load_refs(config, acquire_name)
         if kind == "go":
             return _run_go_extract(context, config, stage, target, inputs)
@@ -349,7 +349,9 @@ EXTRACT_ASSETS: dict[str, dg.AssetsDefinition] = {
     ),
 )
 def acquire_ner_models(context: AssetExecutionContext) -> dg.MaterializeResult:
-    return _run_acquisition(context, run_config(), ACQUIRE_NER_MODELS, ACQUIRE_NER_MODELS)
+    return _run_acquisition(
+        context, run_config_for(context), ACQUIRE_NER_MODELS, ACQUIRE_NER_MODELS
+    )
 
 
 # --- shaping assets (edge-family registry driven) ------------------------------------
@@ -372,7 +374,7 @@ def _run_shape(
     from dakp_pipeline import families
     from dakp_pipeline.assertions.evidence import cached_shape_outputs
 
-    config = run_config()
+    config = run_config_for(context)
     family = families.get_family(family_name)
     in_refs = _load(config, input_stages)
     ctx = task_context(config)
@@ -382,25 +384,29 @@ def _run_shape(
     ner = _ner(family.ner_profile, config, ctx)
     run_ctx = _with_ner(ctx, ner) if ner is not None else ctx
 
-    cached = cached_shape_outputs(operation, in_refs, run_ctx)
-    if cached is not None:
-        refsio.publish_refs(config, stage, cached)
-        context.log.info(f"{stage}: op-index hit, reused {len(cached)} cached refs")
-        return dg.MaterializeResult(
-            metadata={**refsio.refs_metadata(cached), "stage": stage, "cache_hit": True}
-        )
+    try:
+        cached = cached_shape_outputs(operation, in_refs, run_ctx)
+        if cached is not None:
+            refsio.publish_refs(config, stage, cached)
+            context.log.info(f"{stage}: op-index hit, reused {len(cached)} cached refs")
+            return dg.MaterializeResult(
+                metadata={**refsio.refs_metadata(cached), "stage": stage, "cache_hit": True}
+            )
 
-    with _stage_logs(context):
-        out_refs = family.shaper().transform(in_refs, run_ctx)
-    result = _publish(config, context, stage, out_refs)
-    return dg.MaterializeResult(
-        metadata={
-            **result.metadata,
-            "cache_hit": False,
-            "family": family.name,
-            "table": family.table,
-        }
-    )
+        with _stage_logs(context):
+            out_refs = family.shaper().transform(in_refs, run_ctx)
+        result = _publish(config, context, stage, out_refs)
+        return dg.MaterializeResult(
+            metadata={
+                **result.metadata,
+                "cache_hit": False,
+                "family": family.name,
+                "table": family.table,
+            }
+        )
+    finally:
+        if ner is not None and hasattr(ner, "close"):
+            ner.close()
 
 
 @dg.asset(
@@ -535,7 +541,7 @@ SHAPE_STAGES: tuple[str, ...] = (
 def tablassert_configs(context: AssetExecutionContext) -> dg.MaterializeResult:
     from dakp_pipeline import tablassert
 
-    config = run_config()
+    config = run_config_for(context)
     assertion_refs = _load(config, SHAPE_STAGES)
     ctx = task_context(config)
     with _stage_logs(context):
@@ -567,7 +573,7 @@ def kg_build(context: AssetExecutionContext) -> dg.MaterializeResult:
     from dakp_pipeline import tablassert
     from dakp_pipeline.paths import Workdir
 
-    config = run_config()
+    config = run_config_for(context)
     assertion_refs = _load(config, list(SHAPE_STAGES))
     config_refs = refsio.load_refs(config, TABLASSERT_CONFIGS)
     ctx = task_context(config)
@@ -641,7 +647,7 @@ def kg_build(context: AssetExecutionContext) -> dg.MaterializeResult:
     deps=[kg_build],
 )
 def kg_qc(context: AssetExecutionContext) -> dg.MaterializeResult:
-    config = run_config()
+    config = run_config_for(context)
     # Distinguish "kg_build never ran" (loud) from "kg_build deferred" (reported): the
     # handoff refs exist in both real and deferred builds, the KGX pair only in a real one.
     refsio.load_refs(config, KG_BUILD, producer=KG_BUILD)

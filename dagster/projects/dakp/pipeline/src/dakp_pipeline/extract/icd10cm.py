@@ -174,6 +174,7 @@ class ICD10CMExtractor:
             msg = "no ICD-10-CM Table of Drugs and Chemicals release ZIP among the inputs"
             raise ValueError(msg)
 
+        selection = icd10cm_source.selected_release(ctx.workdir)
         rows = parse_release_zip(zip_ref.uri)
         tiers = {row.tier for row in rows}
         if not tiers:
@@ -206,6 +207,8 @@ class ICD10CMExtractor:
             log,
             _EVENT,
             entries=frame.height,
+            release=selection.release,
+            source_url=selection.url,
             therapeutic=sum(1 for row in rows if row.tier == TIER_THERAPEUTIC),
             screened=sum(1 for row in rows if row.tier in NON_THERAPEUTIC_TIERS),
             other=sum(1 for row in rows if row.tier == TIER_OTHER),

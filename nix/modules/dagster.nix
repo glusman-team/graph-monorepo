@@ -6,6 +6,17 @@
 { pkgs, ... }:
 let
   dagsterDir = "dagster";
+  nercachePackage = pkgs.buildGoModule {
+    pname = "dakp-nercache";
+    version = "0.1.0";
+    src = pkgs.lib.cleanSourceWith {
+      src = ../../dagster/projects/dakp/workers/go;
+      name = "dakp-worker-source";
+    };
+    subPackages = [ "cmd/dakp-nercache" ];
+    vendorHash = "sha256-52v8Z+I+65jRps5ooMJsFoEWZY3Y391ULnw+OE/cRQM=";
+    doCheck = false; # nercache tests are run by the Go/Nx test target
+  };
   withDagsterHome = ''
     export DAGSTER_HOME="$PWD/${dagsterDir}/.dagster-home"
     mkdir -p "$DAGSTER_HOME"
@@ -26,6 +37,62 @@ in
       ''
     );
   };
+
+  # Production cache daemon. Use the same Go module as the extraction worker.
+  packages.dakp-nercache = nercachePackage;
+
+  packages.dagster-units =
+    let
+      launcher = pkgs.writeShellScript "dakp-dagster-service" ''
+        set -euo pipefail
+        : "''${DAKP_REPO_ROOT:?set DAKP_REPO_ROOT in dagster.env}"
+        : "''${DAGSTER_HOME:?set a persistent DAGSTER_HOME in dagster.env}"
+        export PATH="${pkgs.uv}/bin:${pkgs.git}/bin:$HOME/.nix-profile/bin:/usr/bin:/bin:$PATH"
+        mkdir -p "$DAGSTER_HOME"
+        cd "$DAKP_REPO_ROOT/dagster/deployments/local"
+        case "$1" in
+          daemon) exec ${pkgs.uv}/bin/uv run --no-sync dagster-daemon run -w ../../workspace.yaml ;;
+          webserver) exec ${pkgs.uv}/bin/uv run --no-sync dagster-webserver -w ../../workspace.yaml -h 127.0.0.1 -p "''${DAKP_DAGSTER_PORT:-3000}" ;;
+          *) echo "unknown dagster service: $1" >&2; exit 2 ;;
+        esac
+      '';
+      cacheLauncher = pkgs.writeShellScript "dakp-nercache-service" ''
+        set -euo pipefail
+        : "''${DAKP_WORKDIR:?set DAKP_WORKDIR in dagster.env}"
+        exec ${pkgs.lib.getExe' nercachePackage "dakp-nercache"} --workdir "$DAKP_WORKDIR"
+      '';
+      unit = name: command: after: ''
+        [Unit]
+        Description=${name}
+        ${after}
+        [Service]
+        Type=simple
+        EnvironmentFile=%h/.config/dagster/dagster.env
+        ExecStart=${command}
+        Restart=always
+        RestartSec=10
+        TimeoutStopSec=120
+        KillMode=control-group
+        [Install]
+        WantedBy=default.target
+      '';
+    in
+    pkgs.symlinkJoin {
+      name = "dagster-units";
+      paths = [
+        (pkgs.writeTextDir "share/systemd/user/dakp-nercache.service" (
+          unit "DAKP managed NER cache (Pebble)" cacheLauncher ""
+        ))
+        (pkgs.writeTextDir "share/systemd/user/dagster-daemon.service" (
+          unit "DAKP Dagster daemon" "${launcher} daemon"
+            "Wants=dakp-nercache.service\nAfter=dakp-nercache.service"
+        ))
+        (pkgs.writeTextDir "share/systemd/user/dagster-webserver.service" (
+          unit "DAKP Dagster webserver" "${launcher} webserver"
+            "Wants=dakp-nercache.service\nAfter=dakp-nercache.service"
+        ))
+      ];
+    };
 
   # deployable runtime: daemon + webserver under process-compose, same ports.
   # Both run from the dg command env (the only uv project env with dagster
