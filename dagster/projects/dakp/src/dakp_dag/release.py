@@ -200,6 +200,20 @@ def _hf_api(settings):
     return HfApi(token=settings.hf_token)
 
 
+def _previous_card(api, repo_id: str) -> str:
+    try:
+        path = api.hf_hub_download(
+            repo_id=repo_id, filename="README.md", repo_type="dataset", revision="main"
+        )
+    except Exception as exc:
+        from huggingface_hub.errors import EntryNotFoundError
+
+        if isinstance(exc, EntryNotFoundError):
+            raise FileNotFoundError("HF README.md is absent") from exc
+        raise
+    return Path(path).read_text(encoding="utf-8")
+
+
 @dg.asset(
     group_name="dakp_release",
     deps=[release_verify],
@@ -222,17 +236,9 @@ def dataset_card(context: AssetExecutionContext) -> None:
         (config.kg_dir / "release_verification.json").read_text(encoding="utf-8")
     )
     verification = ReleaseVerification(**verification_payload)
-    from huggingface_hub.errors import EntryNotFoundError
-
     try:
-        previous_card_path = _hf_api(settings).hf_hub_download(
-            repo_id=settings.hf_repo_id,
-            filename="README.md",
-            repo_type="dataset",
-            revision="main",
-        )
-        previous_card = Path(previous_card_path).read_text(encoding="utf-8")
-    except EntryNotFoundError:
+        previous_card = _previous_card(_hf_api(settings), settings.hf_repo_id)
+    except FileNotFoundError:
         context.log.warning("No README.md on HF main; generating the card without prior rows.")
         previous_card = ""
     staging_root = config.published_root / "dakp" / "release" / "staging"
