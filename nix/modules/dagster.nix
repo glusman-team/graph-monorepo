@@ -21,6 +21,24 @@ let
     export DAGSTER_HOME="$PWD/${dagsterDir}/.dagster-home"
     mkdir -p "$DAGSTER_HOME"
   '';
+  dagsterLauncher = pkgs.writeShellScript "dakp-dagster-service" ''
+    set -euo pipefail
+    : "''${DAKP_REPO_ROOT:?set DAKP_REPO_ROOT in dagster.env}"
+    : "''${DAGSTER_HOME:?set a persistent DAGSTER_HOME in dagster.env}"
+    export PATH="${pkgs.uv}/bin:${pkgs.git}/bin:$HOME/.nix-profile/bin:/usr/bin:/bin:$PATH"
+    mkdir -p "$DAGSTER_HOME"
+    cd "$DAKP_REPO_ROOT/dagster/deployments/local"
+    case "$1" in
+      daemon) exec ${pkgs.uv}/bin/uv run --no-sync dagster-daemon run -w ../../workspace.yaml ;;
+      webserver) exec ${pkgs.uv}/bin/uv run --no-sync dagster-webserver -w ../../workspace.yaml -h 127.0.0.1 -p "''${DAKP_DAGSTER_PORT:-3000}" ;;
+      *) echo "unknown dagster service: $1" >&2; exit 2 ;;
+    esac
+  '';
+  nercacheLauncher = pkgs.writeShellScript "dakp-nercache-service" ''
+    set -euo pipefail
+    : "''${DAKP_WORKDIR:?set DAKP_WORKDIR in dagster.env}"
+    exec ${pkgs.lib.getExe' nercachePackage "dakp-nercache"} --workdir "$DAKP_WORKDIR"
+  '';
 in
 {
   # dev loop: dg dev loads every projects/* as a separate code location.
@@ -41,26 +59,229 @@ in
   # Production cache daemon. Use the same Go module as the extraction worker.
   packages.dakp-nercache = nercachePackage;
 
-  packages.dagster-units =
+  packages.dagster-tmux =
     let
-      launcher = pkgs.writeShellScript "dakp-dagster-service" ''
+      pc = "${pkgs.process-compose}/bin/process-compose";
+      composeConfig = pkgs.writeText "dakp-process-compose.yaml" ''
+        version: "0.5"
+        log_level: info
+        log_length: 10000
+        log_location: "''${DAGSTER_HOME}/tmux/services.log"
+        log_configuration:
+          rotation:
+            max_size_mb: 10
+            max_age_days: 30
+            max_backups: 2
+            compress: true
+          disable_json: true
+        processes:
+          nercache:
+            command: "${nercacheLauncher}"
+            availability: &service
+              restart: always
+              backoff_seconds: 10
+            shutdown: &shutdown
+              signal: 15
+              timeout_seconds: 120
+          daemon:
+            command: "${dagsterLauncher} daemon"
+            availability: *service
+            shutdown: *shutdown
+            depends_on:
+              nercache:
+                condition: process_started
+          webserver:
+            command: "${dagsterLauncher} webserver"
+            availability: *service
+            shutdown: *shutdown
+            depends_on:
+              nercache:
+                condition: process_started
+      '';
+      composeLauncher = pkgs.writeShellScript "dakp-tmux-processes" ''
         set -euo pipefail
-        : "''${DAKP_REPO_ROOT:?set DAKP_REPO_ROOT in dagster.env}"
-        : "''${DAGSTER_HOME:?set a persistent DAGSTER_HOME in dagster.env}"
-        export PATH="${pkgs.uv}/bin:${pkgs.git}/bin:$HOME/.nix-profile/bin:/usr/bin:/bin:$PATH"
-        mkdir -p "$DAGSTER_HOME"
-        cd "$DAKP_REPO_ROOT/dagster/deployments/local"
-        case "$1" in
-          daemon) exec ${pkgs.uv}/bin/uv run --no-sync dagster-daemon run -w ../../workspace.yaml ;;
-          webserver) exec ${pkgs.uv}/bin/uv run --no-sync dagster-webserver -w ../../workspace.yaml -h 127.0.0.1 -p "''${DAKP_DAGSTER_PORT:-3000}" ;;
-          *) echo "unknown dagster service: $1" >&2; exit 2 ;;
+        env_file="''${DAKP_SERVICE_ENV:-$HOME/.config/dagster/dagster.env}"
+        if [[ ! -r "$env_file" ]]; then
+          echo "missing Dagster environment: $env_file" >&2
+          exit 1
+        fi
+        set -a
+        . "$env_file"
+        set +a
+        for path in "$DAKP_REPO_ROOT" "$DAGSTER_HOME" "$DAKP_WORKDIR"; do
+          [[ "$path" == /* ]] || {
+            echo "production paths must be absolute: $path" >&2
+            exit 1
+          }
+        done
+        mkdir -p "$DAGSTER_HOME/tmux"
+        chmod 700 "$DAGSTER_HOME/tmux"
+        export PC_SOCKET_PATH="$DAGSTER_HOME/tmux/process-compose.sock"
+        export PC_LOG_FILE="$DAGSTER_HOME/tmux/process-compose.log"
+        cd "$DAKP_REPO_ROOT"
+        exec ${pc} --config ${composeConfig} --disable-dotenv --use-uds up
+      '';
+    in
+    pkgs.writeShellApplication {
+      name = "dakp-services";
+      runtimeInputs = [
+        pkgs.coreutils
+        pkgs.tmux
+        pkgs.util-linux
+      ];
+      text = ''
+        session="dakp"
+        env_file="''${DAKP_SERVICE_ENV:-$HOME/.config/dagster/dagster.env}"
+        pc="${pc}"
+
+        load_config() {
+          if [[ ! -r "$env_file" ]]; then
+            echo "missing Dagster environment: $env_file" >&2
+            return 1
+          fi
+          set -a
+          # shellcheck disable=SC1090
+          . "$env_file"
+          set +a
+          : "''${DAKP_REPO_ROOT:?set DAKP_REPO_ROOT in dagster.env}"
+          : "''${DAGSTER_HOME:?set DAGSTER_HOME in dagster.env}"
+          : "''${DAKP_WORKDIR:?set DAKP_WORKDIR in dagster.env}"
+          for path in "$DAKP_REPO_ROOT" "$DAGSTER_HOME" "$DAKP_WORKDIR"; do
+            [[ "$path" == /* ]] || {
+              echo "production paths must be absolute: $path" >&2
+              return 1
+            }
+          done
+          mkdir -p "$DAGSTER_HOME/tmux"
+          chmod 700 "$DAGSTER_HOME/tmux"
+          export PC_SOCKET_PATH="$DAGSTER_HOME/tmux/process-compose.sock"
+          export PC_LOG_FILE="$DAGSTER_HOME/tmux/process-compose.log"
+          cd "$DAKP_REPO_ROOT"
+        }
+
+        running() {
+          tmux has-session -t "$session" 2>/dev/null
+        }
+
+        acquire_lock() {
+          mkdir -p "''${XDG_STATE_HOME:-$HOME/.local/state}"
+          exec {lock_fd}>"''${XDG_STATE_HOME:-$HOME/.local/state}/dakp-tmux.lock"
+          if ! flock -w 15 "$lock_fd"; then
+            echo "another dakp-services operation is still in progress" >&2
+            return 1
+          fi
+        }
+
+        pc_command() {
+          load_config
+          "$pc" --use-uds "$@"
+        }
+
+        status() {
+          if ! running; then
+            echo "DAKP tmux session $session is not running" >&2
+            return 1
+          fi
+          pc_command list --output wide
+        }
+
+        check_no_systemd() {
+          if command -v systemctl >/dev/null 2>&1; then
+            for unit in dakp-nercache dagster-daemon dagster-webserver; do
+              if systemctl --user is-active --quiet "$unit" 2>/dev/null || \
+                systemctl --user is-enabled --quiet "$unit" 2>/dev/null; then
+                echo "$unit is active or enabled; stop and disable the systemd units before using tmux" >&2
+                return 1
+              fi
+            done
+          fi
+        }
+
+        wait_ready() {
+          local dead
+          for _ in {1..30}; do
+            dead="$(tmux display-message -p -t "$session:services" '#{pane_dead}')"
+            if [[ "$dead" == 1 ]]; then
+              tmux capture-pane -p -t "$session:services" -S -50 >&2
+              return 1
+            fi
+            if [[ -S "$PC_SOCKET_PATH" ]] && \
+              timeout 2 "$pc" --use-uds list --output json >/dev/null 2>&1; then
+              return 0
+            fi
+            sleep 1
+          done
+          echo "process-compose did not become ready within 30 seconds" >&2
+          tmux capture-pane -p -t "$session:services" -S -50 >&2 || true
+          return 1
+        }
+
+        up() {
+          acquire_lock
+          load_config
+          check_no_systemd
+          if running; then
+            tmux set-environment -t "$session" DAKP_SERVICE_ENV "$env_file"
+            if [[ "$(tmux display-message -p -t "$session:services" '#{pane_dead}')" == 1 ]]; then
+              tmux respawn-pane -k -t "$session:services" "${composeLauncher}"
+            fi
+            wait_ready
+            echo "DAKP tmux session $session is already running"
+            return 0
+          fi
+          # Create an idle pane first so remain-on-exit is set before the
+          # orchestrator can fail (for example, because of a bad env file).
+          tmux new-session -d -s "$session" -n services
+          tmux set-option -t "$session" remain-on-exit on
+          tmux set-environment -t "$session" DAKP_SERVICE_ENV "$env_file"
+          tmux respawn-pane -k -t "$session:services" "${composeLauncher}"
+          wait_ready
+          echo "started DAKP services in tmux session $session"
+        }
+
+        down() {
+          acquire_lock
+          if running; then
+            if ! load_config || ! timeout 130 "$pc" --use-uds down; then
+              # Fall back to the pane's process group if the control socket is bad.
+              local pid
+              pid="$(tmux display-message -p -t "$session:services" '#{pane_pid}')"
+              kill -TERM -- "-$pid" 2>/dev/null || true
+              for _ in {1..120}; do
+                kill -0 -- "-$pid" 2>/dev/null || break
+                sleep 1
+              done
+              kill -KILL -- "-$pid" 2>/dev/null || true
+            fi
+            tmux kill-session -t "$session"
+            echo "stopped DAKP tmux session $session"
+          fi
+        }
+
+        case "''${1:-status}" in
+          up) up ;;
+          down) down ;;
+          restart) "$0" down; sleep 2; exec "$0" up ;;
+          status) status ;;
+          attach) exec tmux attach-session -t "$session" ;;
+          logs)
+            if [[ -n "''${2:-}" ]]; then
+              case "$2" in
+                nercache|daemon|webserver) ;;
+                *) echo "unknown service: $2" >&2; exit 2 ;;
+              esac
+              pc_command process logs --follow "$2"
+            else
+              pc_command process logs --follow
+            fi
+            ;;
+          *) echo "usage: dakp-services {up|down|restart|status|attach|logs [name]}" >&2; exit 2 ;;
         esac
       '';
-      cacheLauncher = pkgs.writeShellScript "dakp-nercache-service" ''
-        set -euo pipefail
-        : "''${DAKP_WORKDIR:?set DAKP_WORKDIR in dagster.env}"
-        exec ${pkgs.lib.getExe' nercachePackage "dakp-nercache"} --workdir "$DAKP_WORKDIR"
-      '';
+    };
+
+  packages.dagster-units =
+    let
       unit = name: command: after: ''
         [Unit]
         Description=${name}
@@ -81,14 +302,14 @@ in
       name = "dagster-units";
       paths = [
         (pkgs.writeTextDir "share/systemd/user/dakp-nercache.service" (
-          unit "DAKP managed NER cache (Pebble)" cacheLauncher ""
+          unit "DAKP managed NER cache (Pebble)" nercacheLauncher ""
         ))
         (pkgs.writeTextDir "share/systemd/user/dagster-daemon.service" (
-          unit "DAKP Dagster daemon" "${launcher} daemon"
+          unit "DAKP Dagster daemon" "${dagsterLauncher} daemon"
             "Wants=dakp-nercache.service\nAfter=dakp-nercache.service"
         ))
         (pkgs.writeTextDir "share/systemd/user/dagster-webserver.service" (
-          unit "DAKP Dagster webserver" "${launcher} webserver"
+          unit "DAKP Dagster webserver" "${dagsterLauncher} webserver"
             "Wants=dakp-nercache.service\nAfter=dakp-nercache.service"
         ))
       ];

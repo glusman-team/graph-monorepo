@@ -1,6 +1,11 @@
 # The one devshell: every tool for every language in this repo.
 # Enter with `nix develop` (or cd in with direnv via .envrc).
-{ pkgs, inputs', ... }:
+{
+  pkgs,
+  inputs',
+  config,
+  ...
+}:
 {
   devShells.default = pkgs.mkShell {
     packages = [
@@ -27,6 +32,9 @@
       pkgs.actionlint
       pkgs.quicktype
 
+      # Production tmux supervisor; activates only when dagster.env exists.
+      config.packages.dagster-tmux
+
       # pi coding agent (project skills in .pi/ merge with global after trust)
       # inputs' is system-implicit under flake-parts: packages.<name>, no system segment
       inputs'.agent-of-empires.packages.aoe-with-web
@@ -45,6 +53,14 @@
 
       # two-stage prek hooks (fast pre-commit, heavy pre-push)
       prek install >/dev/null 2>&1 || echo "prek install skipped (run 'make hooks')"
+
+      # No sudo/linger needed: a configured production host starts detached
+      # services on shell entry. Other checkouts are unaffected.
+      auto_start="''${DAKP_TMUX_AUTOSTART:-auto}"
+      if [[ ( "$auto_start" == 1 || ( "$auto_start" == auto && $- == *i* ) ) && \
+            -f "''${DAKP_SERVICE_ENV:-$HOME/.config/dagster/dagster.env}" ]]; then
+        dakp-services up
+      fi
 
       echo "graph-monorepo devshell ready: make help"
     '';
