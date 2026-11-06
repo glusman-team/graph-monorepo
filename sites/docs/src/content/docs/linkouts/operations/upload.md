@@ -120,4 +120,4 @@ Cosmos writes use ETag preconditions and measured RU charges. Throttling is retr
 
 `status_report` checks document counts, graphs, releases, pool membership, pool consistency, and the container indexing policy. `probe_release` performs seeded random point reads and reports latency and RU cost. Optional `max_mean_ru` and `max_worst_ru` make an unexpected cost regression fail the run.
 
-A later sensor may request `linkouts_upload`, but this port installs no schedule or sensor. Do not automate provisioning or destructive jobs.
+Manual upload has no schedule or sensor. DAKP release ingestion uses the separate `linkouts_load_release` job and never requests `linkouts_upload`. Do not automate provisioning or destructive jobs.

@@ -286,6 +286,15 @@ def test_verify_and_card_assets_stage_real_outputs(
     assert "New data for 1 source" in card
 
 
+def _hf_publish_metadata(result) -> dict:
+    event = next(
+        event
+        for event in result.get_asset_materialization_events()
+        if event.event_specific_data.materialization.asset_key.to_user_string() == "hf_publish"
+    )
+    return event.event_specific_data.materialization.metadata
+
+
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_hf_publish_asset_updates_state_only_after_live_verified_upload(
     dag_env, monkeypatch: pytest.MonkeyPatch, dry_run: bool
@@ -315,6 +324,15 @@ def test_hf_publish_asset_updates_state_only_after_live_verified_upload(
     )
     result = dg.materialize([release.hf_publish])
     assert result.success
+    metadata = _hf_publish_metadata(result)
+    version_dir = dag_env.published / "dakp" / "release" / "staging" / "1.27.1"
+    assert metadata["linkouts_key"].value == "infores:drugapprovals-kp-1.27.1"
+    assert metadata["linkouts_nodes_path"].value == str(
+        version_dir / "DRUG_APPROVALS_KP_1.27.1.nodes.ndjson"
+    )
+    assert metadata["linkouts_edges_path"].value == str(
+        version_dir / "DRUG_APPROVALS_KP_1.27.1.edges.ndjson"
+    )
     state = load_state(state_path(dag_env.published))
     if dry_run:
         assert state is None

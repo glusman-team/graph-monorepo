@@ -5,7 +5,7 @@ from pathlib import Path
 
 import dagster as dg
 from linkouts_pipeline.refs import load_refs, refs_path
-from linkouts_pipeline.staging import PublicationReport, StageManifest
+from linkouts_pipeline.staging import LoadReport, PublicationReport, StageManifest
 
 from linkouts_dag.config import PROJECT_ROOT
 from linkouts_dag.definitions import build_definitions
@@ -59,6 +59,29 @@ def upload_config(nodes: Path, edges: Path, target: Path) -> dict:
     }
 
 
+def load_config(
+    nodes: Path, edges: Path, target: Path, key: str = "infores:drugapprovals-kp-1.23.3"
+) -> dict:
+    return {
+        "ops": {
+            "load_release": {
+                "config": {
+                    "key": key,
+                    "nodes_path": str(nodes),
+                    "edges_path": str(edges),
+                    "target_store": f"file:{target}",
+                    "sample_size": 4,
+                    "sample_seed": 42,
+                    "sampled_at": "2026-01-01T00:00:00Z",
+                    "concurrency": 2,
+                    "engine": "fake",
+                    "progress": False,
+                }
+            }
+        }
+    }
+
+
 def test_real_worker_upload_is_idempotent_and_publishes_only_upload_outputs(
     dag_env, monkeypatch, real_worker, kgx_inputs
 ) -> None:
@@ -88,6 +111,38 @@ def test_real_worker_upload_is_idempotent_and_publishes_only_upload_outputs(
     assert target.read_bytes() == before
     assert materialization(again, "stage_release")["cache_hit"] is True
     assert materialization(again, "push_staged_release")["cache_hit"] is True
+
+
+def test_narrow_direct_load_preserves_history_and_publishes_report(
+    dag_env, monkeypatch, real_worker, kgx_inputs
+) -> None:
+    monkeypatch.setenv("LINKOUTS_WORKER_BIN", str(real_worker))
+    nodes, edges = kgx_inputs
+    target = dag_env.tmp / "live-store.ndjson"
+    first = run_job("linkouts_load_release", load_config(nodes, edges, target))
+    assert first.success, failure_text(first)
+    assert executed_stages(first) == ["load_release"]
+    first_ref = load_refs(dag_env.published, "load_release")[0]
+    first_report = LoadReport.model_validate_json(
+        Path(first_ref.uri).read_text()
+    ).validate_complete()
+    assert first_report.store == f"file:{target}"
+    assert first_report.created > 0
+    assert first_report.sampled == 4
+    assert target.is_file()
+    assert materialization(first, "load_release")["target_store"] == f"file:{target}"
+
+    second = run_job(
+        "linkouts_load_release",
+        load_config(nodes, edges, target, key="infores:drugapprovals-kp-1.23.4"),
+    )
+    assert second.success, failure_text(second)
+    second_ref = load_refs(dag_env.published, "load_release")[0]
+    second_report = LoadReport.model_validate_json(
+        Path(second_ref.uri).read_text()
+    ).validate_complete()
+    assert second_report.merged > 0
+    assert second_report.versions > first_report.versions
 
 
 def test_narrow_push_reads_published_stage_and_does_not_rewrite_it(

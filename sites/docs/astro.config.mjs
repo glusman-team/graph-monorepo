@@ -42,6 +42,7 @@ export default defineConfig({
           items: [
             { label: "Dataset and sources", slug: "dakp" },
             { label: "Run the pipeline", slug: "dakp/run" },
+            { label: "Automated releases", slug: "dakp/release-automation" },
           ],
         },
         {

@@ -21,6 +21,23 @@ class StageRunConfig(dg.Config):
     progress: bool = True
 
 
+class LoadRunConfig(dg.Config):
+    key: str
+    nodes_path: str
+    edges_path: str
+    dictionary_path: str | None = None
+    base_key: str | None = None
+    target_store: str = "cosmos"
+    zstd_level: int = 0
+    sample_size: int = 1024
+    sample_seed: int = 0
+    sampled_at: str | None = None
+    concurrency: int = 8
+    threads: int = 0
+    engine: str = "chdb"
+    progress: bool = True
+
+
 class PushRunConfig(dg.Config):
     expected_key: str | None = None
     target_store: str = "cosmos"
@@ -33,4 +50,4 @@ class ValidationRunConfig(StageRunConfig):
     sample_full_release: bool = False
 
 
-__all__ = ["PushRunConfig", "StageRunConfig", "ValidationRunConfig"]
+__all__ = ["LoadRunConfig", "PushRunConfig", "StageRunConfig", "ValidationRunConfig"]

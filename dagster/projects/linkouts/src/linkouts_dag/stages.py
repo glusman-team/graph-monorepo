@@ -1,6 +1,7 @@
 """Canonical asset/job stage names."""
 
 STAGE_RELEASE = "stage_release"
+LOAD_RELEASE = "load_release"
 PUSH_STAGED_RELEASE = "push_staged_release"
 STATUS_REPORT = "status_report"
 PROBE_RELEASE = "probe_release"

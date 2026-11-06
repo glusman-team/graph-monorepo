@@ -19,6 +19,7 @@ const (
 	WorkerVersion       = "0.1.0"
 	StageSchema         = "linkouts.stage/1"
 	PublicationSchema   = "linkouts.publication/1"
+	LoadSchema          = "linkouts.load/1"
 	ReportSchema        = "linkouts.report/1"
 	StageMediaType      = "application/vnd.linkouts.stage-manifest+json"
 	ReportMediaType     = "application/vnd.linkouts.report+json"
@@ -58,6 +59,26 @@ type StageConfig struct {
 	Threads           int        `json:"threads"`
 	Engine            string     `json:"engine"`
 	Progress          bool       `json:"progress"`
+}
+
+type LoadConfig struct {
+	Operation      string     `json:"operation"`
+	Key            string     `json:"key"`
+	NodesPath      string     `json:"nodes_path"`
+	EdgesPath      string     `json:"edges_path"`
+	Store          string     `json:"store"`
+	ReportPath     string     `json:"report_path"`
+	BaseKey        string     `json:"base_key"`
+	DictionaryPath string     `json:"dictionary_path"`
+	ZstdLevel      int        `json:"zstd_level"`
+	NoRepack       bool       `json:"no_repack"`
+	SampleSize     int        `json:"sample_size"`
+	SampleSeed     int64      `json:"sample_seed"`
+	SampledAt      *time.Time `json:"sampled_at"`
+	Concurrency    int        `json:"concurrency"`
+	Threads        int        `json:"threads"`
+	Engine         string     `json:"engine"`
+	Progress       bool       `json:"progress"`
 }
 
 type PushConfig struct {
@@ -215,6 +236,55 @@ type PublicationReport struct {
 	Replaced      int       `json:"replaced"`
 	Failed        int       `json:"failed"`
 	BlobBytes     int64     `json:"blob_bytes"`
+}
+
+type LoadReport struct {
+	SchemaVersion string    `json:"schema_version"`
+	Key           string    `json:"key"`
+	Store         string    `json:"store"`
+	CompletedAt   time.Time `json:"completed_at"`
+	Edges         int64     `json:"edges"`
+	Created       int64     `json:"created"`
+	Merged        int64     `json:"merged"`
+	Skipped       int64     `json:"skipped"`
+	Failed        int64     `json:"failed"`
+	Filtered      int64     `json:"filtered"`
+	Versions      int64     `json:"versions"`
+	Sampled       int64     `json:"sampled"`
+	Offered       int64     `json:"offered"`
+	Throttled     int64     `json:"throttled"`
+	RawBytes      int64     `json:"raw_bytes"`
+	BlobBytes     int64     `json:"blob_bytes"`
+	RU            float64   `json:"ru"`
+	Waits         int64     `json:"waits"`
+}
+
+func (r LoadReport) ValidateComplete() error {
+	if r.SchemaVersion != LoadSchema {
+		return fmt.Errorf("unsupported load schema %q", r.SchemaVersion)
+	}
+	if r.Key == "" {
+		return fmt.Errorf("load report requires a release key")
+	}
+	if r.Store == "mem://" || r.Store == "" {
+		return fmt.Errorf("load report requires a persistent store")
+	}
+	if r.Failed != 0 {
+		return fmt.Errorf("load has %d failed documents", r.Failed)
+	}
+	if r.Edges == 0 {
+		return fmt.Errorf("load processed no edges")
+	}
+	if r.Versions == 0 {
+		return fmt.Errorf("load wrote no version metadata")
+	}
+	if r.Sampled == 0 {
+		return fmt.Errorf("load wrote no random-pool sample")
+	}
+	if r.BlobBytes == 0 {
+		return fmt.Errorf("load wrote no documents")
+	}
+	return nil
 }
 
 type OperationReport struct {

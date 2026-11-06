@@ -36,5 +36,11 @@ export PHX_HOST=localhost
 # Optional dictionary rollout: set only to a directory containing the complete registry.
 # export ZSTD_DICT_DIR=/absolute/path/to/zstd
 
+# Friday-night DAKP ingest is disabled by default. Enable it only in the protected deployment
+# environment after rehearsing DAKP release publication and installing the Linkouts worker.
+# export LINKOUTS_DAKP_INGEST_ENABLED=1
+# export LINKOUTS_DAKP_TARGET_STORE=cosmos
+# export LINKOUTS_DAKP_DICTIONARY_PATH="$PWD/sites/linkouts/priv/zstd/drugapprovals-kp.77140996.dict"
+
 # Destructive Dagster definitions stay absent unless deliberately enabled in an isolated process.
 # export LINKOUTS_ENABLE_DESTRUCTIVE_JOBS=1

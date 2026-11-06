@@ -177,6 +177,17 @@ def _release_output_paths(config, version: str) -> tuple[Path, Path, Path]:
     )
 
 
+def _linkouts_release_paths(config, version: str) -> tuple[Path, Path]:
+    """The exact KGX pair staged and uploaded for one completed release.
+
+    Linkouts consumes this through public materialization metadata only; its code location
+    never imports DAKP implementation or configuration.
+    """
+    version_dir = config.published_root / "dakp" / "release" / "staging" / version
+    stem = f"DRUG_APPROVALS_KP_{version}"
+    return version_dir / f"{stem}.nodes.ndjson", version_dir / f"{stem}.edges.ndjson"
+
+
 @dg.asset(
     group_name="dakp_release",
     deps=[core_assets.kg_qc],
@@ -316,6 +327,7 @@ def hf_publish(context: AssetExecutionContext) -> None:
             f"pending delta belongs to check run {delta.check_run_id}, not {check_run_id}"
         )
     qc = json.loads((config.kg_dir / core_assets.QC_REPORT).read_text(encoding="utf-8"))
+    linkouts_nodes, linkouts_edges = _linkouts_release_paths(config, version)
     result = publish_release(
         _hf_api(settings),
         repo_id=settings.hf_repo_id,
@@ -349,6 +361,9 @@ def hf_publish(context: AssetExecutionContext) -> None:
             "superseded": list(result.superseded),
             "actions": list(result.actions),
             "state_updated": not result.dry_run,
+            "linkouts_key": f"infores:drugapprovals-kp-{version}",
+            "linkouts_nodes_path": str(linkouts_nodes),
+            "linkouts_edges_path": str(linkouts_edges),
         }
     )
 
