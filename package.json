@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@naxodev/gonx": "4.1.2",
-    "nx": "23.3.1"
+    "nx": "24.0.3"
   },
   "overrides": {
     "minimatch": "11.0.4",
