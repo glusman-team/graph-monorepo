@@ -27,6 +27,8 @@ func ParseRequest(extras map[string]any) (Request, error) {
 	switch operation {
 	case "stage":
 		config = &StageConfig{}
+	case "load":
+		config = &LoadConfig{}
 	case "push":
 		config = &PushConfig{}
 	case "train_dict":
@@ -51,6 +53,8 @@ func ParseRequest(extras map[string]any) (Request, error) {
 	}
 	switch cfg := config.(type) {
 	case *StageConfig:
+		expected = cfg.Operation
+	case *LoadConfig:
 		expected = cfg.Operation
 	case *PushConfig:
 		expected = cfg.Operation
@@ -96,6 +100,25 @@ func (r Request) Validate() error {
 		}
 		if cfg.SampleFullRelease && cfg.IDsPath == "" {
 			return fmt.Errorf("sample_full_release requires ids_path")
+		}
+	case *LoadConfig:
+		if cfg.Key == "" || cfg.NodesPath == "" || cfg.EdgesPath == "" || cfg.ReportPath == "" {
+			return fmt.Errorf("key, nodes_path, edges_path, and report_path are required")
+		}
+		if err := validateStore(cfg.Store); err != nil {
+			return err
+		}
+		if cfg.Store == "mem://" {
+			return fmt.Errorf("a direct load target must survive the worker process")
+		}
+		if cfg.ZstdLevel < 0 || cfg.ZstdLevel > 22 {
+			return fmt.Errorf("zstd_level must be between 0 and 22")
+		}
+		if cfg.SampleSize <= 0 || cfg.Concurrency <= 0 || cfg.Threads < 0 {
+			return fmt.Errorf("sample_size and concurrency must be positive; threads must be non-negative")
+		}
+		if cfg.Engine != "chdb" && cfg.Engine != "fake" {
+			return fmt.Errorf("engine must be chdb or fake")
 		}
 	case *PushConfig:
 		if cfg.ManifestPath == "" || cfg.ReportPath == "" {

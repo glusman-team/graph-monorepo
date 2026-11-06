@@ -11,7 +11,7 @@ from pydantic import Field, field_validator, model_validator
 from linkouts_pipeline.refs import ContractModel
 
 type Operation = Literal[
-    "stage", "push", "train_dict", "status", "probe", "get", "rig", "init", "purge"
+    "stage", "load", "push", "train_dict", "status", "probe", "get", "rig", "init", "purge"
 ]
 
 
@@ -69,6 +69,41 @@ class StageConfig(ContractModel):
             msg = "production staging requires a random-pool sample"
             raise ValueError(msg)
         return self
+
+
+class LoadConfig(ContractModel):
+    """Direct, history-preserving ingestion into an existing store.
+
+    Unlike stage/push, this reuses the original merge algorithm so an existing edge blob
+    retains every older version. The payload stays secret-free; Cosmos credentials come
+    from the worker environment.
+    """
+
+    operation: Literal["load"] = "load"
+    key: str = Field(min_length=1)
+    nodes_path: Path
+    edges_path: Path
+    store: str = "cosmos"
+    report_path: Path
+    base_key: str | None = None
+    dictionary_path: Path | None = None
+    zstd_level: int = Field(default=0, ge=0, le=22)
+    no_repack: bool = True
+    sample_size: int = Field(default=1024, ge=1)
+    sample_seed: int = 0
+    sampled_at: datetime | None = None
+    concurrency: int = Field(default=8, ge=1)
+    threads: int = Field(default=0, ge=0)
+    engine: Literal["chdb", "fake"] = "chdb"
+    progress: bool = True
+
+    @field_validator("store")
+    @classmethod
+    def valid_store(cls, value: str) -> str:
+        if value == "mem://":
+            msg = "a direct load target must survive the worker process"
+            raise ValueError(msg)
+        return _validate_store(value)
 
 
 class PushConfig(ContractModel):
@@ -190,6 +225,7 @@ class PurgeConfig(StoreConfig):
 
 type OperationConfig = (
     StageConfig
+    | LoadConfig
     | PushConfig
     | TrainDictConfig
     | StatusConfig
@@ -202,6 +238,7 @@ type OperationConfig = (
 
 _CONFIG_TYPES: dict[str, type[ContractModel]] = {
     "stage": StageConfig,
+    "load": LoadConfig,
     "push": PushConfig,
     "train_dict": TrainDictConfig,
     "status": StatusConfig,
@@ -242,6 +279,7 @@ class WorkerRequest(ContractModel):
 __all__ = [
     "GetConfig",
     "InitConfig",
+    "LoadConfig",
     "Operation",
     "OperationConfig",
     "ProbeConfig",

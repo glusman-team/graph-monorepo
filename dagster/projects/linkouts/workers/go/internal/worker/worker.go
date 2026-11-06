@@ -32,6 +32,8 @@ func Run(
 	switch cfg := request.Config.(type) {
 	case *StageConfig:
 		metadata, err = runStage(ctx, cfg, settings)
+	case *LoadConfig:
+		metadata, err = runLoad(ctx, cfg, settings)
 	case *PushConfig:
 		metadata, err = runPush(ctx, cfg, settings)
 	case *TrainDictConfig:
