@@ -1,0 +1,24 @@
+{
+  "name": "linkouts-worker",
+  "$schema": "../../../../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "namedInputs": {
+    "goSource": [
+      "{projectRoot}/go.mod",
+      "{projectRoot}/go.sum",
+      "{projectRoot}/.golangci.yml",
+      "{projectRoot}/**/*.go",
+      "{workspaceRoot}/.golangci.yml",
+      "{workspaceRoot}/dagster/projects/linkouts/contracts/**/*",
+      "{workspaceRoot}/dagster/projects/linkouts/fixtures/kgx/**/*",
+      "{workspaceRoot}/flake.nix",
+      "{workspaceRoot}/flake.lock"
+    ]
+  },
+  "targets": {
+    "test": { "cache": true, "outputs": [] },
+    "lint": { "cache": true, "outputs": [] },
+    "tidy": { "cache": true, "outputs": [] },
+    "build": { "cache": true, "outputs": ["{options.outputPath}"] }
+  }
+}

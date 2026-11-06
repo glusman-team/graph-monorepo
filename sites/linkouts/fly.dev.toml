@@ -1,0 +1,45 @@
+# Separate fixture-backed DEV preview. From the monorepo root:
+# flyctl deploy -c sites/linkouts/fly.dev.toml --remote-only --ha=false .
+# No production Cosmos credentials, cluster membership, or origin key belongs in this app.
+app = 'edge-linkouts-dev'
+primary_region = 'lax'
+kill_signal = 'SIGTERM'
+kill_timeout = '5s'
+
+[build]
+  dockerfile = 'sites/linkouts/Dockerfile'
+
+[env]
+  PHX_SERVER = 'true'
+  PHX_HOST = 'edge-linkouts-dev.fly.dev'
+  PORT = '8080'
+  LINKOUTS_PREVIEW_FIXTURES = '/app/preview-docs.ndjson'
+
+# Fly resolves local_path relative to this TOML file, not the repository-root build context.
+# Only the committed public sample is injected; no local dataset or secret is read.
+[[files]]
+  guest_path = '/app/preview-docs.ndjson'
+  local_path = '../../dagster/projects/linkouts/contracts/docs.ndjson'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 100
+    hard_limit = 200
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '10s'
+    method = 'GET'
+    path = '/healthz'
+    timeout = '2s'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'

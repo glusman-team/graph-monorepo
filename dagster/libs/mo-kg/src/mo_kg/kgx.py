@@ -51,9 +51,7 @@ def qc_counts(nodes_path: Path, edges_path: Path) -> dict[str, int]:
     nodes = read_kgx(nodes_path)
     edges = read_kgx(edges_path)
     ids = {n["id"] for n in nodes}
-    dangling = sum(
-        1 for e in edges if e["subject"] not in ids or e["object"] not in ids
-    )
+    dangling = sum(1 for e in edges if e["subject"] not in ids or e["object"] not in ids)
     return {
         "nodes": len(nodes),
         "edges": len(edges),

@@ -1,0 +1,77 @@
+name: Bug report
+description: Something in the web app is wrong.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please describe what the page showed and what it
+        should have shown.
+
+        **Security or leaked credentials: do not file this issue.** Use the private reporting path in
+        [SECURITY.md](https://github.com/glusman-team/graph-monorepo/blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The wrong behavior, in as much detail as you can give. Paste the sentence the page rendered if the wording is the problem.
+      placeholder: "The edge page shows an evidence sentence with a hole in it: 'Approved by: '."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to see instead, and why you believe that is correct.
+      placeholder: "The sentence should be omitted entirely when the field is absent."
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: URL or page where it happened
+      description: The full URL on the live site, or the local route and store you were reading.
+      placeholder: "https://linkouts.skyelanegoetz.com/edges/12ae7437-12dc-3c2a-b487-5297c09fc5e5"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How do we get to the same page? Numbered steps, starting from a fresh load.
+      placeholder: |
+        1. Open the root page.
+        2. Click the 1.16.0 pill for drugapprovals-kp.
+        3. ...
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: client
+    attributes:
+      label: Browser or curl command
+      description: Browser and version, or the exact curl command if you reproduced it outside a browser. Note that production requires the origin header, so a direct curl returns 403 by design.
+      placeholder: "Firefox 145 on macOS, or: curl -sS 'http://localhost:4000/edges/<uuid>'"
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: output
+    attributes:
+      label: Console or network output
+      description: Browser console errors, the failing network response, or server log lines. Redact anything that looks like a key.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you submit
+      options:
+        - label: I read [SECURITY.md](https://github.com/glusman-team/graph-monorepo/blob/main/SECURITY.md) and this report contains no secret, credential, or vulnerability. Those go through private reporting instead.
+          required: true
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: This is about the web app, the display configs in kgs/, or the docs site, not about Dagster ingestion or deployment.
+          required: true

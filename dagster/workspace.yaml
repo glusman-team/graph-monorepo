@@ -16,3 +16,8 @@ load_from:
       location_name: dakp
       working_directory: ../../projects/dakp
       executable_path: ../../projects/dakp/.venv/bin/python
+  - python_module:
+      module_name: linkouts_dag.definitions
+      location_name: linkouts
+      working_directory: ../../projects/linkouts
+      executable_path: ../../projects/linkouts/.venv/bin/python

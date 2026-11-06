@@ -26,7 +26,9 @@ def test_qc_counts_and_dangling(tmp_path):
     nodes_path = tmp_path / "n.ndjson"
     edges_path = tmp_path / "e.ndjson"
     write_kgx_nodes(nodes_path, NODES)
-    write_kgx_edges(edges_path, EDGES + [{"subject": "GHOST:1", "predicate": "p", "object": "DRUG:1"}])
+    write_kgx_edges(
+        edges_path, EDGES + [{"subject": "GHOST:1", "predicate": "p", "object": "DRUG:1"}]
+    )
     counts = qc_counts(nodes_path, edges_path)
     assert counts == {"nodes": 2, "edges": 2, "dangling_edges": 1}
 

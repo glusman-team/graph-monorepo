@@ -1,0 +1,90 @@
+{
+  "name": "linkouts-web",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "sites/linkouts/lib",
+  "projectType": "application",
+  "namedInputs": {
+    "phoenixInputs": [
+      "{projectRoot}/mix.exs",
+      "{projectRoot}/mix.lock",
+      "{projectRoot}/.formatter.exs",
+      "{projectRoot}/.credo.exs",
+      "{projectRoot}/config/**/*",
+      "{projectRoot}/lib/**/*",
+      "{projectRoot}/test/**/*",
+      "{projectRoot}/assets/**/*",
+      "{projectRoot}/kgs/**/*",
+      "{projectRoot}/rel/**/*",
+      "{projectRoot}/priv/**/*",
+      "!{projectRoot}/priv/plts/**/*",
+      "!{projectRoot}/priv/static/assets/**/*",
+      "!{projectRoot}/priv/static/cache_manifest.json",
+      "{workspaceRoot}/dagster/projects/linkouts/contracts/**/*"
+    ]
+  },
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["lint"],
+      "inputs": ["phoenixInputs"],
+      "outputs": [],
+      "options": {
+        "cwd": "sites/linkouts",
+        "command": "mix test --warnings-as-errors && mix test --warnings-as-errors --only cluster"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["phoenixInputs"],
+      "outputs": [],
+      "options": {
+        "cwd": "sites/linkouts",
+        "command": "mix format --check-formatted && MIX_ENV=test mix compile --force --warnings-as-errors && mix credo --strict && MIX_ENV=test mix linkouts.check && mix deps.unlock --check-unused"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["lint"],
+      "inputs": ["phoenixInputs"],
+      "outputs": [
+        "{projectRoot}/_build/prod/rel/edge_linkouts",
+        "{projectRoot}/priv/static/assets",
+        "{projectRoot}/priv/static/cache_manifest.json"
+      ],
+      "options": {
+        "cwd": "sites/linkouts",
+        "command": "MIX_ENV=prod mix compile --warnings-as-errors && MIX_ENV=prod mix assets.deploy && MIX_ENV=prod mix release --overwrite"
+      }
+    },
+    "dialyzer": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["phoenixInputs"],
+      "outputs": [],
+      "options": {
+        "cwd": "sites/linkouts",
+        "command": "MIX_ENV=dev mix dialyzer"
+      }
+    },
+    "deploy-check": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/Dockerfile",
+        "{projectRoot}/fly.toml",
+        "{projectRoot}/fly.dev.toml",
+        "{projectRoot}/scripts/check_deploy.py",
+        "{workspaceRoot}/.dockerignore",
+        "{workspaceRoot}/dagster/projects/linkouts/contracts/docs.ndjson"
+      ],
+      "outputs": [],
+      "options": {
+        "cwd": ".",
+        "command": "python3 sites/linkouts/scripts/check_deploy.py"
+      }
+    }
+  }
+}

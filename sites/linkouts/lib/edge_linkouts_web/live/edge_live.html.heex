@@ -1,0 +1,178 @@
+<Layouts.app flash={@flash} kg_slug={@kg_slug} random_version={@random_version}>
+  <%= case @view do %>
+    <% :ok -> %>
+      <article class="edge-page">
+        <header class="edge-head">
+          <p :if={!@sentence} class="edge-kicker">
+            <%!-- The name is a link into this graph (a random relationship from it), and the
+                 source icon beside it is the external documentation it used to be. One link
+                 doing both would send a reader who wanted the graph out of this app. --%>
+            <a
+              :if={@kg_slug}
+              class="kg-link"
+              href={~p"/#{@kg_slug}/random?version=#{@random_version}"}
+              title={"A random relationship from #{@kg_name}"}
+            >{@kg_name}</a>
+            <span :if={!@kg_slug}>{@kg_name}</span>
+            <a
+              :if={@config && @config.url}
+              class="ext-link"
+              href={@config.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="The knowledge source's documentation"
+            >
+              <.icon name="hero-arrow-top-right-on-square" class="ext-icon" /><span class="sr-only">
+                (opens the knowledge source's documentation in a new tab)
+              </span>
+            </a>
+          </p>
+
+          <%= if @sentence do %>
+            <%!-- The claim is headed by who makes it, on its own line ending in a colon:
+                 "DrugApprovals KP asserts:" above "Metformin has been approved for ...".
+                 The lead-in is display-config data like the sentence, so a KG without an
+                 `asserts` spec simply renders none. --%>
+            <p :if={@asserts not in [nil, []]} class="edge-asserts">
+              <EdgeComponents.segments segments={@asserts} />:
+            </p>
+            <h1 class="edge-sentence">
+              <EdgeComponents.segments segments={@sentence} />
+            </h1>
+          <% else %>
+            <h1 class="edge-sentence">Edge {@edge_id}</h1>
+            <EdgeComponents.raw_doc doc={@doc} />
+          <% end %>
+
+          <p class="edge-idline">
+            <code id="edge-id">{@edge_id}</code>
+            <button
+              type="button"
+              class="copy-btn"
+              data-copy={@edge_id}
+              aria-label={"Copy the edge id #{@edge_id}"}
+            >
+              <.icon name="hero-clipboard" class="size-3.5" />
+              <span class="copy-text">Copy id</span>
+            </button>
+            <a class="btn-link" href={~p"/edges/#{@edge_id}/download?version=#{@key}"}>
+              <.icon name="hero-document-arrow-down" class="size-4" /> Download KGX
+            </a>
+          </p>
+        </header>
+
+        <div id="edge-detail" aria-live="polite" class="edge-body">
+          <section :if={@methods != []} aria-label="Methods" class="edge-methods edge-prose">
+            <h2 class="section-title">Methods</h2>
+            <p><EdgeComponents.segments segments={@methods} /></p>
+          </section>
+
+          <section
+            :if={@evidence != []}
+            aria-label="Provenance"
+            class="edge-provenance edge-prose"
+          >
+            <h2 class="section-title">Provenance</h2>
+            <p><EdgeComponents.segments segments={@evidence} /></p>
+          </section>
+
+          <%= if @config && @config.description do %>
+            <section aria-label="About this knowledge graph" class="edge-about">
+              <h2 class="section-title">About</h2>
+              <p>{@config.description}</p>
+            </section>
+          <% end %>
+
+          <%!-- Tips and Feedback close the prose half of the page: everything a reader
+               reads (sentence, evidence, context, what to do next) comes before the
+               bookkeeping of versions, known issues and changes. --%>
+          <section :if={@footnote != []} aria-label="Tips" class="edge-tips edge-prose">
+            <h2 class="section-title">Tips</h2>
+            <p><EdgeComponents.segments segments={@footnote} /></p>
+          </section>
+
+          <%!-- The feedback link, labelled by the same kicker as every other block, so it
+               reads as one more section rather than a stray rule and link. --%>
+          <footer :if={@feedback_url} class="edge-feedback edge-prose">
+            <h2 class="section-title">Feedback</h2>
+            <p>
+              <a class="ext-link" href={@feedback_url} target="_blank" rel="noopener noreferrer">
+                Something wrong with this relationship? Open an issue.<.icon
+                  name="hero-arrow-top-right-on-square"
+                  class="ext-icon"
+                /><span class="sr-only"> (opens GitHub in a new tab)</span>
+              </a>
+            </p>
+          </footer>
+
+          <section aria-label="Stored versions and what changed in each" class="edge-versions">
+            <h2 class="section-title">Stored versions</h2>
+            <EdgeComponents.version_timeline
+              edge_id={@edge_id}
+              history={@history}
+              current={@key}
+            />
+          </section>
+
+          <%!-- A release the config flags with known errors renders every defect as one
+               sentence in a single flowing paragraph: the curator's own words, read as
+               prose like the rest of the page, not a boxed warning over the claim. --%>
+          <section :if={@known_errors != []} aria-label="Known issues" class="edge-prose">
+            <h2 class="section-title">Known issues</h2>
+            <p>{Enum.map_join(@known_errors, " ", & &1.description)}</p>
+          </section>
+
+          <%!-- The diff panel is its own grid row, not a child of the versions section, so it
+               falls under the same section gap as every other block instead of a bespoke
+               margin that hugs the pills above it. The scope narrows it to one field when
+               a release changed several. --%>
+          <EdgeComponents.diff_panel
+            prev_key={@prev_key}
+            key_name={@key}
+            diff={@diff}
+            edge_id={@edge_id}
+            scope={@scope}
+          />
+        </div>
+      </article>
+    <% :rate_limited -> %>
+      <section aria-live="polite" class="state-page state-page-warning">
+        <p class="state-kicker state-kicker-warning">Rate limited</p>
+        <h1 class="state-title">The read budget is spent right now</h1>
+        <p class="state-body">
+          This read was rate limited because the knowledge graph store is at its request
+          budget. The window clears within a second; use the button to retry.
+        </p>
+        <p class="state-actions">
+          <button type="button" class="btn btn-primary" phx-click="retry">Retry</button>
+          <a class="btn-link" href={~p"/random"}>Open a random relationship instead</a>
+        </p>
+      </section>
+    <% :store_error -> %>
+      <section aria-live="polite" class="state-page state-page-error">
+        <p class="state-kicker state-kicker-error">Store unavailable</p>
+        <h1 class="state-title">The knowledge graph store did not answer</h1>
+        <p class="state-body">
+          The store did not answer this read. That is usually temporary; use the button to
+          retry.
+        </p>
+        <p class="state-actions">
+          <button type="button" class="btn btn-primary" phx-click="retry">Retry</button>
+          <a class="btn-link" href={~p"/random"}>Open a random relationship instead</a>
+        </p>
+      </section>
+    <% {:corrupt, reason} -> %>
+      <section aria-live="polite" class="state-page state-page-error">
+        <p class="state-kicker state-kicker-error">Corrupt stored document</p>
+        <h1 class="state-title">This edge document could not be decoded</h1>
+        <p class="state-body">
+          A document that will not decode is a data bug a curator needs to see, not a missing
+          edge, so the reason is shown exactly as the decoder reported it.
+        </p>
+        <p class="state-reason font-mono break-all">{reason}</p>
+        <p class="state-actions">
+          <a class="btn-link" href={~p"/random"}>Open a random relationship instead</a>
+        </p>
+      </section>
+  <% end %>
+</Layouts.app>

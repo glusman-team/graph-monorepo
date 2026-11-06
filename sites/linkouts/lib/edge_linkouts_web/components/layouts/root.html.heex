@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      :if={Application.get_env(:edge_linkouts, :fixture_preview, false)}
+      name="robots"
+      content="noindex, nofollow"
+    />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <.live_title
+      default="TranslatorEdgeLinkouts"
+      suffix=" - TranslatorEdgeLinkouts"
+      phx-no-format
+    >{assigns[:page_title]}</.live_title>
+    <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
+    </script>
+    <script nonce={assigns[:csp_nonce]}>
+      // Dark mode: data-theme on <html>, applied before first paint so there is no
+      // flicker. A stored choice ("dark"/"light" in localStorage under "theme") wins;
+      // otherwise the page follows prefers-color-scheme. assets/js/app.js owns changes
+      // via the Theme hook.
+      (() => {
+        const stored = localStorage.getItem("theme");
+        const theme =
+          stored === "dark" || stored === "light"
+            ? stored
+            : window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
+  </head>
+  <body>
+    {@inner_content}
+  </body>
+</html>

@@ -1,0 +1,14 @@
+<Layouts.app flash={@flash}>
+  <section class="state-page">
+    <p class="state-kicker state-kicker-error">Store unavailable</p>
+    <h1 class="state-title">The knowledge graph store did not answer</h1>
+    <p class="state-body">
+      The read behind this page failed before it reached any data. That is usually temporary;
+      reloading in a moment is all it takes. If it persists, the store connection is the place
+      to look.
+    </p>
+    <p class="state-actions">
+      <a class="btn btn-primary" href={~p"/random"}>Try again</a>
+    </p>
+  </section>
+</Layouts.app>

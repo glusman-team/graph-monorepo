@@ -1,0 +1,13 @@
+<Layouts.app flash={@flash}>
+  <section class="state-page">
+    <p class="state-kicker state-kicker-warning">Rate limited</p>
+    <h1 class="state-title">The read budget is spent right now</h1>
+    <p class="state-body">
+      Picking a random relationship reads the store, and the store is at its request budget for
+      this second. The window clears on its own; reloading in a moment is all it takes.
+    </p>
+    <p class="state-actions">
+      <a class="btn btn-primary" href={~p"/random"}>Try again</a>
+    </p>
+  </section>
+</Layouts.app>

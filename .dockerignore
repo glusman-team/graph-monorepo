@@ -1,0 +1,23 @@
+# Linkouts image builds use the monorepo root as context but need only this application.
+# The allowlist prevents local data, credentials, and unrelated projects reaching a remote builder.
+*
+!sites/
+sites/*
+!sites/linkouts/
+sites/linkouts/_build/
+sites/linkouts/deps/
+sites/linkouts/assets/node_modules/
+sites/linkouts/priv/static/assets/
+sites/linkouts/priv/static/cache_manifest.json
+sites/linkouts/tmp/
+sites/linkouts/cover/
+sites/linkouts/doc/
+sites/linkouts/priv/plts/
+**/.env
+**/.env.*
+**/.envrc
+!**/.env.example
+!**/.envrc.example
+**/erl_crash.dump
+**/*.ez
+**/npm-debug.log

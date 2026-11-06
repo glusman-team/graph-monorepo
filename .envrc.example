@@ -1,0 +1,40 @@
+# shellcheck shell=bash
+# Copy to .envrc or merge these public settings into your existing .envrc, then `direnv allow`.
+# The committed .envrc contains only `use flake`; never add credentials to it.
+#
+# A parent ~/.envrc may supply secrets through source_up_if_exists:
+#   COSMOS_PRIMARY_CONNECTION_STRING_RW  worker write access
+#   COSMOS_PRIMARY_CONNECTION_STRING_R   Phoenix read-only access
+# Never print or commit either value.
+source_up_if_exists
+
+# Local artifact roots. Each Dagster project keeps its own uv environment.
+export MO_PUBLISHED_ROOT="$PWD/.artifacts/published"
+export DAKP_WORKDIR="$PWD/.work/dakp"
+export LINKOUTS_WORKDIR="$PWD/.work/linkouts"
+export DAKP_EXTRACT_WORKER_BIN="$PWD/dagster/projects/dakp/workers/go/bin/dakp-extract"
+export LINKOUTS_WORKER_BIN="$PWD/dagster/projects/linkouts/workers/go/bin/linkouts-worker"
+
+# Force the public contract-backed Phoenix file reader even when cloud credentials exist.
+export COSMOS_BACKEND=file
+export COSMOS_DOCS="$PWD/dagster/projects/linkouts/contracts/docs.ndjson"
+export COSMOS_DB=edge_linkouts
+export COSMOS_CONTAINER=edges
+
+# Shared Cosmos free-tier pacing. The worker uses 900 RU/s and Phoenix uses 100 RU/s.
+export RU_BUDGET_CLI=900
+export RU_BUDGET_WEB=100
+export DEDUPE_TTL_MS=30000
+export POOL_TTL_MS=900000
+
+# Embedded ClickHouse extraction cache. Keep it private (0700).
+export CHDB_CACHE_DIR="$HOME/.cache/edge-linkouts/chdb"
+
+# Local Phoenix setting. Production values live in Fly configuration/secrets.
+export PHX_HOST=localhost
+
+# Optional dictionary rollout: set only to a directory containing the complete registry.
+# export ZSTD_DICT_DIR=/absolute/path/to/zstd
+
+# Destructive Dagster definitions stay absent unless deliberately enabled in an isolated process.
+# export LINKOUTS_ENABLE_DESTRUCTIVE_JOBS=1

@@ -1,0 +1,24 @@
+<Layouts.app flash={@flash}>
+  <section class="state-page">
+    <p class="state-kicker">Nothing to pick from</p>
+    <h1 class="state-title">
+      <%= if @version do %>
+        No random edge in {@kg} {@version}
+      <% else %>
+        No random edge in {@kg}
+      <% end %>
+    </h1>
+    <p class="state-body">
+      This store holds no sampled ids for {if @version,
+        do: "that release",
+        else: "that knowledge graph"}, so there is no
+      relationship to open at random. A release gets its sample when it is loaded with <code>linkouts_upload</code>, and loses it if
+      <code>linkouts_purge</code>
+      drops it. The
+      root page lists every release that has one.
+    </p>
+    <p class="state-actions">
+      <a class="btn btn-primary" href={~p"/"}>See the knowledge graphs</a>
+    </p>
+  </section>
+</Layouts.app>

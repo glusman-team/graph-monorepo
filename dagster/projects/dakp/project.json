@@ -13,7 +13,8 @@
         "pythonInputs",
         "{workspaceRoot}/dagster/projects/dakp/pipeline/**/*.py",
         "{workspaceRoot}/dagster/projects/dakp/pipeline/pyproject.toml"
-      ]
+      ],
+      "outputs": []
     },
     "lint": {
       "executor": "nx:run-commands",
@@ -22,7 +23,10 @@
         "cwd": "dagster/projects/dakp"
       },
       "cache": true,
-      "inputs": ["pythonInputs"]
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
     }
   }
 }

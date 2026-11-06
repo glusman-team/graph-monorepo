@@ -12,6 +12,17 @@ updates:
           - minor
           - patch
 
+  # Astro Starlight workspace (the root npm entry also refreshes its shared lock).
+  - package-ecosystem: npm
+    directory: /sites/docs
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
   # Dagster code locations and shared libs (pip ecosystem, uv.lock manifests)
   - package-ecosystem: pip
     directory: /dagster/deployments/local
@@ -73,9 +84,59 @@ updates:
           - minor
           - patch
 
+  - package-ecosystem: pip
+    directory: /dagster/projects/linkouts
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: pip
+    directory: /dagster/projects/linkouts/pipeline
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
   # Go pipes worker (dakp extract parsers)
   - package-ecosystem: gomod
     directory: /dagster/projects/dakp/workers/go
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: gomod
+    directory: /dagster/projects/linkouts/workers/go
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: mix
+    directory: /sites/linkouts
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: /sites/linkouts
     schedule:
       interval: weekly
     groups:

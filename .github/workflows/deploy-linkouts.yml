@@ -1,0 +1,96 @@
+name: Deploy Linkouts
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Fly application to deploy
+        type: choice
+        options: [production, preview]
+        default: production
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: linkouts-fly-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'preview' && 'linkouts-preview' || 'linkouts-production' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+
+      - name: Verify CI for a manual deployment
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          successful="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}" \
+            --jq '[.workflow_runs[] | select(.name == "CI" and .conclusion == "success")] | length')"
+          if [ "$successful" -lt 1 ]; then
+            echo "No successful CI run exists for ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+
+      - name: Select target
+        id: target
+        env:
+          REQUESTED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'production' }}
+        run: |
+          case "$REQUESTED_TARGET" in
+            production) echo 'config=sites/linkouts/fly.toml' >> "$GITHUB_OUTPUT" ;;
+            preview) echo 'config=sites/linkouts/fly.dev.toml' >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unsupported target: $REQUESTED_TARGET" >&2; exit 1 ;;
+          esac
+
+      - name: Detect deployment inputs
+        id: changes
+        if: github.event_name == 'workflow_run'
+        run: |
+          head_sha="$(git rev-parse HEAD)"
+          if git diff --quiet "${head_sha}^" "$head_sha" -- \
+            sites/linkouts \
+            dagster/projects/linkouts/contracts \
+            .dockerignore \
+            .github/workflows/deploy-linkouts.yml; then
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+            echo 'No Linkouts deployment inputs changed.'
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+        if: steps.changes.outputs.deploy != 'false'
+
+      - name: Validate Fly configuration
+        if: steps.changes.outputs.deploy != 'false'
+        run: flyctl config validate --config "${{ steps.target.outputs.config }}"
+
+      - name: Deploy production
+        if: >-
+          steps.changes.outputs.deploy != 'false' &&
+          steps.target.outputs.config == 'sites/linkouts/fly.toml'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --config sites/linkouts/fly.toml .
+
+      - name: Deploy public preview
+        if: >-
+          steps.changes.outputs.deploy != 'false' &&
+          steps.target.outputs.config == 'sites/linkouts/fly.dev.toml'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --config sites/linkouts/fly.dev.toml --ha=false .

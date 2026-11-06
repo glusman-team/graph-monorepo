@@ -1,0 +1,30 @@
+<Layouts.app flash={@flash}>
+  <p :if={@notice} class="bar-notice" role="status">{notice_text(@notice)}</p>
+
+  <section class="kg-bar" aria-labelledby="kg-bar-title">
+    <header class="bar-head">
+      <h1 class="bar-title" id="kg-bar-title">Knowledge graphs in this store</h1>
+      <p class="bar-sub">
+        A version pill opens a random relationship from that release; a graph's name opens one
+        from its latest release.
+      </p>
+    </header>
+
+    <ul :if={@rows != []} class="bar-rows">
+      <li :for={row <- @rows} class="bar-row">
+        <.kg_bar row={row} />
+      </li>
+    </ul>
+
+    <section :if={@rows == [] and is_nil(@notice)} class="state-page bar-empty">
+      <p class="state-kicker">No knowledge graphs stored</p>
+      <h2 class="state-title">Nothing loaded yet</h2>
+      <p class="state-body">
+        This store holds no releases, so there is nothing to pick from. Load one with
+        <code>linkouts_upload</code>
+        and this page lists it, with a
+        random relationship per release.
+      </p>
+    </section>
+  </section>
+</Layouts.app>

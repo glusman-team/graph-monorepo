@@ -9,7 +9,10 @@
         "cwd": "dagster/projects/dakp/pipeline"
       },
       "cache": true,
-      "inputs": ["pythonInputs"]
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
     },
     "lint": {
       "executor": "nx:run-commands",
@@ -18,7 +21,10 @@
         "cwd": "dagster/projects/dakp/pipeline"
       },
       "cache": true,
-      "inputs": ["pythonInputs"]
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
     }
   }
 }

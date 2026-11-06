@@ -1,36 +1,37 @@
-# Pull Request Template
-
 ## Summary
-<!-- One-line summary of the change -->
 
-## Changes
+<!-- What changed, why, and which user task it serves. -->
 
-- **What was changed**
-- **Why this change is needed**
-- **How it affects the graph or pipeline**
+## Components
 
-## Testing
-<!-- List exact validation commands and their results, e.g. `make test`: passed -->
-- **Commands run and results**
-- **Unit tests added/updated**
-- **Integration tests added/updated**
-- **Manual testing performed** (e.g. `dg check defs`, a `dakp_build_<stage>` run)
+- [ ] DAKP (`dagster/projects/dakp`)
+- [ ] Linkouts Python/Dagster (`dagster/projects/linkouts`)
+- [ ] Linkouts Go worker/contracts
+- [ ] Linkouts Phoenix/display/deployment (`sites/linkouts`)
+- [ ] Shared Python libraries
+- [ ] Documentation (`sites/docs`)
+- [ ] Tooling, hooks, Nix, or CI
 
-## Code Location and Stage
-<!-- Which area does this touch? -->
-- [ ] `dagster/projects/dakp` (src / pipeline / workers)
-- [ ] `dagster/libs` (mo-core / mo-kg / mo-dagster)
-- [ ] Nix / devshell / CI
-- [ ] Docs only
+## Verification
 
-## Related Issues
+<!-- Exact commands, results, host, and CPU limit. -->
 
-- [ ] None
+- Commands/results:
+- Regression and failure-path tests:
+- Contract/fixture byte changes:
+- Generated-link/content review:
+- Removed code/dependencies and reason:
 
-## Checklist
+## Safety
 
-- [ ] `npx nx affected -t test` passes
-- [ ] `prek run --all-files` clean
-- [ ] Every code location still loads (`dg check defs`)
-- [ ] Documentation updated
-- [ ] No breaking changes to published artifacts
+- [ ] No secrets, production data, or credentials entered source, run config, Pipes metadata, or logs.
+- [ ] No real Cosmos/Fly/public-dataset mutation was part of verification.
+- [ ] Normal uploads remain manual; destructive jobs remain separately guarded.
+- [ ] Relevant narrow-job and shared-contract fan-out tests pass.
+- [ ] `prek run --all-files --hook-stage pre-commit` passes.
+- [ ] `prek run --all-files --hook-stage pre-push` passes.
+- [ ] Documentation and agent context match the implementation.
+
+## Related issues
+
+<!-- Link issues or state none. -->

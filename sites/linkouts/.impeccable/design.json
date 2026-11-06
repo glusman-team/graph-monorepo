@@ -1,0 +1,210 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-12T17:46:49Z",
+  "title": "Design System: linkouts",
+  "extensions": {
+    "colorMeta": {
+      "deep-teal": {
+        "role": "primary",
+        "displayName": "Deep Teal",
+        "canonical": "oklch(48% 0.1 175)",
+        "darkValue": "oklch(78% 0.13 175)",
+        "darkDisplayName": "Sea-Glass Teal",
+        "tonalRamp": ["oklch(15% 0.1 175)", "oklch(26% 0.1 175)", "oklch(37% 0.1 175)", "oklch(48% 0.1 175)", "oklch(59% 0.1 175)", "oklch(70% 0.1 175)", "oklch(81% 0.1 175)", "oklch(92% 0.1 175)"]
+      },
+      "sea-glass-teal": {
+        "role": "primary-dark",
+        "displayName": "Sea-Glass Teal",
+        "canonical": "oklch(78% 0.13 175)",
+        "tonalRamp": ["oklch(25% 0.13 175)", "oklch(35% 0.13 175)", "oklch(45% 0.13 175)", "oklch(55% 0.13 175)", "oklch(65% 0.13 175)", "oklch(75% 0.13 175)", "oklch(85% 0.13 175)", "oklch(95% 0.13 175)"]
+      },
+      "registry-blue": {
+        "role": "secondary",
+        "displayName": "Registry Blue",
+        "canonical": "oklch(45% 0.02 250)",
+        "darkValue": "oklch(70% 0.02 250)",
+        "tonalRamp": ["oklch(20% 0.02 250)", "oklch(30% 0.02 250)", "oklch(40% 0.02 250)", "oklch(50% 0.02 250)", "oklch(60% 0.02 250)", "oklch(70% 0.02 250)", "oklch(80% 0.02 250)", "oklch(92% 0.02 250)"]
+      },
+      "cool-paper": {
+        "role": "neutral",
+        "displayName": "Cool Paper",
+        "canonical": "oklch(98.5% 0.004 180)",
+        "darkValue": "oklch(16% 0.012 180)",
+        "darkDisplayName": "Slate Bench",
+        "tonalRamp": ["oklch(20% 0.006 180)", "oklch(32% 0.006 180)", "oklch(45% 0.005 180)", "oklch(60% 0.005 180)", "oklch(75% 0.005 180)", "oklch(86% 0.005 180)", "oklch(94% 0.004 180)", "oklch(98.5% 0.004 180)"]
+      },
+      "ink": {
+        "role": "neutral-content",
+        "displayName": "Ink",
+        "canonical": "oklch(22% 0.02 180)",
+        "darkValue": "oklch(92% 0.012 180)",
+        "darkDisplayName": "Slate Ink",
+        "tonalRamp": ["oklch(15% 0.02 180)", "oklch(25% 0.02 180)", "oklch(35% 0.02 180)", "oklch(45% 0.02 180)", "oklch(60% 0.02 180)", "oklch(75% 0.02 180)", "oklch(88% 0.015 180)", "oklch(96% 0.01 180)"]
+      },
+      "verdict-green": {
+        "role": "success",
+        "displayName": "Verdict Green",
+        "canonical": "oklch(45% 0.12 155)",
+        "darkValue": "oklch(76% 0.14 155)",
+        "tonalRamp": ["oklch(20% 0.1 155)", "oklch(30% 0.12 155)", "oklch(40% 0.12 155)", "oklch(50% 0.12 155)", "oklch(62% 0.13 155)", "oklch(74% 0.13 155)", "oklch(86% 0.12 155)", "oklch(95% 0.08 155)"]
+      },
+      "verdict-red": {
+        "role": "error",
+        "displayName": "Verdict Red",
+        "canonical": "oklch(50% 0.17 25)",
+        "darkValue": "oklch(72% 0.16 25)",
+        "tonalRamp": ["oklch(20% 0.13 25)", "oklch(30% 0.16 25)", "oklch(40% 0.17 25)", "oklch(50% 0.17 25)", "oklch(62% 0.17 25)", "oklch(74% 0.16 25)", "oklch(86% 0.13 25)", "oklch(95% 0.06 25)"]
+      },
+      "caution-amber": {
+        "role": "warning",
+        "displayName": "Caution Amber",
+        "canonical": "oklch(50% 0.12 75)",
+        "darkValue": "oklch(78% 0.13 75)",
+        "usage": "Kickers and the known-error box's 3px left border bar only; never as text in dark mode.",
+        "tonalRamp": ["oklch(20% 0.09 75)", "oklch(30% 0.11 75)", "oklch(40% 0.12 75)", "oklch(50% 0.12 75)", "oklch(62% 0.13 75)", "oklch(74% 0.13 75)", "oklch(86% 0.12 75)", "oklch(95% 0.07 75)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Edge Sentence", "purpose": "The single claim an edge page exists for; the only display-scale element." },
+      "title": { "displayName": "Title", "purpose": "Page titles on the KG bar and state pages." },
+      "body": { "displayName": "Body", "purpose": "Evidence sentences and relation lines at 1.7 line-height inside the 56rem article." },
+      "small": { "displayName": "Small", "purpose": "Metadata, kickers, header controls, footer." },
+      "label": { "displayName": "Label", "purpose": "Uppercase 700 micro-labels: node roles, diff group headings, state kickers." },
+      "mono": { "displayName": "Mono", "purpose": "Identifiers, versions, counts; rendered on recessed chips with hairline borders." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "re-ink", "value": "border-color 0.15s ease, color 0.15s ease", "purpose": "The only hover motion: chips, pills, and rows recolor border/text to teal; nothing lifts or translates." },
+      { "name": "theme-flip", "value": "instant (data-theme swap before first paint)", "purpose": "Dark/light switch is immediate, no cross-fade, to avoid flashing content." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "40rem" },
+      { "name": "md", "value": "48rem" },
+      { "name": "rail", "value": "64rem" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one solid-fill action: the header 'Random edge' pick. Sea-glass fill after dark.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\"><svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"1.8\" stroke=\"currentColor\" width=\"16\" height=\"16\" aria-hidden=\"true\"><rect x=\"3.5\" y=\"3.5\" width=\"17\" height=\"17\" rx=\"3.5\"/><circle cx=\"8.5\" cy=\"8.5\" r=\"1.5\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"15.5\" cy=\"8.5\" r=\"1.5\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"8.5\" cy=\"15.5\" r=\"1.5\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"15.5\" cy=\"15.5\" r=\"1.5\" fill=\"currentColor\" stroke=\"none\"/></svg><span>Random edge</span></button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 0.35rem; height: 2.25rem; padding: 0 0.75rem; border: none; border-radius: 0.375rem; background: oklch(48% 0.1 175); color: oklch(98.5% 0.004 180); font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: background 0.15s ease; } .ds-btn-primary:hover { background: oklch(40% 0.1 175); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(48% 0.1 175); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Icon Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Text-only teal control for secondary chrome actions (theme toggle). No fill, no border.",
+      "html": "<button class=\"ds-btn-ghost\" type=\"button\" aria-label=\"Toggle dark mode\"><svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"1.8\" stroke=\"currentColor\" width=\"16\" height=\"16\" aria-hidden=\"true\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M21.752 15.002A9.718 9.718 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z\"/></svg></button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; height: 2.25rem; min-height: 2.25rem; padding: 0 0.75rem; border: none; border-radius: 0.375rem; background: transparent; color: oklch(48% 0.1 175); cursor: pointer; transition: background 0.15s ease; } .ds-btn-ghost:hover { background: color-mix(in oklab, oklch(48% 0.1 175) 10%, oklch(98.5% 0.004 180)); } .ds-btn-ghost:focus-visible { outline: 2px solid oklch(48% 0.1 175); outline-offset: 2px; }"
+    },
+    {
+      "name": "Copy Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Micro chip-button beside identifiers; hover re-inks to teal, copied state flips to Verdict Green.",
+      "html": "<button class=\"ds-copy-btn\" type=\"button\"><svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"1.8\" stroke=\"currentColor\" width=\"12\" height=\"12\" aria-hidden=\"true\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5\"/></svg><span>Copy</span></button>",
+      "css": ".ds-copy-btn { display: inline-flex; align-items: center; gap: 0.3rem; border: 1px solid oklch(89% 0.01 180); border-radius: 0.375rem; background: oklch(95.5% 0.006 180); color: oklch(22% 0.02 180); font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 0.75rem; padding: 0.15rem 0.5rem; cursor: pointer; transition: border-color 0.15s ease, color 0.15s ease; } .ds-copy-btn:hover { border-color: oklch(48% 0.1 175); color: oklch(48% 0.1 175); } .ds-copy-btn.is-copied { border-color: oklch(45% 0.12 155); color: oklch(45% 0.12 155); } .ds-copy-btn:focus-visible { outline: 2px solid oklch(48% 0.1 175); outline-offset: 2px; }"
+    },
+    {
+      "name": "Version Pill",
+      "kind": "chip",
+      "refersTo": "version-pill",
+      "description": "The unit of navigation: one KG release. Teal tint fill, mono label, full pill.",
+      "html": "<a class=\"ds-version-pill\" href=\"#\"><span class=\"ds-version-pill-label\">1.23.4</span></a>",
+      "css": ".ds-version-pill { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.1rem 0.55rem; border-radius: 999px; background: color-mix(in oklab, oklch(48% 0.1 175) 14%, oklch(98.5% 0.004 180)); color: oklch(48% 0.1 175); border: 1px solid color-mix(in oklab, oklch(48% 0.1 175) 35%, oklch(89% 0.01 180)); font-family: ui-monospace, \"SF Mono\", \"Cascadia Mono\", monospace; font-size: 0.75rem; text-decoration: none; white-space: nowrap; transition: border-color 0.15s ease; } .ds-version-pill:hover { border-color: oklch(48% 0.1 175); } .ds-version-pill:focus-visible { outline: 2px solid oklch(48% 0.1 175); outline-offset: 2px; }"
+    },
+    {
+      "name": "Latest Badge",
+      "kind": "chip",
+      "refersTo": "latest-badge",
+      "description": "Uppercase micro-badge marking the current release; Verdict Green tint, flex sibling of its pill.",
+      "html": "<span class=\"ds-latest-badge\">Latest</span>",
+      "css": ".ds-latest-badge { display: inline-block; font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; padding: 0.1rem 0.5rem; border-radius: 999px; background: color-mix(in oklab, oklch(45% 0.12 155) 18%, oklch(98.5% 0.004 180)); color: oklch(45% 0.12 155); border: 1px solid color-mix(in oklab, oklch(45% 0.12 155) 40%, oklch(89% 0.01 180)); vertical-align: middle; }"
+    },
+    {
+      "name": "Count Badge",
+      "kind": "chip",
+      "refersTo": "count-badge",
+      "description": "Mono pill for edge counts; recessed fill, softened ink, always a flex sibling of its pill.",
+      "html": "<span class=\"ds-count-badge\">1,204</span>",
+      "css": ".ds-count-badge { display: inline-block; font-family: ui-monospace, \"SF Mono\", \"Cascadia Mono\", monospace; font-size: 0.7rem; line-height: 1.4; padding: 0 0.45rem; border-radius: 999px; background: oklch(95.5% 0.006 180); border: 1px solid oklch(89% 0.01 180); color: color-mix(in oklab, oklch(22% 0.02 180) 75%, oklch(98.5% 0.004 180)); vertical-align: middle; }"
+    },
+    {
+      "name": "KG Row Card",
+      "kind": "card",
+      "refersTo": "card-kg-row",
+      "description": "One knowledge graph on the root page: name, canonical identifier, meta line, measured pill row.",
+      "html": "<div class=\"ds-kg-row\"><div class=\"ds-kg-ident\"><a class=\"ds-kg-name\" href=\"#\">Drug Approvals KP</a><span class=\"ds-kg-canonical\">infores:drugapprovals-kp</span></div><div class=\"ds-kg-pills\"><a class=\"ds-version-pill\" href=\"#\">1.23.4</a><span class=\"ds-latest-badge\">Latest</span></div></div>",
+      "css": ".ds-kg-row { display: grid; gap: 0.45rem; padding: 0.85rem 1rem; border: 1px solid oklch(89% 0.01 180); border-radius: 0.625rem; background: oklch(98.5% 0.004 180); } .ds-kg-ident { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; min-width: 0; } .ds-kg-name { font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 1.05rem; font-weight: 650; color: oklch(22% 0.02 180); text-decoration: none; overflow-wrap: anywhere; transition: color 0.15s ease; } .ds-kg-name:hover { color: oklch(48% 0.1 175); } .ds-kg-canonical { font-family: ui-monospace, \"SF Mono\", monospace; font-size: 0.75rem; color: color-mix(in oklab, oklch(22% 0.02 180) 70%, oklch(98.5% 0.004 180)); overflow-wrap: anywhere; } .ds-kg-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; }"
+    },
+    {
+      "name": "Edge Node Card",
+      "kind": "card",
+      "refersTo": "card-edge-node",
+      "description": "One side of the relationship diagram: role label, name, category, identifier with copy chip.",
+      "html": "<div class=\"ds-edge-node\"><span class=\"ds-edge-node-role\">Subject</span><span class=\"ds-edge-node-name\">Metformin</span><span class=\"ds-edge-node-cat\">SmallMolecule</span><div class=\"ds-edge-node-id\"><code class=\"ds-code\">PUBCHEM.COMPOUND:4091</code><button class=\"ds-copy-btn\" type=\"button\">Copy</button></div></div>",
+      "css": ".ds-edge-node { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; border: 1px solid oklch(89% 0.01 180); border-radius: 0.625rem; background: oklch(98.5% 0.004 180); padding: 0.9rem 1rem; } .ds-edge-node-role { font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in oklab, oklch(22% 0.02 180) 55%, oklch(98.5% 0.004 180)); } .ds-edge-node-name { font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 1.1rem; font-weight: 700; line-height: 1.3; color: oklch(22% 0.02 180); overflow-wrap: anywhere; } .ds-edge-node-cat { font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 0.8rem; color: color-mix(in oklab, oklch(22% 0.02 180) 70%, oklch(98.5% 0.004 180)); } .ds-edge-node-id { margin-top: 0.4rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; } .ds-code { background: oklch(95.5% 0.006 180); border: 1px solid oklch(89% 0.01 180); border-radius: 0.375rem; padding: 0.1rem 0.45rem; font-family: ui-monospace, \"SF Mono\", monospace; font-size: 0.78rem; color: oklch(22% 0.02 180); overflow-wrap: anywhere; }"
+    },
+    {
+      "name": "Timeline Step",
+      "kind": "chip",
+      "refersTo": "timeline-step",
+      "description": "One release in the versions timeline; the only solid-fill navigation element when current.",
+      "html": "<a class=\"ds-timeline-step\" href=\"#\"><span class=\"ds-version-pill-label\">1.23.3</span><span class=\"ds-count-badge\">1,180</span></a>",
+      "css": ".ds-timeline-step { display: inline-flex; align-items: center; gap: 0.45rem; border: 1px solid oklch(89% 0.01 180); border-radius: 999px; background: oklch(98.5% 0.004 180); padding: 0.25rem 0.8rem; font-family: ui-monospace, \"SF Mono\", monospace; font-size: 0.82rem; color: oklch(22% 0.02 180); text-decoration: none; transition: border-color 0.15s ease; } .ds-timeline-step:hover { border-color: oklch(48% 0.1 175); } .ds-timeline-step:focus-visible { outline: 2px solid oklch(48% 0.1 175); outline-offset: 2px; }"
+    },
+    {
+      "name": "Timeline Step (Active)",
+      "kind": "chip",
+      "refersTo": "timeline-step-active",
+      "description": "The release being viewed: solid Deep Teal fill, paper text, inverted count badge.",
+      "html": "<span class=\"ds-timeline-step ds-timeline-step-active\" aria-current=\"page\"><span>1.23.4</span><span class=\"ds-count-badge\">1,204</span></span>",
+      "css": ".ds-timeline-step { display: inline-flex; align-items: center; gap: 0.45rem; border: 1px solid oklch(89% 0.01 180); border-radius: 999px; background: oklch(98.5% 0.004 180); padding: 0.25rem 0.8rem; font-family: ui-monospace, \"SF Mono\", monospace; font-size: 0.82rem; color: oklch(22% 0.02 180); text-decoration: none; } .ds-timeline-step-active { background: oklch(48% 0.1 175); border-color: oklch(48% 0.1 175); color: oklch(98.5% 0.004 180); font-weight: 600; } .ds-timeline-step-active .ds-count-badge { background: color-mix(in oklab, oklch(98.5% 0.004 180) 18%, oklch(48% 0.1 175)); border-color: transparent; color: oklch(98.5% 0.004 180); }"
+    },
+    {
+      "name": "Diff Line",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "One changed fact across releases: +/- marker, field name, struck old value, arrow, new value. Colour is the backup signal, never the only one.",
+      "html": "<ul class=\"ds-diff-list\"><li class=\"ds-diff-line ds-diff-removed\"><span class=\"ds-diff-marker\" aria-hidden=\"true\">-</span><span class=\"ds-diff-field\">publications</span><code>PMID:12345678</code><span class=\"ds-diff-sr\">removed</span></li><li class=\"ds-diff-line ds-diff-added\"><span class=\"ds-diff-marker\" aria-hidden=\"true\">+</span><span class=\"ds-diff-field\">publications</span><code>PMID:87654321</code><span class=\"ds-diff-sr\">added</span></li></ul>",
+      "css": ".ds-diff-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; } .ds-diff-line { display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap; font-family: \"Atkinson Hyperlegible Next\", system-ui, sans-serif; font-size: 0.85rem; color: oklch(22% 0.02 180); } .ds-diff-line code { background: oklch(95.5% 0.006 180); border-radius: 0.375rem; padding: 0.05rem 0.4rem; font-family: ui-monospace, \"SF Mono\", monospace; font-size: 0.78rem; overflow-wrap: anywhere; } .ds-diff-field { font-weight: 600; } .ds-diff-marker { font-weight: 700; } .ds-diff-added, .ds-diff-added .ds-diff-marker { color: oklch(45% 0.12 155); } .ds-diff-removed, .ds-diff-removed .ds-diff-marker { color: oklch(50% 0.17 25); } .ds-diff-removed code { text-decoration: line-through; text-decoration-color: oklch(50% 0.17 25); } .ds-diff-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Cool Paper",
+    "overview": "The page is a sheet of cool paper on the bench: quiet, slightly bluish-white, with dark ink and exactly one accent pen in deep teal. Everything on it is evidence, laid out the way a careful lab record reads — the claim as a sentence, the facts beneath it, the versions along the margin. Nothing competes with the content for attention.\n\nThis is a scientific instrument, not a brand exercise: flat surfaces, hairline borders, no shadows, no gradients, no decorative imagery. Colour is evidence, not decoration — it appears only where the markup also says what it means in words. Legibility wins every tradeoff, including thematic ones. Light cool paper is the default; slate bench is its equal after dark, both carrying the same single teal accent at matched contrast.",
+    "keyCharacteristics": [
+      "Flat, bordered, tonal: depth comes from three neutral steps and 1px hairlines, never shadows.",
+      "One accent: deep teal (sea-glass after dark) marks links, actions, and current state — nothing else.",
+      "Words first: colour never carries meaning alone; every coloured signal has a text or marker twin.",
+      "Prose-first evidence: facts render as citable sentences with inline links, not label-value grids.",
+      "One left rail: header brand, headline, and evidence share a single left edge at every width."
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "Deep teal is the only hue that marks action or currency. Semantic green/red/amber appear only on state and always paired with words or +/- markers. No other color enters the system.", "section": "colors" },
+      { "name": "The Words-First Rule", "body": "Colour is never the only signal. Every diff line carries a +/- marker and a visually-hidden added/removed/changed word; every state kicker is text.", "section": "colors" },
+      { "name": "The Tint, Not Paint Rule", "body": "Soft states use color-mix tints of the accent over the page background — never solid fills of the semantic color.", "section": "colors" },
+      { "name": "The Sentence Rule", "body": "Facts about an edge are written as prose sentences with links inline, never as label-value pairs. The claim and its evidence sit at the same size so they read as one argument.", "section": "typography" },
+      { "name": "The Identifier Rule", "body": "Identifiers always render in mono, never in body face. A bare identifier in prose face is a defect.", "section": "typography" },
+      { "name": "The Flat Bench Rule", "body": "Shadows, glows, and drop filters are banned at every level. Depth is a tonal decision, never a cast shadow. Hover re-inks instead of lifting.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do pair every colour signal with words or markers (+/-, uppercase kickers, hidden screen-reader text).",
+      "Do write edge facts as citable prose sentences at body size, with identifiers in mono chips.",
+      "Do keep header, headline, and content on the one 64rem left rail; center only terminal state pages (34rem).",
+      "Do use teal tints (color-mix at 10-18%) for soft states and solid teal only for actions and the current version.",
+      "Do keep both themes at matched contrast: when a light-mode color fails in dark, redesign the treatment, never just darken the text."
+    ],
+    "donts": [
+      "Don't add shadows, glows, gradients, or any cast depth — the bench is flat at rest and on hover.",
+      "Don't introduce hues beyond the teal accent, Registry Blue, and the three-color state trio.",
+      "Don't center article content or split the left rail; the page reads as one grid with one left edge.",
+      "Don't render identifiers, versions, or counts in the body face; mono with a recessed chip is the only correct treatment.",
+      "Don't use amber as text in dark mode, and don't strip the research-use banner to a footnote — it is a legal boundary and keeps banner treatment in both themes.",
+      "Don't nest badges inside pills or buttons; siblings in a flex row keep every chip's border intact."
+    ]
+  }
+}

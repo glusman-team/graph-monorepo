@@ -8,7 +8,23 @@
         "command": "uv run pytest -q",
         "cwd": "dagster/libs/mo-core"
       },
-      "cache": true
+      "cache": true,
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check . && uv run ruff format --check .",
+        "cwd": "dagster/libs/mo-core"
+      },
+      "cache": true,
+      "inputs": [
+        "pythonInputs"
+      ],
+      "outputs": []
     }
   }
 }

@@ -4,3 +4,6 @@ directory_type = "workspace"
 
 [[workspace.projects]]
 path = "projects/dakp"
+
+[[workspace.projects]]
+path = "projects/linkouts"
