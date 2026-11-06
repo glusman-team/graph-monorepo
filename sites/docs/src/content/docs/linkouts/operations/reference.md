@@ -12,6 +12,7 @@ All Linkouts jobs are manual. Narrow jobs build one output and read upstream art
 | Job                            | Purpose                                                     | Writes to a shared target?               |
 | ------------------------------ | ----------------------------------------------------------- | ---------------------------------------- |
 | `linkouts_upload`              | Stage, publish, status, and probe for one complete release. | Yes, only through `push_staged_release`. |
+| `linkouts_load_release`        | Directly merge one DAKP release into the live store.        | Yes; normally launched by DAKP sensor.   |
 | `linkouts_stage_release`       | Build one staging manifest.                                 | Digest-scoped local staging only.        |
 | `linkouts_push_staged_release` | Publish an existing verified manifest.                      | Yes.                                     |
 | `linkouts_status_report`       | Inspect stored releases, pools, indexing, and counts.       | Report artifact only.                    |
@@ -44,6 +45,17 @@ All Linkouts jobs are manual. Narrow jobs build one output and read upstream art
 | `progress`                        | `true`                 | Structured progress logging.                                               |
 
 `validate_release` also accepts `ids_path` and `sample_full_release`, and always uses dry-run staging. Filtered or no-pool output is diagnostic and cannot enter normal publication.
+
+## Direct live load
+
+`load_release` is separate from staged blue/green publication. It accepts the same KGX inputs as staging plus:
+
+- `target_store`: `cosmos` or `file:<path>`; the default is `cosmos`;
+- `dictionary_path`: required for DAKP production loads;
+- `base_key`: optional preferred delta base;
+- `zstd_level`, `sample_size`, `sample_seed`, `sampled_at`, `concurrency`, `threads`, `engine`, and `progress`.
+
+The Dagster asset always sets the worker `no_repack` option so an existing edge document keeps its prior release history. The worker writes and validates a typed `linkouts.load/1` report before Dagster publishes its artifact reference. See [Automated DAKP releases](/graph-monorepo/dakp/release-automation/) for the `hf_publish` sensor contract.
 
 ## Publication fields
 
