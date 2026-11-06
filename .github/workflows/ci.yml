@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=dakp,dakp-pipeline,mo-core,mo-kg,mo-dagster --parallel=4'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=dakp,dakp-pipeline,mo-core,mo-kg,mo-dagster --parallel=4'
 
   dakp-go:
     needs: changes
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - working-directory: dagster/projects/dakp/workers/go
-        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; go build ./...; go test -race -count=1 ./...; golangci-lint run ./...; golangci-lint fmt --diff ./...; go mod tidy -diff'
+        run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; go build ./...; go test -race -count=1 ./...; golangci-lint run ./...; golangci-lint fmt --diff ./...; go mod tidy -diff'
 
   linkouts-python:
     needs: changes
@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=linkouts,linkouts-pipeline --parallel=2'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=linkouts,linkouts-pipeline --parallel=2'
 
   linkouts-go:
     needs: changes
@@ -87,7 +87,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - working-directory: dagster/projects/linkouts/workers/go
-        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; go build ./...; go test -race -count=1 ./...; golangci-lint run ./...; golangci-lint fmt --diff ./...; go mod tidy -diff'
+        run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; go build ./...; go test -race -count=1 ./...; golangci-lint run ./...; golangci-lint fmt --diff ./...; go mod tidy -diff'
 
   linkouts-web:
     needs: changes
@@ -101,7 +101,7 @@ jobs:
         with:
           path: sites/linkouts/priv/plts
           key: linkouts-plt-${{ runner.os }}-${{ hashFiles('flake.lock', 'sites/linkouts/mix.lock') }}
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); npx nx run-many -t test lint dialyzer --projects=linkouts-web --parallel=1'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); npx nx run-many -t test lint dialyzer --projects=linkouts-web --parallel=1'
 
   docs:
     needs: changes
@@ -111,7 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npm run docs:verify'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; npm run docs:verify'
 
   dagster:
     needs: changes
@@ -122,7 +122,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - working-directory: dagster/deployments/local
-        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; (cd ../../projects/dakp && uv sync --locked); (cd ../../projects/linkouts && uv sync --locked); uv sync --locked; uv run dg check defs'
+        run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; (cd ../../projects/dakp && uv sync --locked); (cd ../../projects/linkouts && uv sync --locked); uv sync --locked; uv run dg check defs'
 
   deploy-build:
     needs: changes
@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; python3 sites/linkouts/scripts/check_deploy.py; hadolint sites/linkouts/Dockerfile'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; python3 sites/linkouts/scripts/check_deploy.py; hadolint sites/linkouts/Dockerfile'
       - env:
           DOCKER_BUILDKIT: "1"
           LINKOUTS_IMAGE: linkouts:ci
@@ -148,7 +148,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); prek run --all-files --hook-stage pre-commit; python3 scripts/test_ci_changes.py; scripts/check-locks.sh; prek run shellcheck --all-files --hook-stage pre-push; actionlint; hadolint sites/linkouts/Dockerfile; python3 sites/linkouts/scripts/check_deploy.py; nix flake check --no-build --no-warn-dirty'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); prek run --all-files --hook-stage pre-commit; python3 scripts/test_ci_changes.py; scripts/check-locks.sh; prek run shellcheck --all-files --hook-stage pre-push; actionlint; hadolint sites/linkouts/Dockerfile; python3 sites/linkouts/scripts/check_deploy.py; nix flake check --no-build --no-warn-dirty'
 
   security:
     needs: changes
@@ -157,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd dagster/projects/dakp/workers/go && govulncheck ./...); (cd dagster/projects/linkouts/workers/go && govulncheck ./...); (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked && mix hex.audit); npm audit'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; (cd dagster/projects/dakp/workers/go && govulncheck ./...); (cd dagster/projects/linkouts/workers/go && govulncheck ./...); (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked && mix hex.audit); npm audit'
 
   ci-required:
     name: CI Required

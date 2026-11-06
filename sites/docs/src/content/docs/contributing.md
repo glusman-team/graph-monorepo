@@ -7,7 +7,7 @@ sidebar:
 
 ## Set up
 
-Use the Nix development shell so Go, Node, BEAM, Python, and repository tools stay on the tested toolchain.
+Use the default Nix development shell so Go, Node, BEAM, Python, and repository tools stay on the tested toolchain. CI and production use `nix develop .#deploy`, which excludes interactive Agent of Empires tooling.
 
 ```sh
 direnv allow        # or nix develop

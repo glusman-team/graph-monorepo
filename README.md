@@ -44,7 +44,9 @@ make test
 make lint
 ```
 
-The devshell pins Node, Go 1.26.10, Elixir 1.19/OTP 28, uv, and repository tools. Commands are limited to four parallel tasks/CPUs for shared build hosts. Run heavy Linkouts builds and tests on `wenceslaus`, not an interactive workstation.
+The default devshell pins Node, Go 1.26.10, Elixir 1.19/OTP 28, uv, repository tools, and the interactive coding agent. CI and production use `nix develop .#deploy`, which provides the same toolchain without Agent of Empires. Local development can use its existing upstream binary cache with `nix develop --accept-flake-config`.
+
+Commands are limited to four parallel tasks/CPUs for shared build hosts. Run heavy Linkouts builds and tests on `wenceslaus`, not an interactive workstation.
 
 ```sh
 make dev               # Dagster UI on http://localhost:3000

@@ -172,17 +172,17 @@ If migrating from user units, avoid duplicate cache/Dagster owners:
 systemctl --user disable --now dakp-nercache dagster-daemon dagster-webserver
 ```
 
-Entering the devshell automatically starts or reuses the detached `dakp` session
-when `~/.config/dagster/dagster.env` exists:
+Entering the deployment devshell automatically starts or reuses the detached
+`dakp` session when `~/.config/dagster/dagster.env` exists:
 
 ```bash
 cd /path/to/graph-monorepo
-nix develop
+nix develop .#deploy
 ```
 
 Auto-start applies to interactive shells. Set `DAKP_TMUX_AUTOSTART=0` before shell
 entry to suppress it, or `DAKP_TMUX_AUTOSTART=1` to explicitly enable it for a
-non-interactive `nix develop -c` invocation. Use `DAKP_SERVICE_ENV` to select
+non-interactive `nix develop .#deploy -c` invocation. Use `DAKP_SERVICE_ENV` to select
 another environment file. The supervisor refuses to start beside active or enabled
 systemd units. `process-compose` restarts a service 10 seconds after an unexpected
 exit; the next `up` repairs a stopped process-compose pane. Startup is serialized
@@ -202,7 +202,7 @@ dakp-services down
 The control socket directory is mode 700. `down` asks process-compose to stop each
 service with SIGTERM and a 120-second timeout, allowing NER-cache cleanup and
 Dagster shutdown. The session remains after SSH logout. After a host reboot, run
-`nix develop` in the checkout again.
+`nix develop .#deploy` in the checkout again.
 
 ### Systemd user units
 

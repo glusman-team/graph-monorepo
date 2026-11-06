@@ -1,55 +1,52 @@
-# The one devshell: every tool for every language in this repo.
-# Enter with `nix develop` (or cd in with direnv via .envrc).
+# Two shells share the same repository toolchain and activation behavior:
+# - default: interactive development, including the pi coding agent.
+# - deploy: CI and production, without interactive-only agent dependencies.
 {
   pkgs,
   inputs',
   config,
   ...
 }:
-{
-  devShells.default = pkgs.mkShell {
-    packages = [
-      # python (dagster itself runs via uv inside dagster/, wheels from uv.lock)
-      pkgs.uv
+let
+  sharedPackages = [
+    # python (dagster itself runs via uv inside dagster/, wheels from uv.lock)
+    pkgs.uv
 
-      # node (nx task graph; nx itself comes from npm, not nixpkgs)
-      pkgs.nodejs_24
+    # node (nx task graph; nx itself comes from npm, not nixpkgs)
+    pkgs.nodejs_24
 
-      # go workers
-      pkgs.go
-      pkgs.gopls
-      pkgs.golangci-lint
-      pkgs.govulncheck
+    # go workers
+    pkgs.go
+    pkgs.gopls
+    pkgs.golangci-lint
+    pkgs.govulncheck
 
-      # Phoenix LiveView (BEAM/OTP 28)
-      pkgs.beam28Packages.elixir_1_19
+    # Phoenix LiveView (BEAM/OTP 28)
+    pkgs.beam28Packages.elixir_1_19
 
-      # documentation, container, deployment, and shell quality gates
-      pkgs.lychee
-      pkgs.hadolint
-      pkgs.flyctl
-      pkgs.shellcheck
+    # documentation, container, deployment, and shell quality gates
+    pkgs.lychee
+    pkgs.hadolint
+    pkgs.flyctl
+    pkgs.shellcheck
 
-      # jvm/scala seam (mill; unused until a scala worker lands, kept ready)
-      pkgs.temurin-bin-21
-      pkgs.mill
+    # jvm/scala seam (mill; unused until a scala worker lands, kept ready)
+    pkgs.temurin-bin-21
+    pkgs.mill
 
-      # repo tooling
-      pkgs.git
-      pkgs.gh
-      pkgs.prek
-      pkgs.nixfmt-tree
-      pkgs.actionlint
-      pkgs.quicktype
+    # repo tooling
+    pkgs.git
+    pkgs.gh
+    pkgs.prek
+    pkgs.nixfmt-tree
+    pkgs.actionlint
+    pkgs.quicktype
 
-      # Production tmux supervisor; activates only when dagster.env exists.
-      config.packages.dagster-tmux
+    # Production tmux supervisor; activates only when dagster.env exists.
+    config.packages.dagster-tmux
+  ];
 
-      # pi coding agent (project skills in .pi/ merge with global after trust)
-      # inputs' is system-implicit under flake-parts: packages.<name>, no system segment
-      inputs'.agent-of-empires.packages.aoe-with-web
-    ];
-
+  sharedShell = {
     env = {
       # workers build with the nix-provided toolchain only
       GOTOOLCHAIN = "local";
@@ -88,5 +85,26 @@
 
       echo "graph-monorepo devshell ready: make help"
     '';
+  };
+in
+{
+  devShells = {
+    default = pkgs.mkShell (
+      sharedShell
+      // {
+        packages = sharedPackages ++ [
+          # pi coding agent (project skills in .pi/ merge with global after trust)
+          # inputs' is system-implicit under flake-parts: packages.<name>, no system segment
+          inputs'.agent-of-empires.packages.aoe-with-web
+        ];
+      }
+    );
+
+    deploy = pkgs.mkShell (
+      sharedShell
+      // {
+        packages = sharedPackages;
+      }
+    );
   };
 }
