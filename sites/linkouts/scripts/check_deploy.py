@@ -50,6 +50,20 @@ def main() -> None:
     assert "COPY web" not in dockerfile
     assert "COPY kgs" not in dockerfile
     assert "USER app" in dockerfile
+
+    # flyctl needs auth even for remote config validation. Check every authenticated
+    # step so validation cannot fail before either deployment target is reached.
+    workflow = (ROOT / ".github" / "workflows" / "deploy-linkouts.yml").read_text()
+    for step in (
+        "Validate Fly configuration",
+        "Deploy production",
+        "Deploy public preview",
+    ):
+        block = workflow.split(f"      - name: {step}\n", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        assert "FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}" in block, step
+
     print("Deployment paths and credential-free preview configuration are valid.")
 
 
