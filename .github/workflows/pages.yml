@@ -64,7 +64,7 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
         if: steps.changes.outputs.publish != 'false'
       - if: steps.changes.outputs.publish != 'false'
-        run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; npm run docs:verify'
+        run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; npm run docs:verify'
 
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
         if: steps.changes.outputs.publish != 'false'
