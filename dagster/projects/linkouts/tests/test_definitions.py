@@ -7,8 +7,9 @@ from linkouts_dag.definitions import defs
 def test_code_location_loads_complete_manual_surface() -> None:
     assert defs.resolve_job_def("linkouts_upload")
     assert defs.resolve_job_def("linkouts_stage_release")
+    assert defs.resolve_job_def("linkouts_load_release")
     assert defs.resolve_job_def("linkouts_push_staged_release")
-    assert len(all_assets) == 10
+    assert len(all_assets) == 11
     assert not defs.sensors
     assert not defs.schedules
 
@@ -20,6 +21,13 @@ def test_push_has_lineage_dependency_but_narrow_job_selects_only_push() -> None:
     assert {key.to_user_string() for key in push.dependency_keys} == {"stage_release"}
     job = defs.resolve_job_def("linkouts_push_staged_release")
     assert job.asset_layer.selected_asset_keys == {push.key}
+
+
+def test_load_has_external_hf_publish_lineage_but_narrow_job_selects_only_load() -> None:
+    load = next(asset for asset in all_assets if asset.key.to_user_string() == "load_release")
+    assert {key.to_user_string() for key in load.dependency_keys} == {"hf_publish"}
+    job = defs.resolve_job_def("linkouts_load_release")
+    assert job.asset_layer.selected_asset_keys == {load.key}
 
 
 def test_destructive_jobs_are_not_registered_by_default() -> None:
