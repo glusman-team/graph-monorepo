@@ -157,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd dagster/projects/dakp/workers/go && govulncheck ./...); (cd dagster/projects/linkouts/workers/go && govulncheck ./...); (cd sites/linkouts && mix local.hex --force && mix hex.audit); npm audit'
+      - run: nix develop "$GITHUB_WORKSPACE" --command bash -c 'set -e; npm ci; (cd dagster/projects/dakp/workers/go && govulncheck ./...); (cd dagster/projects/linkouts/workers/go && govulncheck ./...); (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked && mix hex.audit); npm audit'
 
   ci-required:
     name: CI Required
