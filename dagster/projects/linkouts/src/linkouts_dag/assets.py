@@ -205,6 +205,16 @@ linkouts_upload = dg.define_asset_job(
     description="Stage and publish one complete Linkouts release. Launch manually with typed config.",
 )
 
+linkouts_load_release = dg.define_asset_job(
+    "linkouts_load_release",
+    selection=dg.AssetSelection.assets(load_release),
+    description=(
+        "Merge one DAKP release into the live Linkouts store while preserving "
+        "previously stored versions. Normally launched by dakp_release sensor."
+    ),
+    tags={"linkouts/stage": LOAD_RELEASE, "linkouts/automation": "dakp"},
+)
+
 
 def _single_output_job(asset: dg.AssetsDefinition) -> dg.JobDefinition:
     stage = asset.key.to_user_string()
@@ -219,13 +229,20 @@ def _single_output_job(asset: dg.AssetsDefinition) -> dg.JobDefinition:
     )
 
 
-single_output_jobs: list[dg.JobDefinition] = [_single_output_job(asset) for asset in all_assets]
+single_output_assets = [asset for asset in all_assets if asset.key != load_release.key]
+single_output_jobs: list[dg.JobDefinition] = [
+    _single_output_job(asset) for asset in single_output_assets
+]
 linkouts_purge = dg.define_asset_job(
     "linkouts_purge",
     selection=dg.AssetSelection.assets(*destructive_assets),
     description="Opt-in purge requiring exact target confirmation; excluded from upload.",
 )
-all_jobs: list[dg.JobDefinition] = [linkouts_upload, *single_output_jobs]
+all_jobs: list[dg.JobDefinition] = [
+    linkouts_upload,
+    linkouts_load_release,
+    *single_output_jobs,
+]
 
 resources: dict[str, object] = {
     "pipes_client": mo_pipes.subprocess_client_resource(),
@@ -242,6 +259,7 @@ __all__ = [
     "all_jobs",
     "automation_assets",
     "destructive_assets",
+    "linkouts_load_release",
     "linkouts_purge",
     "resources",
     "upload_assets",
