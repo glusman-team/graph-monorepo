@@ -17,8 +17,8 @@ Monorepo for ISB multiomics knowledge-graph pipelines and their reader:
   holds the static documentation site (Astro Starlight + Pagefind, GitHub Pages).
 - **Nx** at the root as task graph + cached test runner (pytest via
   `project.json` targets, go test/build/lint via `@naxodev/gonx`).
-- **Nix** provides every tool (single devshell); artifacts are managed by
-  npm/uv/go themselves.
+- **Nix** provides two devshells: `default` for interactive development and
+  `deploy` for CI/production; artifacts are managed by npm/uv/go themselves.
 
 ## Build hosts
 
@@ -45,7 +45,7 @@ Monorepo for ISB multiomics knowledge-graph pipelines and their reader:
 | `sites/linkouts/` | Phoenix LiveView reader, display configs (`kgs/*.exs`), dictionaries, Fly packaging | dynamic app; never static |
 | `sites/docs/` | Starlight content, search, Pages output | every user-facing doc lives here, not in scattered READMEs |
 | `sites/linkouts/PRODUCT.md`, `DESIGN.md` | linkouts product + design context | keep accurate when scope changes |
-| `nix/modules/` | `devshell.nix` (all tools) + `dagster.nix` (runtime apps) | minimal flake.nix, /etc/nixos style |
+| `nix/modules/` | `devshell.nix` (development + deployment tools) + `dagster.nix` (runtime apps) | minimal flake.nix, /etc/nixos style |
 | `.pi/` | project skills/extensions/prompts/settings | skills merge with global after trust |
 
 ## Conventions

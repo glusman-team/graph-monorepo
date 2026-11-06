@@ -4,7 +4,7 @@ Start with the [documentation homepage](https://glusman-team.github.io/graph-mon
 
 ## Setup
 
-Use Nix with flakes and optionally direnv. The development shell supplies uv, Node, Go, Elixir/OTP, Nx, linters, security scanners, and hooks.
+Use Nix with flakes and optionally direnv. The default development shell supplies uv, Node, Go, Elixir/OTP, Nx, linters, security scanners, hooks, and interactive agent tooling. Use `nix develop .#deploy` for the CI/production toolchain without Agent of Empires.
 
 ```sh
 git clone https://github.com/glusman-team/graph-monorepo.git
