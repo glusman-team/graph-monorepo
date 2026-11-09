@@ -1486,6 +1486,20 @@ def test_rig_section_validates_directly_against_tablassert_rig_config() -> None:
     assert source.source_status == "maintained_regular_updates"
 
 
+def test_rig_records_weekly_release_schedule() -> None:
+    releases = tablassert_configs.graph_config()["rig"]["source_info"][
+        "data_versioning_and_releases"
+    ]
+    assert (
+        "Dagster runs dakp_release_check on wenceslaus every Friday at "
+        "17:00 America/Los_Angeles" in releases
+    )
+    assert "dakp_gpu_gate" in releases
+    assert "24-hour deadline" in releases
+    assert "every GPU reports at most 1024 MiB used" in releases
+    assert "Unchanged sources produce no build, version bump, or upload." in releases
+
+
 def test_tablassert_rig_config_rejects_unknown_keys_and_bad_source_status() -> None:
     """The installed ``RIGConfig`` schema really BITES: unknown keys and bad enums are rejected.
 
