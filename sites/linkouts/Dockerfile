@@ -27,7 +27,7 @@ RUN mix deps.compile && mix compile --warnings-as-errors \
   && mix assets.deploy && mix release --overwrite
 
 # ---- runtime ---------------------------------------------------------------------------
-FROM docker.io/debian:bookworm-20261027-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
+FROM docker.io/debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
 # hadolint ignore=DL3008
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
   libstdc++6 libncurses6 openssl ca-certificates tzdata \
