@@ -7,11 +7,11 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v1.5.0
 	github.com/bytedance/sonic v1.15.5
 	github.com/chdb-io/chdb-go/lib/embedded v0.260703.1
-	github.com/chdb-io/chdb-go/v2 v2.2.0
+	github.com/chdb-io/chdb-go/v2 v2.3.0
 	github.com/hupe1980/dagster-pipes-go v0.0.10
 	github.com/klauspost/compress v1.20.3
 	github.com/zeebo/blake3 v0.2.4
-	golang.org/x/sync v0.24.0
+	golang.org/x/sync v0.25.0
 	golang.org/x/time v0.16.0
 )
 
