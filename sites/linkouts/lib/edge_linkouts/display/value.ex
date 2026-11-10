@@ -46,7 +46,9 @@ defmodule EdgeLinkouts.Display.Value do
       - `{:compound, clauses}` renders several sentence-shaped clauses as one compound
       sentence: empty clauses drop, one clause stays a plain sentence, several join with
       "; and " and close with a single period. Continuation clauses downcase a leading
-      capitalized word but never a CURIE prefix or acronym.
+      capitalized word but never a CURIE prefix or acronym. The period is idempotent: a clause
+      that already ends in sentence punctuation is not given a second one, and an interior
+      clause yields its mark to the join, so a value ending in "." never prints "..".
   """
 
   alias EdgeLinkouts.Display.{Segment, Version}
@@ -298,29 +300,33 @@ defmodule EdgeLinkouts.Display.Value do
   # and self-dropping. Empty clauses vanish; one clause stays a plain sentence; several are
   # joined with "; and " and closed with one period. Continuation clauses drop their capital
   # so the join reads as prose, but only for word openers — a CURIE or acronym stays as-is.
+  #
+  # Exactly one terminal mark per sentence is the renderer's job, not each config's. A clause
+  # can arrive already punctuated: the species clause is configured with a "." suffix, and any
+  # stored value can end in one. Appending blindly printed "Homo sapiens (human).." (issue #58)
+  # mid-paragraph, so an interior clause hands its mark to the "; and " join and the assembled
+  # sentence only receives a period through close_sentence/1, which every sentence-shaped
+  # render shares.
   def render({:compound, clauses}, ctx) do
-    clauses
-    |> Enum.map(&render(&1, ctx))
-    |> Enum.reject(&(&1 == []))
+    rendered =
+      clauses
+      |> Enum.map(&render(&1, ctx))
+      |> Enum.reject(&blank_clause?/1)
+
+    last_index = length(rendered) - 1
+
+    rendered
     |> Enum.with_index()
-    |> Enum.map(fn
-      {clause, 0} ->
-        clause
-
-      {[{:text, <<first::utf8, second::utf8, rest::binary>>} | tail], _}
-      when first in ?A..?Z and second in ?a..?z ->
-        [{:text, String.downcase(<<first::utf8>>) <> <<second::utf8>> <> rest} | tail]
-
-      {clause, _} ->
-        clause
+    |> Enum.map(fn {clause, index} ->
+      clause = if(index == 0, do: clause, else: downcase_opener(clause))
+      if(index == last_index, do: clause, else: strip_terminal(clause))
     end)
-    |> case do
-      [] ->
-        []
-
-      clauses ->
-        Segment.join([Enum.intersperse(clauses, Segment.text("; and ")), Segment.text(".")])
-    end
+    # Stripping an interior clause's mark can empty it outright - a clause that was nothing but
+    # "." - and an empty side of a "; and " join prints "A; and ; and B".
+    |> Enum.reject(&blank_clause?/1)
+    |> Enum.intersperse(Segment.text("; and "))
+    |> Segment.join()
+    |> close_sentence()
   end
 
   def render({:names, name, prefix, suffix}, ctx) do
@@ -406,6 +412,103 @@ defmodule EdgeLinkouts.Display.Value do
     `mix linkouts.check` reports this at build time rather than on a page view.
     """
   end
+
+  # Sentence assembly for {:compound, clauses}. Kept below the render/2 multi-clause so the
+  # public clauses stay grouped together (the compiler warns otherwise, and CI runs with
+  # --warnings-as-errors).
+
+  # Continuation clauses read as prose, not as sentences glued together: only a word opener is
+  # downcased, so "Gene family MESH:D001 involved" keeps its acronym and a CURIE opener is
+  # never mangled.
+  defp downcase_opener([{:text, <<first::utf8, second::utf8, rest::binary>>} | tail])
+       when first in ?A..?Z and second in ?a..?z do
+    [{:text, String.downcase(<<first::utf8>>) <> <<second::utf8>> <> rest} | tail]
+  end
+
+  defp downcase_opener(clause), do: clause
+
+  # An interior clause keeps no terminal mark: "...(human).; and the object mapped to X" reads
+  # as two sentences fighting over one connector. The mark and any spacing around it go, so a
+  # stored value ending in ". " cannot print "(human) ; and".
+  @interior_mark ~r/[.;,]+\z/
+
+  defp strip_terminal(clause) do
+    update_trailing_text(clause, &interior_text/1)
+  end
+
+  defp interior_text(text) do
+    text
+    |> String.trim_trailing()
+    |> strip_marks()
+    |> String.trim_trailing()
+  end
+
+  defp strip_marks(text), do: Regex.replace(@interior_mark, text, "")
+
+  defp blank_clause?(clause), do: clause |> Segment.to_text() |> String.trim() == ""
+
+  @doc """
+  Close a rendered sentence with exactly one terminal mark.
+
+  A sentence-shaped render - a compound sentence, one provenance bullet - owns its punctuation,
+  so a value that already ends in "." never prints ".." (issue #58). A clause ending in "!",
+  "?", ";" or ":" is left exactly as written, because gluing a period onto it ("Really?.") is
+  worse than the mark it carries, and an empty render stays empty rather than printing a bare
+  ".".
+  """
+  @spec close_sentence([Segment.t()]) :: [Segment.t()]
+  def close_sentence(body) do
+    body = body |> update_trailing_text(&tidy_trailing/1) |> Segment.join()
+
+    case body |> Segment.to_text() |> String.last() do
+      nil -> body
+      mark when mark in [".", "!", "?", ";", ":"] -> body
+      _ -> Segment.join([body, Segment.text(".")])
+    end
+  end
+
+  # "Foo ." from a value that ended in a space becomes "Foo.", so the mark the sentence already
+  # has sits against its words instead of hanging off one.
+  @space_before_mark ~r/\s+([.;!?])\z/
+
+  defp tidy_trailing(text) do
+    text |> String.trim_trailing() |> pull_mark_to_words()
+  end
+
+  defp pull_mark_to_words(text), do: Regex.replace(@space_before_mark, text, "\\1")
+
+  # The last thing a sentence prints is not always a plain text segment: it can be a link label
+  # or the inside of an emphasis chip or a "show more" fold. Punctuation and spacing decisions
+  # have to see that trailing text where it actually lives, or the mark check and the rewrite
+  # disagree and "...(human).." comes back through a different path.
+  defp update_trailing_text(segments, fun) do
+    case segments |> Enum.reverse() |> Enum.reject(&is_nil/1) do
+      [{:text, text} | rest] ->
+        Enum.reverse(rest, [Segment.text(fun.(text))])
+
+      [{:link, href, label} | rest] ->
+        Enum.reverse(rest, [Segment.link(href, fun.(label))])
+
+      [{:strong, inner} | rest] ->
+        Enum.reverse(rest, wrap(:strong, update_trailing_text(inner, fun)))
+
+      [{:more, inner} | rest] ->
+        Enum.reverse(rest, wrap(:more, update_trailing_text(inner, fun)))
+
+      [{:fold, label, inner} | rest] ->
+        Enum.reverse(rest, [{:fold, label, update_trailing_text(inner, fun)}])
+
+      [] ->
+        []
+
+      [other | rest] ->
+        Enum.reverse(rest, [other])
+    end
+    |> Segment.join()
+  end
+
+  defp wrap(_tag, []), do: nil
+  defp wrap(tag, inner), do: [{tag, inner}]
 
   defp render_list(name, inner, separator, max, conjunction, ctx) do
     case fetch(ctx, name) do

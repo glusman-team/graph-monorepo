@@ -679,6 +679,48 @@ defmodule EdgeLinkouts.DisplayTest do
       refute text =~ "original object"
     end
 
+    test "the species sentence closes with exactly one period", %{config: config} do
+      # Issue #58, on the page a reviewer actually read: the species clause carries its own "."
+      # suffix and the compound closer appended a second one unconditionally, so Provenance
+      # printed "This assertion is about Homo sapiens (human).. FAERS and Canada Vigilance
+      # record 61 cases of this usage." Sentence punctuation belongs to the closer, so the
+      # period has to be idempotent for a value that already ends in one.
+      doc = %{
+        "subject" => "CHEBI:5118",
+        "subject_name" => "fluoxetine",
+        "original_subject" => "FLUOXETINE",
+        "subject_category" => ["biolink:SmallMolecule"],
+        "object" => "MONDO:0005258",
+        "object_name" => "autism spectrum disorder",
+        "original_object" => "Autism spectrum disorder",
+        "object_category" => ["biolink:Disease"],
+        "predicate" => "biolink:applied_to_treat",
+        "clinical_approval_status" => "off_label_use",
+        "species_context_qualifier" => "NCBITaxon:9606",
+        "supporting_text" => ["species_context_qualifier_name: Homo sapiens (human)"],
+        "number_of_cases" => 61
+      }
+
+      text = config |> Display.evidence(doc, @v1) |> Segment.to_text()
+
+      assert text =~ "This assertion is about Homo sapiens (human). FAERS"
+      refute text =~ "(human).."
+      refute text =~ ~r/\.\./
+
+      # The same clause inside a multi-clause compound must hand its mark to the "; and" join
+      # rather than gluing a period onto the connector.
+      two_clauses =
+        doc
+        |> Map.put("sex_qualifier", "PATO:0000384")
+        |> Map.update!("supporting_text", &["original_sex_qualifier: male" | &1])
+
+      joined = config |> Display.evidence(two_clauses, @v1) |> Segment.to_text()
+
+      assert joined =~ "This assertion is about Homo sapiens (human); and"
+      refute joined =~ ".; and"
+      refute joined =~ ~r/\.\./
+    end
+
     test "methods name the integrator, then its supporting sources", %{
       resolved: resolved,
       config: config
