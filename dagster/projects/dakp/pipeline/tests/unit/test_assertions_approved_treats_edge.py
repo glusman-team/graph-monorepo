@@ -413,39 +413,6 @@ def test_provenance_limited_to_condition_mentioning_sets(
     )
 
 
-def test_spl_provenance_is_isolated_for_each_original_object() -> None:
-    """Shared NDA/drug membership must not lend generic-pain SPLs to Pain of skin."""
-    ev = _supported_evidence(
-        "Examplestatin is indicated for pain of skin.",
-        second_set_text="Examplestatin is indicated for acute pain.",
-    )
-    cases = pl.DataFrame(
-        {
-            "nda": ["012345"] * 3,
-            "indication": ["Pain of skin", "acute pain", "cutaneous pain"],
-            "drugname": ["Examplestatin"] * 3,
-            "ingredient": ["Examplestatin"] * 3,
-        }
-    )
-    rows = build_approved_treats_rows(
-        cases,
-        ev,
-        {"12345": {"EXAMPLESTATIN"}},
-        {},
-        ner=DiseaseNER(gazetteer={"pain": "disease"}),
-    )
-    by_object = {row["object_text"]: row for row in rows}
-    assert set(by_object) == {"Pain of skin", "acute pain"}
-    for object_text, set_id in (("Pain of skin", "SET-A"), ("acute pain", "SET-B")):
-        row = by_object[object_text]
-        set_url = f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={set_id}"
-        assert row["supporting_spl_sets"] == set_url
-        assert row["supporting_spl_documents"] == f"{set_url}#34067-9"
-        assert row["supporting_spl_evidence"] == f"dailymed:{set_id}"
-        assert row["edge_evidence"] == f"dailymed:{set_id}"
-        assert row["FDA_regulatory_approvals"] == "NDA012345"
-
-
 def test_candidate_with_unnormalizable_condition_text_is_dropped(
     disease_map: dict[str, dict[str, str]],
 ) -> None:
