@@ -172,8 +172,10 @@ prints `..`.
 
 Text from a `supporting_text` entry. KGs log how an assertion was read as `"key: value"`
 strings (`"original_frequency_qualifier: daily dosage"`), so this form fetches `key`'s value
-and frames it as `prefix` + value + `suffix`. `rewordings` is a map of replacements applied
-to the value (keys downcased), for repairing fragments that read badly in prose:
+and frames it as `prefix` + value + `suffix`. `prefix` and `suffix` are templates, so the frame
+can name the concept with the KG's own slots (`"The {subject_role} name matched "`).
+`rewordings` is a map of replacements applied to the value (keys downcased), for repairing
+fragments that read badly in prose and for turning a stored code into a sentence:
 
 ```elixir
 {:supporting, "original_frequency_qualifier", ", dosed ", "",

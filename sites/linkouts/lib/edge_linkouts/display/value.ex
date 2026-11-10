@@ -34,8 +34,9 @@ defmodule EdgeLinkouts.Display.Value do
         {:supporting, key, prefix, suffix, rewordings, fallback}
                                                    text from a supporting_text "key: value"
                                                    entry, framed as "prefix + value + suffix";
-                                                   rewordings swaps the value for a keyed
-                                                   replacement (keys downcased)
+                                                   prefix and suffix are templates and may
+                                                   reference slots; rewordings swaps the value
+                                                   for a keyed replacement (keys downcased)
         {:if, conditions, then_spec, else_spec}    conditional inclusion
 
     Conditions: `{:present, :field}`, `{:eq, :field, value}`, `{:matches, :field, "regex"}`,
@@ -273,7 +274,9 @@ defmodule EdgeLinkouts.Display.Value do
 
       value ->
         reworded = Map.get(rewordings, String.downcase(value), value)
-        [Segment.text(prefix <> reworded <> suffix)]
+        # The frame is a template, not literal text: a role-worded prefix ("The {subject_role}
+        # name matched ") has to follow the same predicate-aware slots the mapping sentences use.
+        Segment.join([render(prefix, ctx), Segment.text(reworded), render(suffix, ctx)])
     end
   end
 

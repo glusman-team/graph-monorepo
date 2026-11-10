@@ -66,6 +66,14 @@ defmodule EdgeLinkouts.DisplayTest do
   # joined text keeps sentence-level expectations honest without hiding the item boundaries.
   defp items_text(items), do: Enum.map_join(items, " ", &Segment.to_text/1)
 
+  # The DailyMed label links inside a provenance list, told apart from the identifier links the
+  # mapping claims add by their href.
+  defp label_links(items) do
+    for {:link, href, _} = link <- Segment.flatten(items),
+        String.contains?(href, "dailymed"),
+        do: link
+  end
+
   defp evidence_text(config, doc, version),
     do: config |> Display.evidence(doc, version) |> items_text()
 
@@ -510,11 +518,11 @@ defmodule EdgeLinkouts.DisplayTest do
       assert text =~ "set-1, set-2, set-3"
       assert text =~ "KGX download preserves the complete list"
       refute text =~ "set-4"
-      refute text =~ "original subject"
       refute Enum.any?(Segment.flatten(evidence), &match?({:more, _}, &1))
 
-      links = for {:link, _, _} = link <- Segment.flatten(evidence), do: link
-      assert length(links) == 3
+      # The composition mapping claims add two CURIE links of their own, so the label-count
+      # assertions count label links by href and leave the identifier links out of the tally.
+      assert length(label_links(evidence)) == 3
     end
 
     test "a short label list renders completely without a truncation notice", %{config: config} do
@@ -531,7 +539,7 @@ defmodule EdgeLinkouts.DisplayTest do
       assert text =~ "33648718-2fbc-6840-e063-6294a90a5065"
       refute text =~ "product labels"
       refute text =~ "KGX download"
-      assert length(for {:link, _, _} <- Segment.flatten(evidence), do: true) == 2
+      assert length(label_links(evidence)) == 2
     end
 
     test "exactly three labels stays on the complete-list branch", %{config: config} do
@@ -546,15 +554,64 @@ defmodule EdgeLinkouts.DisplayTest do
       assert text =~ "7860dfb7-a67c-7b5f-e053-2a91aa0ad59f"
       refute text =~ "product labels"
       refute text =~ "KGX download"
-      assert length(for {:link, _, _} <- Segment.flatten(evidence), do: true) == 3
+      assert length(label_links(evidence)) == 3
     end
 
-    test "no labels omits Provenance but retains the verification action", %{config: config} do
+    test "a composition page states its name resolution even with no labels", %{config: config} do
+      # DAKP 1.27.0's real composition edges carry no publications at all, so the labels
+      # sentence drops. What remains is the provenance a curator actually needs on this page:
+      # how each source string resolved to an identifier, and how sure the match was.
       doc = Map.delete(composition_doc(), "publications")
       version = "infores:drugapprovals-kp-1.27.0"
 
-      assert Display.evidence(config, doc, version) == []
+      items = Display.evidence(config, doc, version)
+
+      assert Enum.map(items, &Segment.to_text/1) == [
+               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115.),
+               ~s(The original active ingredient "CHLORIDE ION" mapped to CHEBI:17996.),
+               "The product name matched on its written spelling.",
+               "The active ingredient name matched on its written spelling."
+             ]
+
+      refute items_text(items) =~ "treatment"
+      refute items_text(items) =~ "DailyMed documents"
       assert Display.footnote(config, doc, version) != []
+    end
+
+    test "a level-two match says the name only resolved after normalization", %{config: config} do
+      # Tablassert's tiers are not decoration: a level-2 name is one that appeared only after
+      # stemming and stripping, and 124 of DAKP 1.27.0's 6,817 composition products are level 2.
+      # The page has to say so rather than claim a written-spelling match.
+      doc = %{
+        composition_doc()
+        | "supporting_text" => ["object_nlp_level: 2", "subject_nlp_level: 1"]
+      }
+
+      items = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
+
+      assert "The product name matched on its written spelling." in Enum.map(
+               items,
+               &Segment.to_text/1
+             )
+
+      assert "The active ingredient name matched only after normalizing the spelling." in Enum.map(
+               items,
+               &Segment.to_text/1
+             )
+    end
+
+    test "a document with no match log states no match tier", %{config: config} do
+      # The claims are self-dropping: an older dump without the log lines gains no provenance
+      # it cannot back with data.
+      doc =
+        composition_doc()
+        |> Map.delete("supporting_text")
+        |> Map.delete("publications")
+
+      items = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
+
+      refute items_text(items) =~ "name matched"
+      assert length(items) == 2
     end
   end
 

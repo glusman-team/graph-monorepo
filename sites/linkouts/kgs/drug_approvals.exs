@@ -49,12 +49,34 @@
     "subject" => {:link, "subject_name", "subject"},
     "object" => {:link, "object_name", "object"},
 
-    # What this KP calls its two nodes. Every DrugApprovals assertion pairs a drug against a
+    # What this KP calls its two nodes. Most DrugApprovals assertions pair a drug against a
     # disease, so "subject" and "object" are pure storage vocabulary in front of a curator;
-    # treatment/condition says what the edge claims (issue #63). Composition edges suppress the
-    # mapping sentences entirely, so these words never stand in for product/ingredient.
-    "subject_role" => "treatment",
-    "object_role" => "condition",
+    # treatment/condition says what the edge claims (issue #63). Composition edges pair a
+    # product with one of its ingredients, so the same slots name those roles instead, and the
+    # name-resolution provenance claims below stay truthful on both shapes of edge.
+    "subject_role" =>
+      {:pick, "predicate",
+       %{
+         "biolink:has_active_ingredient" => "product",
+         :default => "treatment"
+       }},
+    "object_role" =>
+      {:pick, "predicate",
+       %{
+         "biolink:has_active_ingredient" => "active ingredient",
+         :default => "condition"
+       }},
+
+    # Tablassert records which normalization tier resolved each name: level 1 is the spelling
+    # as the source table wrote it, level 2 only matched after stemming and stripping. A
+    # curator auditing a mapping wants that tier on the page, not buried in the KGX log line,
+    # so each tier renders as its own claim and drops when the log carries no such line.
+    "subject_name_match" =>
+      {:supporting, "subject_nlp_level", "The {subject_role} name matched ", ".",
+       %{"1" => "on its written spelling", "2" => "only after normalizing the spelling"}, ""},
+    "object_name_match" =>
+      {:supporting, "object_nlp_level", "The {object_role} name matched ", ".",
+       %{"1" => "on its written spelling", "2" => "only after normalizing the spelling"}, ""},
 
     # The legacy code picked "preventing" vs "treating" off object_modifier, then the verb phrase
     # off the predicate. Same two decisions, expressed as data.
@@ -316,7 +338,9 @@
   # NDA202155") and that instinct stands: a sentence carries its own meaning, where a table row
   # labelled "Assertion method (agent_type)" asked the reader to decode a storage key. The :if
   # conditions drop the claims the document cannot support, and an entry that renders no text
-  # drops instead of printing an empty bullet.
+  # drops instead of printing an empty bullet. Composition edges carry the same list: their
+  # name resolutions and match tiers render, while the treatment-only claims (approval status,
+  # species, case counts) drop because a composition document carries none of those fields.
   evidence: [
     %{
       value:
@@ -335,19 +359,16 @@
       if: [{:present, "clinical_approval_status"}]
     },
     %{
-      value:
-        {:pick, "predicate",
-         %{
-           # The product and ingredient are already named in the claim. Their source aliases
-           # remain in KGX without burying composition evidence under another long list.
-           "biolink:has_active_ingredient" => "",
-           :default => "{subject_mapping}"
-         }}
+      value: "{subject_mapping}"
     },
     %{
-      value:
-        {:pick, "predicate",
-         %{"biolink:has_active_ingredient" => "", :default => "{object_mapping}"}}
+      value: "{object_mapping}"
+    },
+    %{
+      value: "{subject_name_match}"
+    },
+    %{
+      value: "{object_name_match}"
     },
     %{value: "{mapping_species_context_qualifier}"},
     %{value: "{qualifier_mappings}"},
