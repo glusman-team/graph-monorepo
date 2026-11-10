@@ -290,50 +290,6 @@ def test_shaper_writes_uncompressed_tsv_with_contract_columns(
     assert out.uri.read_bytes().startswith(b"subject_text\t")
 
 
-def test_shaper_artifact_excludes_generic_pain_spl(
-    ctx: TaskContext, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The published TSV must not cite generic-pain labels for Pain of skin."""
-    evidence = DailyMedEvidence(
-        approval_sets={"12345": {"SET-SKIN", "SET-GENERIC"}},
-        approval_display={"12345": "NDA012345"},
-        active_ingredients_by_set={
-            "SET-SKIN": [("Examplestatin", "UNII:X")],
-            "SET-GENERIC": [("Examplestatin", "UNII:X")],
-        },
-        indication_docs={
-            "SET-SKIN": [("SET-SKIN#34067-9", "Indicated for pain of skin.")],
-            "SET-GENERIC": [("SET-GENERIC#34067-9", "Indicated for acute pain.")],
-        },
-    )
-    cases = pl.DataFrame(
-        {"nda": ["012345"], "indication": ["Pain of skin"], "drugname": ["Examplestatin"]}
-    )
-    monkeypatch.setattr(approved_treats, "load_or_build_dailymed_evidence", lambda *_: evidence)
-    monkeypatch.setattr(
-        approved_treats, "build_drugsfda_ingredient_map", lambda *_: {"12345": {"EXAMPLESTATIN"}}
-    )
-    monkeypatch.setattr(approved_treats, "find_faers_cases", lambda *_, **__: cases)
-    disease_map = {"pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}}
-    context = TaskContext(
-        workdir=ctx.workdir,
-        fixture_root=ctx.fixture_root,
-        params={
-            "disease_map": disease_map,
-            "ner": approved_treats.DiseaseNER(gazetteer={"pain": "disease"}),
-        },
-    )
-    refs = ApprovedTreatsShaper().transform([], context)
-    assert len(refs) == 1
-    rows = schemas.read_table(refs[0].uri).to_dicts()
-    assert len(rows) == 1
-    assert rows[0]["object_text"] == "Pain of skin"
-    assert rows[0]["supporting_spl_evidence"] == "dailymed:SET-SKIN"
-    assert rows[0]["edge_evidence"] == "dailymed:SET-SKIN"
-    assert "SET-GENERIC" not in rows[0]["supporting_spl_sets"]
-    assert "SET-GENERIC" not in rows[0]["supporting_spl_documents"]
-
-
 # --- run-scoped preparation cache (per-text invariants across many candidates) ---
 
 
@@ -457,13 +413,13 @@ def test_rows_identical_with_and_without_preparation_cache(
         ("Treats migraine headaches in adults.", "migraine headaches", "", [], True),
         # different spelling/case/punctuation: the normalized-text channel matches
         ("Treats Migraine-Headaches, chronic form.", "MIGRAINE    headaches!", "", [], True),
-        # A general NER mention does not support a more specific candidate (issue #56).
+        # NER mention word-contained IN the more specific candidate (model channel)
         (
-            "Breast cancer.",
+            "Hormone receptor positive breast cancer.",
             "hormone receptor positive breast cancer",
             "",
             [_host_mention("breast cancer")],
-            False,
+            True,
         ),
         # NER mention naming a condition that survives only in a negated sentence
         (
@@ -473,10 +429,8 @@ def test_rows_identical_with_and_without_preparation_cache(
             [_host_mention("headache")],
             False,
         ),
-        # same CURIE through an exact dictionary synonym (dictionary CURIE-equality channel)
+        # same CURIE, different surface spelling (dictionary CURIE-equality channel)
         ("Migraine disorder responds to therapy.", "hemicrania", "MONDO:0005439", [], True),
-        # broad substring dictionary hit only: `pain` does not prove `Pain of skin` (issue #56)
-        ("Management of acute pain.", "Pain of skin", "MONDO:0020528", [], False),
         # different CURIE and no textual overlap: no channel corroborates
         ("Migraine disorder responds to therapy.", "episodic pain", "MONDO:9999999", [], False),
     ],
@@ -485,20 +439,9 @@ def test_section_mentions_condition_with_preparation_matches_without(
     section_text: str, object_text: str, object_curie: str, section_mentions: list, expected: bool
 ) -> None:
     local_map = {
-        "migraine disorder": {"curie": "MONDO:0005439", "name": "Migraine", "category": "Disease"},
-        "hemicrania": {"curie": "MONDO:0005439", "name": "Migraine", "category": "Disease"},
-        "pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"},
+        "migraine disorder": {"curie": "MONDO:0005439", "name": "Migraine", "category": "Disease"}
     }
-    exact_curie = object_curie and any(
-        approved_treats.normalize_text(key) == approved_treats.normalize_text(object_text)
-        and entry["curie"] == object_curie
-        for key, entry in local_map.items()
-    )
-    cand = {
-        "object_text": object_text,
-        "object_curie": object_curie,
-        "object_curie_exact": "1" if exact_curie else "",
-    }
+    cand = {"object_text": object_text, "object_curie": object_curie}
     cache = approved_treats._PreparationCache()
     uncached = approved_treats._section_mentions_condition(
         section_text, cand, local_map, section_mentions
@@ -567,3 +510,54 @@ def test_human_label_rows_carry_the_human_taxon_constant(
 
     assert rows
     assert all(r["species_context_text"] == "NCBITaxon:9606" for r in rows)
+
+
+def test_shaper_artifact_cites_only_specific_pain_spl(
+    ctx: TaskContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The published TSV must cite only SPLs naming the asserted original object."""
+    evidence = DailyMedEvidence(
+        approval_sets={"12345": {"SET-SKIN", "SET-GENERIC"}},
+        approval_display={"12345": "NDA012345"},
+        active_ingredients_by_set={
+            "SET-SKIN": [("Examplestatin", "UNII:X")],
+            "SET-GENERIC": [("Examplestatin", "UNII:X")],
+        },
+        indication_docs={
+            "SET-SKIN": [("SET-SKIN#34067-9", "Indicated for pain of skin.")],
+            "SET-GENERIC": [("SET-GENERIC#34067-9", "Indicated for acute pain.")],
+        },
+    )
+    cases = pl.DataFrame(
+        {"nda": ["012345"], "indication": ["Pain of skin"], "drugname": ["Examplestatin"]}
+    )
+    monkeypatch.setattr(approved_treats, "load_or_build_dailymed_evidence", lambda *_: evidence)
+    monkeypatch.setattr(
+        approved_treats, "build_drugsfda_ingredient_map", lambda *_: {"12345": {"EXAMPLESTATIN"}}
+    )
+    monkeypatch.setattr(approved_treats, "find_faers_cases", lambda *_, **__: cases)
+    context = TaskContext(
+        workdir=ctx.workdir,
+        fixture_root=ctx.fixture_root,
+        params={
+            "disease_map": {
+                "pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}
+            },
+            "ner": approved_treats.DiseaseNER(
+                gazetteer={"pain of skin": "disease", "pain": "disease"}
+            ),
+        },
+    )
+    refs = ApprovedTreatsShaper().transform([], context)
+    assert len(refs) == 1
+    rows = schemas.read_table(refs[0].uri).to_dicts()
+    assert len(rows) == 1
+    row = rows[0]
+    set_url = "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=SET-SKIN"
+    assert row["object_text"] == "Pain of skin"
+    assert row["supporting_spl_sets"] == set_url
+    assert row["supporting_spl_documents"] == f"{set_url}#34067-9"
+    assert row["supporting_spl_evidence"] == "dailymed:SET-SKIN"
+    assert row["edge_evidence"] == "dailymed:SET-SKIN"
+    assert "SET-GENERIC" not in row["supporting_spl_sets"]
+    assert "SET-GENERIC" not in row["supporting_spl_documents"]

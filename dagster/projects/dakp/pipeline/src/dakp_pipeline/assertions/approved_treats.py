@@ -12,13 +12,14 @@ An approved-treats row requires an **NDA-bearing drug-indication pair** that sat
 3. that approved SPL set has an **indications-and-usage section** (LOINC ``34067-9``) — the
    SPL indication support; and
 4. the candidate **condition is corroborated by that section's text** — a lexical
-   disease-dictionary match on the section (CURIE match only when the candidate CURIE comes from
-   a dictionary key equal to the candidate text, else normalized-text equality) or a verbatim
-   word-bounded mention of the candidate indication
+   disease-dictionary match on the section (CURIE match when both sides carry one, else
+   normalized-text equality) or a verbatim word-bounded mention of the candidate indication
    text in the section (same normalized-space boundaries as
    :class:`~dakp_pipeline.ner.lexical.LexicalMatcher`) or an **NER mention** whose normalized
-   text equals the candidate. A general mention does not corroborate a more specific candidate:
-   ``pain`` is not evidence for ``Pain of skin``. All three channels ignore sentences
+   text equals the candidate or is word-contained IN it (the label naming the general
+   condition — e.g. ``breast cancer`` — corroborates the more specific FAERS report —
+   e.g. ``hormone receptor positive breast cancer``; the reverse direction would assert
+   more than the label supports and is never accepted). All three channels ignore sentences
    that disclaim efficacy or indication ("not indicated", "not recommended", "not approved",
    "not been established" — see :func:`_positive_context_text`), so boilerplate like the
    baclofen label's "efficacy ... in stroke, cerebral palsy, and Parkinson's disease has not
@@ -26,6 +27,13 @@ An approved-treats row requires an **NDA-bearing drug-indication pair** that sat
    (NCATSTranslator/Feedback#1360). Candidates whose condition appears on
    no supporting label are dropped (``dropped_no_label_term_support``) — the legacy
    ``supportInDailyMed`` gate (``ref/legacy/bin/drug2indi2kg.py``).
+
+Rule 4 decides whether an FDA/FAERS-derived assertion is retained. The final DailyMed
+``publications`` provenance is narrower: an SPL set/document is cited only when the asserted
+object surface form was mined from that same SPL section, or occurs there verbatim as a
+word-bounded entity mention. Broad dictionary CURIE equality and general-to-specific NER
+containment may preserve the historical assertion, but they do not make a label a citation
+for the row's original object (issue #56).
 
 Candidate drug-indication pairs come from **FAERS** (``cases.parquet`` rows carrying an NDA +
 indication) — the primary source, wired into this stage by the DAG. Placeholder/usage-context
@@ -282,6 +290,30 @@ def _model_matches_candidate(mention: Mention, candidate_text: str) -> bool:
     return bool(mention_text and (mention_text == needle or f" {mention_text} " in f" {needle} "))
 
 
+def _mention_normalized(mention: Mention) -> str:
+    """The normalized surface form of a mined mention."""
+    return (mention.normalized or normalize_text(mention.text)).strip()
+
+
+def _candidate_surface_forms(candidate: Mapping[str, str]) -> frozenset[str]:
+    """Normalized surface forms that may make an SPL a citation for this candidate.
+
+    Only the asserted object text is used. The dictionary-derived ``object_name`` is deliberately
+    excluded: the production lexical baseline is broad, so its canonical name can be a different,
+    less specific concept than the row's original object.
+    """
+    raw = str(candidate.get("object_text", "") or "")
+    forms = {normalize_text(part) for part in raw.split("|")}
+    forms.add(normalize_text(raw))
+    return frozenset(form for form in forms if form)
+
+
+def _sentence_cites_forms(normalized_sentence: str, forms: frozenset[str]) -> bool:
+    """True when one candidate surface form occurs word-bounded in a normalized sentence."""
+    haystack = f" {normalized_sentence} "
+    return any(f" {form} " in haystack for form in forms)
+
+
 def _indication_observations(
     dailymed: DailyMedEvidence,
     sets: Sequence[str],
@@ -297,6 +329,7 @@ def _indication_observations(
     or without it.
     """
     observations: list[dict[str, Any]] = []
+    citation_forms = _candidate_surface_forms(candidate)
     for set_id in sets:
         for occurrence, (doc_id, text) in enumerate(dailymed.indication_docs.get(set_id, [])):
             doc_mentions = list((mentions or {}).get((set_id, _doc_key(doc_id, occurrence)), []))
@@ -315,14 +348,17 @@ def _indication_observations(
                 if preparations is not None
                 else _sentence_spans(text)
             ):
+                sentence_preparation = (
+                    preparations.prepare(sentence, disease_map)
+                    if preparations is not None
+                    else None
+                )
                 if not _section_mentions_condition(
                     sentence,
                     candidate,
                     disease_map,
                     doc_mentions,
-                    preparation=preparations.prepare(sentence, disease_map)
-                    if preparations is not None
-                    else None,
+                    preparation=sentence_preparation,
                 ):
                     continue
                 sentence_end = start + len(sentence)
@@ -333,11 +369,22 @@ def _indication_observations(
                     _sentence_local(m, start, sentence_end, sentence) for m in sentence_mentions
                 ]
                 objects = object_mentions(local_mentions)
-                host = [m for m in objects if _model_matches_candidate(m, candidate["object_text"])]
+                exact_model_host = [m for m in objects if _mention_normalized(m) in citation_forms]
+                host = exact_model_host or [
+                    m for m in objects if _model_matches_candidate(m, candidate["object_text"])
+                ]
                 if not host:
                     lexical = _candidate_mention(sentence, candidate, 0)
                     if lexical is not None:
                         host = [lexical]
+                normalized_sentence = (
+                    sentence_preparation.normalized_text
+                    if sentence_preparation is not None
+                    else normalize_text(sentence)
+                )
+                citable = bool(exact_model_host) or _sentence_cites_forms(
+                    normalized_sentence, citation_forms
+                )
                 qualifiers = [m for m in local_mentions if m not in objects]
                 sentence_of = lambda _mention, value=sentence: value
                 attached, qualifier_scores = (
@@ -385,6 +432,7 @@ def _indication_observations(
                         "qualifier_scores": merged_scores,
                         "model": best_model.context_model if best_model else "",
                         "model_score": best_model.context_model_score if best_model else 0.0,
+                        "citable": citable,
                     }
                 )
     return observations
@@ -665,6 +713,7 @@ def build_approved_treats_rows(
     dropped_no_label_term_support = 0
     dropped_no_subject = 0
     dropped_unattributable_species = 0
+    uncited_support_observations = 0
     for cand in candidates:
         candidates_seen += 1
         norm = cand["norm_nda"]
@@ -734,8 +783,11 @@ def build_approved_treats_rows(
                         animal_edge=dailymed.is_animal_set(observation["set_id"]),
                     )
                 )
-                agg["sets"].append(observation["set_id"])
-                agg["docs"].append(observation["doc_id"])
+                if observation.get("citable", True):
+                    agg["sets"].append(observation["set_id"])
+                    agg["docs"].append(observation["doc_id"])
+                else:
+                    uncited_support_observations += 1
                 agg["faers_source_records"].extend(cand.get("faers_source_records", []))
                 agg["faers_urls"].extend(cand.get("faers_urls", []))
                 model_score = float(observation["model_score"])
@@ -762,6 +814,7 @@ def build_approved_treats_rows(
         dropped_no_label_term_support=dropped_no_label_term_support,
         dropped_no_subject=dropped_no_subject,
         dropped_unattributable_species=dropped_unattributable_species,
+        uncited_support_observations=uncited_support_observations,
         assertions=len(aggregated),
     )
     fda_rows = [_finalize_row(agg) for _key, agg in sorted(aggregated.items())]
@@ -850,15 +903,15 @@ def _section_mentions_condition(
     """True when the indication section names the candidate condition (dictionary, verbatim, or NER).
 
     A disease-dictionary match on the section counts when it corresponds to the candidate object:
-    CURIE equality only when the candidate CURIE comes from a dictionary key equal to the
-    candidate text, else normalized-text equality. A broad substring match such as ``pain``
-    inside ``Pain of skin`` does not make the two concepts equivalent for provenance. The
-    production dictionary baseline is small, so a verbatim word-bounded mention of the candidate
-    indication text (normalized space, mirroring :class:`~dakp_pipeline.ner.lexical.LexicalMatcher`) also
+    CURIE equality when both sides carry one, else normalized-text equality. The production
+    dictionary baseline is small, so a verbatim word-bounded mention of the candidate indication
+    text (normalized space, mirroring :class:`~dakp_pipeline.ner.lexical.LexicalMatcher`) also
     counts — real FAERS indications quoted on the label are not dropped for lack of a dictionary
-    entry. Finally, an NER mention of the section corroborates the candidate only when their
-    normalized texts are equal. A general mention contained in a more specific candidate does not
-    support it: ``pain`` is not evidence for ``Pain of skin`` (issue #56).
+    entry. Finally, an NER mention of the section corroborates the candidate when their normalized
+    texts are equal or the mention is word-contained IN the candidate: the label naming the general
+    condition (``breast cancer``) covers the specific FAERS report (``hormone receptor positive
+    breast cancer``). The reverse (mention more specific than the candidate) never corroborates —
+    and needs no rule: it is already covered by the verbatim check.
 
     All three channels run against :func:`_positive_context_text` output: sentences that disclaim
     efficacy or indication ("not indicated", "not recommended", "not approved", "not been
@@ -877,11 +930,8 @@ def _section_mentions_condition(
     else:
         dictionary_matches = preparation.dictionary_matches
         normalized_section = preparation.normalized_text
-    candidate_exact_curie = (
-        bool(cand.get("object_curie", "")) and cand.get("object_curie_exact") == "1"
-    )
     for match in dictionary_matches:
-        if candidate_exact_curie and match["curie"]:
+        if cand["object_curie"] and match["curie"]:
             if match["curie"] == cand["object_curie"]:
                 return True
         elif normalize_text(match["text"]) == needle:
@@ -893,7 +943,7 @@ def _section_mentions_condition(
         if (
             mention_text
             and f" {mention_text} " in f" {normalized_section} "
-            and mention_text == needle
+            and (mention_text == needle or f" {mention_text} " in f" {needle} ")
         ):
             return True
     return False
@@ -916,26 +966,13 @@ def _subject_for_sets(
     return fallback.strip(), ""
 
 
-def _object_attrs(
-    text: str, disease_map: Mapping[str, Mapping[str, str]]
-) -> tuple[str, str, str, bool]:
-    """Resolve ``(curie, name, category, exact_curie)`` via the lexical disease baseline.
-
-    ``exact_curie`` says the returned CURIE came from a dictionary key equal to ``text`` after
-    normalization. ``match_diseases`` is substring-based, so ``pain`` can attach its CURIE to
-    ``Pain of skin``; that broad mapping must not be treated as exact synonym support when
-    selecting SPL citations.
-    """
+def _object_attrs(text: str, disease_map: Mapping[str, Mapping[str, str]]) -> tuple[str, str, str]:
+    """Resolve ``(curie, name, category)`` for an object text via the lexical disease baseline."""
     matches = match_diseases(text, disease_map)
     if matches:
         match = matches[0]
-        needle = normalize_text(text)
-        exact_curie = bool(match["curie"]) and any(
-            normalize_text(other["text"]) == needle and other["curie"] == match["curie"]
-            for other in matches
-        )
-        return match["curie"], match["name"], match["category"], exact_curie
-    return "", text, "Disease", False
+        return match["curie"], match["name"], match["category"]
+    return "", text, "Disease"
 
 
 def _split_semicolons(cell: str) -> list[str]:
@@ -1011,7 +1048,7 @@ def build_ema_treats_rows(
     )
     rows: list[dict[str, str]] = []
     for (substance, mesh_term), agg in sorted(aggregated.items()):
-        curie, name, category, _ = _object_attrs(mesh_term, disease_map)
+        curie, name, category = _object_attrs(mesh_term, disease_map)
         rows.append(
             row_for(
                 _TABLE,
@@ -1146,7 +1183,7 @@ def build_epar_treats_rows(
     )
     rows: list[dict[str, str]] = []
     for (substance, object_text, context), agg in sorted(aggregated.items()):
-        curie, name, category, _ = _object_attrs(object_text, disease_map)
+        curie, name, category = _object_attrs(object_text, disease_map)
         rows.append(
             row_for(
                 _TABLE,
@@ -1291,7 +1328,7 @@ def build_smpc_treats_rows(
     )
     rows: list[dict[str, str]] = []
     for (substance, object_text, context), agg in sorted(aggregated.items()):
-        curie, name, category, _ = _object_attrs(object_text, disease_map)
+        curie, name, category = _object_attrs(object_text, disease_map)
         rows.append(
             row_for(
                 _TABLE,
@@ -1386,7 +1423,7 @@ def _faers_candidates(
         object_text = str(rec["indication"])
         if is_non_disease_indication(object_text):
             continue  # FAERS placeholder/usage-context indication, not a drug->condition approval claim
-        curie, name, category, exact_curie = _object_attrs(object_text, disease_map)
+        curie, name, category = _object_attrs(object_text, disease_map)
         source_records: set[str] = set()
         urls: set[str] = set()
         for raw in rec.get("faers_rows") or []:
@@ -1404,7 +1441,6 @@ def _faers_candidates(
             "object_curie": curie,
             "object_name": name,
             "object_category": category,
-            "object_curie_exact": "1" if exact_curie else "",
             "fallback_subject": str(rec["fallback_subject"]),
             "faers_source_records": sorted(source_records),
             "faers_urls": sorted(urls),
@@ -1449,7 +1485,6 @@ def _dailymed_candidates(
                         "object_curie": match["curie"],
                         "object_name": match["name"],
                         "object_category": match["category"],
-                        "object_curie_exact": "1" if match["curie"] else "",
                         "fallback_subject": "",
                     }
             dictionary_texts = {normalize_text(match["text"]) for match in matches}
@@ -1459,7 +1494,7 @@ def _dailymed_candidates(
                 object_text = normalize_text(mention.text)
                 if not object_text or object_text in dictionary_texts:
                     continue
-                curie, name, category, exact_curie = _object_attrs(object_text, disease_map)
+                curie, name, category = _object_attrs(object_text, disease_map)
                 for norm in ndas:
                     key = (norm, object_text)
                     if key in seen:
@@ -1471,7 +1506,6 @@ def _dailymed_candidates(
                         "object_curie": curie,
                         "object_name": name,
                         "object_category": category,
-                        "object_curie_exact": "1" if exact_curie else "",
                         "fallback_subject": "",
                     }
 

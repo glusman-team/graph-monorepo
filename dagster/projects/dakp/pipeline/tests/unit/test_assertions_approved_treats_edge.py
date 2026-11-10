@@ -63,18 +63,16 @@ def test_object_attrs_no_match_returns_text_default_category(
         "",
         "zzz_unknown_condition",
         "Disease",
-        False,
     )
 
 
 def test_object_attrs_match_returns_first_baseline_match(
     disease_map: dict[str, dict[str, str]],
 ) -> None:
-    curie, name, category, exact_curie = _object_attrs("hypercholesterolemia", disease_map)
+    curie, name, category = _object_attrs("hypercholesterolemia", disease_map)
     assert curie == "MONDO:0005154"
     assert name == "hypercholesterolemia"
     assert category == "Disease"
-    assert exact_curie
 
 
 # --- _faers_candidates: missing NDA / indication / duplicates -------------------
@@ -358,18 +356,6 @@ def test_candidate_kept_via_verbatim_substring_match() -> None:
     )
 
 
-def test_general_dictionary_curie_does_not_support_specific_candidate() -> None:
-    """A broad `pain` dictionary hit must not cite SPLs for `Pain of skin` (issue #56)."""
-    disease_map = {"pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}}
-    ev = _supported_evidence(
-        "Examplestatin is indicated for the management of acute pain in adults."
-    )
-    rows = build_approved_treats_rows(
-        _cases("Pain of skin"), ev, {"12345": {"EXAMPLESTATIN"}}, disease_map
-    )
-    assert rows == []
-
-
 def test_candidate_kept_via_dictionary_curie_match_with_different_surface_form() -> None:
     # The section names the same concept under a different surface form: the CURIE match (not a
     # verbatim mention) corroborates the candidate.
@@ -425,39 +411,6 @@ def test_provenance_limited_to_condition_mentioning_sets(
         rows[0]["supporting_spl_documents"]
         == "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=SET-A#34067-9"
     )
-
-
-def test_spl_provenance_is_isolated_for_each_original_object() -> None:
-    """Shared NDA/drug membership must not lend generic-pain SPLs to Pain of skin."""
-    ev = _supported_evidence(
-        "Examplestatin is indicated for pain of skin.",
-        second_set_text="Examplestatin is indicated for acute pain.",
-    )
-    cases = pl.DataFrame(
-        {
-            "nda": ["012345"] * 3,
-            "indication": ["Pain of skin", "acute pain", "cutaneous pain"],
-            "drugname": ["Examplestatin"] * 3,
-            "ingredient": ["Examplestatin"] * 3,
-        }
-    )
-    rows = build_approved_treats_rows(
-        cases,
-        ev,
-        {"12345": {"EXAMPLESTATIN"}},
-        {},
-        ner=DiseaseNER(gazetteer={"pain": "disease"}),
-    )
-    by_object = {row["object_text"]: row for row in rows}
-    assert set(by_object) == {"Pain of skin", "acute pain"}
-    for object_text, set_id in (("Pain of skin", "SET-A"), ("acute pain", "SET-B")):
-        row = by_object[object_text]
-        set_url = f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={set_id}"
-        assert row["supporting_spl_sets"] == set_url
-        assert row["supporting_spl_documents"] == f"{set_url}#34067-9"
-        assert row["supporting_spl_evidence"] == f"dailymed:{set_id}"
-        assert row["edge_evidence"] == f"dailymed:{set_id}"
-        assert row["FDA_regulatory_approvals"] == "NDA012345"
 
 
 def test_candidate_with_unnormalizable_condition_text_is_dropped(
@@ -556,3 +509,59 @@ def test_ner_mention_mined_only_from_a_disclaimer_sentence_does_not_corroborate(
         ner=ner,
     )
     assert rows == []
+
+
+def test_broad_dictionary_support_retains_row_without_citation(
+    disease_map: dict[str, dict[str, str]],
+) -> None:
+    """A broad dictionary hit may preserve the historical assertion but cannot cite the SPL."""
+    ev = _supported_evidence("Indicated for the management of pain.")
+    rows = build_approved_treats_rows(
+        _cases("Pain of skin"), ev, {"12345": {"EXAMPLESTATIN"}}, disease_map
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["object_text"] == "Pain of skin"
+    assert row["FDA_regulatory_approvals"] == "NDA012345"
+    assert row["supporting_spl_sets"] == ""
+    assert row["supporting_spl_documents"] == ""
+    assert row["supporting_spl_evidence"] == ""
+    assert row["edge_evidence"] == ""
+
+
+def test_each_original_object_cites_only_its_own_mined_spl(
+    disease_map: dict[str, dict[str, str]],
+) -> None:
+    """Shared broad dictionary support must not cross-cite another original object's SPL."""
+    ev = _supported_evidence(
+        "Indicated for Pain of skin.",
+        second_set_text="Indicated for Back pain.",
+    )
+    cases = pl.DataFrame(
+        {
+            "nda": ["012345", "012345"],
+            "indication": ["Pain of skin", "Back pain"],
+            "drugname": ["Examplestatin", "Examplestatin"],
+            "ingredient": ["Examplestatin", "Examplestatin"],
+        }
+    )
+    ner = DiseaseNER(
+        gazetteer={"pain of skin": "disease", "back pain": "disease", "pain": "disease"}
+    )
+    rows = build_approved_treats_rows(cases, ev, {"12345": {"EXAMPLESTATIN"}}, disease_map, ner=ner)
+    by_object = {row["object_text"]: row for row in rows}
+    assert set(by_object) == {"Pain of skin", "Back pain"}
+    expected = {
+        "Pain of skin": "SET-A",
+        "Back pain": "SET-B",
+    }
+    for object_text, set_id in expected.items():
+        row = by_object[object_text]
+        set_url = f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={set_id}"
+        other = "SET-B" if set_id == "SET-A" else "SET-A"
+        assert row["supporting_spl_sets"] == set_url
+        assert row["supporting_spl_documents"] == f"{set_url}#34067-9"
+        assert row["supporting_spl_evidence"] == f"dailymed:{set_id}"
+        assert row["edge_evidence"] == f"dailymed:{set_id}"
+        assert other not in row["supporting_spl_sets"]
+        assert other not in row["supporting_spl_documents"]
