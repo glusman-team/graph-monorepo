@@ -413,13 +413,13 @@ def test_rows_identical_with_and_without_preparation_cache(
         ("Treats migraine headaches in adults.", "migraine headaches", "", [], True),
         # different spelling/case/punctuation: the normalized-text channel matches
         ("Treats Migraine-Headaches, chronic form.", "MIGRAINE    headaches!", "", [], True),
-        # NER mention word-contained IN the more specific candidate (model channel)
+        # A general NER mention does not support a more specific candidate (issue #56).
         (
-            "Hormone receptor positive breast cancer.",
+            "Breast cancer.",
             "hormone receptor positive breast cancer",
             "",
             [_host_mention("breast cancer")],
-            True,
+            False,
         ),
         # NER mention naming a condition that survives only in a negated sentence
         (

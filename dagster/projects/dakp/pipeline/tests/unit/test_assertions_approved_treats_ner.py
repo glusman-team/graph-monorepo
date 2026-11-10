@@ -1,9 +1,8 @@
 """Tests for the NER channels in ``dakp_pipeline.assertions.approved_treats``.
 
-Covers: the mention-based corroboration channel (rule 4) — a section NER mention word-contained
-in the candidate corroborates it where dictionary + verbatim miss — the DailyMed fallback
-mention candidates, the once-per-section mining (sequential + multi-GPU dispatch), and the
-shaper's injected-vs-default NER resolution.
+Covers: exact mention-based corroboration (rule 4), rejection of general mentions for specific
+candidates, the DailyMed fallback mention candidates, once-per-section mining (sequential +
+multi-GPU dispatch), and the shaper's injected-vs-default NER resolution.
 """
 
 from __future__ import annotations
@@ -56,16 +55,14 @@ _MAPPING = {"12345": {"EXAMPLESTATIN"}}
 # --- rule 4: the NER mention channel --------------------------------------------
 
 
-def test_ner_mention_contained_in_candidate_corroborates() -> None:
-    # The label names the general condition ('breast cancer'); the FAERS candidate is the more
-    # specific report ('hormone receptor positive breast cancer'). Dictionary and verbatim miss;
-    # the NER mention (word-contained IN the candidate) corroborates.
-    ev = _supported_evidence("Examplestatin is indicated for breast cancer.")
-    ner = DiseaseNER(gazetteer={"breast cancer": "disease"})
-    rows = build_approved_treats_rows(
-        _cases("Hormone receptor positive breast cancer"), ev, _MAPPING, {}, ner=ner
+def test_general_ner_mention_does_not_corroborate_specific_candidate() -> None:
+    """Generic pain is not evidence for Pain of skin on a cited SPL (issue #56)."""
+    ev = _supported_evidence(
+        "Examplestatin is indicated for the management of acute pain in adults."
     )
-    assert [row["object_text"] for row in rows] == ["Hormone receptor positive breast cancer"]
+    ner = DiseaseNER(gazetteer={"pain": "disease"})
+    rows = build_approved_treats_rows(_cases("Pain of skin"), ev, _MAPPING, {}, ner=ner)
+    assert rows == []
 
 
 def test_ner_mention_equal_to_candidate_corroborates() -> None:
