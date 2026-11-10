@@ -19,7 +19,7 @@
     "docs:verify": "npm run verify --workspace @graph-monorepo/docs"
   },
   "devDependencies": {
-    "@naxodev/gonx": "4.1.2",
+    "@naxodev/gonx": "^5.0.0",
     "nx": "24.0.5"
   },
   "overrides": {
