@@ -27,8 +27,10 @@ def main() -> None:
 
     for config in (production, preview):
         dockerfile = config["build"]["dockerfile"]
-        assert dockerfile == "sites/linkouts/Dockerfile"
-        assert (ROOT / dockerfile).is_file(), dockerfile
+        # flyctl resolves this path relative to the TOML file, not the root build context.
+        # A root-relative path duplicates sites/linkouts and fails before the remote build.
+        assert dockerfile == "Dockerfile"
+        assert (SITE / dockerfile).is_file(), dockerfile
         assert config["http_service"]["checks"][0]["path"] == "/healthz"
 
     assert "LINKOUTS_PREVIEW_FIXTURES" not in production["env"]

@@ -10,7 +10,8 @@ kill_timeout = '5s'
 
 # Run from the monorepo root. This path does not change the repository-root build context.
 [build]
-  dockerfile = 'sites/linkouts/Dockerfile'
+  # Resolved relative to this TOML file; the build context remains the repository root.
+  dockerfile = 'Dockerfile'
 
 [env]
   PHX_SERVER = 'true'
