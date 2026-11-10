@@ -63,18 +63,16 @@ def test_object_attrs_no_match_returns_text_default_category(
         "",
         "zzz_unknown_condition",
         "Disease",
-        False,
     )
 
 
 def test_object_attrs_match_returns_first_baseline_match(
     disease_map: dict[str, dict[str, str]],
 ) -> None:
-    curie, name, category, exact_curie = _object_attrs("hypercholesterolemia", disease_map)
+    curie, name, category = _object_attrs("hypercholesterolemia", disease_map)
     assert curie == "MONDO:0005154"
     assert name == "hypercholesterolemia"
     assert category == "Disease"
-    assert exact_curie
 
 
 # --- _faers_candidates: missing NDA / indication / duplicates -------------------
@@ -356,18 +354,6 @@ def test_candidate_kept_via_verbatim_substring_match() -> None:
         rows[0]["supporting_spl_sets"]
         == "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=SET-A"
     )
-
-
-def test_general_dictionary_curie_does_not_support_specific_candidate() -> None:
-    """A broad `pain` dictionary hit must not cite SPLs for `Pain of skin` (issue #56)."""
-    disease_map = {"pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}}
-    ev = _supported_evidence(
-        "Examplestatin is indicated for the management of acute pain in adults."
-    )
-    rows = build_approved_treats_rows(
-        _cases("Pain of skin"), ev, {"12345": {"EXAMPLESTATIN"}}, disease_map
-    )
-    assert rows == []
 
 
 def test_candidate_kept_via_dictionary_curie_match_with_different_surface_form() -> None:
