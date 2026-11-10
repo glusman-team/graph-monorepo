@@ -21,9 +21,8 @@ A config is a map with these keys:
 | `edge`          | yes      | the sentence describing the relationship                                                                                                          |
 | `asserts`       |          | the lead-in line above the sentence naming who makes the claim (often `"{kp}"`); the page ends it with a colon and renders the sentence below it  |
 | `methods`       |          | value spec rendered under Methods, describing how the association was generated and its sources                                                   |
-| `evidence`      |          | sentences under Provenance: `%{value: spec, if: [conditions]}`. Matching, nonempty sentences form one paragraph, including original-name mappings |
 | `footnote`      |          | helper links rendered under Tips, using the same heading and body sizes as the other sections                                                     |
-
+| `evidence`      |          | sentences under Provenance: `%{value: spec, if: [conditions]}`. Each matching, nonempty sentence becomes one bullet of the Provenance list, including original-name mappings |
 The edge page presents the claim once, followed by Methods, Provenance, and Tips. Empty
 sections are omitted. These headings use the same section style as About.
 

@@ -4,7 +4,7 @@ defmodule EdgeLinkoutsWeb.EdgeLiveTest do
   import Phoenix.LiveViewTest
 
   alias EdgeLinkouts.Codec
-  alias EdgeLinkouts.{Cosmos, Dedupe}
+  alias EdgeLinkouts.{Cosmos, Dedupe, Display}
   alias EdgeLinkoutsWeb.Fixtures
 
   @v1 Fixtures.v1()
@@ -71,6 +71,51 @@ defmodule EdgeLinkoutsWeb.EdgeLiveTest do
         refute html =~ ~s(Assertion method)
         refute html =~ "agent_type is"
       end
+    end
+
+    test "Provenance renders as a bulleted list, one item per claim" do
+      # Issue #63 asked for the block to stop being a run-on paragraph. The renderer returning
+      # items is only half the fix: the template has to put each one on its own line, so this
+      # counts the <li> elements against the renderer's own items for every stored edge.
+      counts =
+        for stored <- Fixtures.docs(), not Cosmos.reserved_id?(stored["id"]) do
+          for version <- [@v1, @v2] do
+            {:ok, _view, html} = live(build_conn(), "/edges/#{stored["id"]}?version=#{version}")
+            {:ok, blob} = Codec.decode(stored["b"])
+            {:ok, doc} = Codec.resolve(blob, version)
+            items = Display.evidence(Display.for_key(version), doc, version)
+
+            document = Floki.parse_document!(html)
+            list = Floki.find(document, "section.edge-provenance ul.edge-evidence")
+            bullets = Floki.find(document, "section.edge-provenance ul.edge-evidence li")
+
+            if items == [] do
+              assert list == [], "no claims to show, so the list itself must not render"
+              assert bullets == []
+              0
+            else
+              assert length(bullets) == length(items),
+                     "#{stored["id"]} #{version}: renderer produced #{length(items)} claims, page shows #{length(bullets)}"
+
+              # The paragraph wrapper is gone: one flat <p> would re-join every claim on one line.
+              assert Floki.find(document, "section.edge-provenance p") == []
+
+              refute Enum.any?(bullets, fn bullet ->
+                       bullet |> Floki.text() |> String.trim() == ""
+                     end)
+
+              length(bullets)
+            end
+          end
+        end
+
+        # A renderer that produced nothing on every page would pass the loop above vacuously.
+        |> List.flatten()
+
+      assert Enum.sum(counts) > 0, "no stored edge rendered a single provenance bullet"
+
+      assert Enum.max(counts) >= 2,
+             "expected at least one edge with several distinct claims, got #{Enum.max(counts)}"
     end
 
     test "every stored predicate uses the same sections and asserts lead-in" do

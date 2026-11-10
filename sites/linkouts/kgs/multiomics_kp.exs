@@ -252,8 +252,8 @@
   methods: "{provenance} {generated_by}",
 
   # The evidence block, as prose: the statistical claim first, then publication and
-  # mapping provenance. Each entry is one sentence; the :if conditions drop the ones the
-  # document cannot support; the renderer joins what survives into one paragraph.
+  # mapping provenance. Each entry is one claim; the :if conditions drop the ones the document
+  # cannot support; the renderer prints what survives as one bullet per claim.
   evidence: [
     %{
       # Every statistic reads in printf %.4g ({effect_size_g4} and friends): effect sizes

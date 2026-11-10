@@ -308,8 +308,8 @@
   # "Number of FAERS cases reporting this usage: 12", "Relevant approvals: NDA202155" — and the
   # instinct stands: a sentence carries its own meaning, where a table row labelled
   # "Assertion method (agent_type)" asked the reader to decode a storage key. Each entry is one
-  # sentence; the :if conditions drop the ones the document cannot support; the renderer joins
-  # what survives into one paragraph.
+  # claim; the :if conditions drop the ones the document cannot support; the renderer prints what
+  # survives as one bullet per claim.
   evidence: [
     %{
       value:

@@ -61,6 +61,125 @@ defmodule EdgeLinkouts.DisplayTest do
     end)
   end
 
+  # The provenance block renders as one item per claim, so a test that reads it as prose has to
+  # say how the items join. A space is what the page's line breaks do visually; asserting on the
+  # joined text keeps sentence-level expectations honest without hiding the item boundaries.
+  defp items_text(items), do: Enum.map_join(items, " ", &Segment.to_text/1)
+
+  defp evidence_text(config, doc, version),
+    do: config |> Display.evidence(doc, version) |> items_text()
+
+  describe "provenance as a list of claims" do
+    # Issue #63: the block was one run-on paragraph, so a reader had to re-segment it to find the
+    # fact they wanted. These tests hold the item contract the page renders: one entry per
+    # distinct claim, every item a closed sentence, and nothing that renders empty gets a bullet.
+
+    test "each item is one closed sentence, and none double its period", %{config: config} do
+      doc = %{
+        "subject" => "CHEBI:5118",
+        "subject_name" => "fluoxetine",
+        "original_subject" => "FLUOXETINE",
+        "subject_category" => ["biolink:SmallMolecule"],
+        "object" => "MONDO:0005258",
+        "object_name" => "autism spectrum disorder",
+        "original_object" => "Autism spectrum disorder",
+        "object_category" => ["biolink:Disease"],
+        "predicate" => "biolink:applied_to_treat",
+        "clinical_approval_status" => "off_label_use",
+        "species_context_qualifier" => "NCBITaxon:9606",
+        "supporting_text" => ["species_context_qualifier_name: Homo sapiens (human)"],
+        "number_of_cases" => 61,
+        "sources" => [%{"resource_id" => "infores:faers"}]
+      }
+
+      items = Display.evidence(config, doc, @v1)
+      # The fixture is fully specified, so the count is pinned: a claim that stopped rendering
+      # has to fail here rather than quietly shorten the list.
+      assert length(items) == 3
+
+      for item <- items do
+        text = Segment.to_text(item)
+
+        assert text != "", "an empty item would render as a bullet with nothing in it"
+        assert String.match?(text, ~r/[.!?]\z/), "item does not close as a sentence: #{text}"
+        refute text =~ ~r/\.\./, "item doubles its period: #{text}"
+      end
+
+      # One claim per item: the species sentence is not glued onto the case count by a joiner.
+      # The refute only means something once both bullets are known to exist, so they are
+      # asserted before the glued form is ruled out.
+      species =
+        Enum.find(items, &(Segment.to_text(&1) |> String.starts_with?("This assertion is about")))
+
+      assert species, "no species bullet rendered: #{items_text(items)}"
+
+      faers = Enum.find(items, &(Segment.to_text(&1) |> String.starts_with?("FAERS and Canada")))
+
+      assert faers, "no case-count bullet rendered: #{items_text(items)}"
+
+      refute species |> Segment.to_text() |> String.contains?("FAERS")
+
+      refute Enum.any?(items, fn item ->
+               text = Segment.to_text(item)
+               String.contains?(text, ". FAERS")
+             end)
+    end
+
+    test "an entry whose clause drops leaves no empty item", %{config: config} do
+      # The species clause falls back to an empty render when the dump names no species phrase.
+      # That must remove the bullet, not print a bare "." one.
+      doc = %{
+        "subject" => "CHEBI:5118",
+        "subject_name" => "fluoxetine",
+        "object" => "MONDO:0005258",
+        "object_name" => "autism spectrum disorder",
+        "predicate" => "biolink:treats",
+        "clinical_approval_status" => "approved_for_condition",
+        "species_context_qualifier" => "NCBITaxon:9606"
+      }
+
+      items = Display.evidence(config, doc, @v1)
+
+      refute Enum.any?(
+               items,
+               &(&1 |> Segment.to_text() |> String.starts_with?("This assertion is about"))
+             )
+
+      refute Enum.any?(items, fn item ->
+               text = item |> Segment.to_text() |> String.trim()
+               text == "." or text == ""
+             end)
+    end
+
+    test "the page emits one <li> per claim", %{config: config} do
+      # Covered from the renderer side here; the DOM assertion lives in
+      # EdgeLinkoutsWeb.EdgeLiveTest, where a real stored document goes through the template.
+      doc = %{
+        "subject" => "CHEBI:5118",
+        "subject_name" => "fluoxetine",
+        "original_subject" => "FLUOXETINE",
+        "subject_category" => ["biolink:SmallMolecule"],
+        "object" => "MONDO:0005258",
+        "object_name" => "autism spectrum disorder",
+        "original_object" => "Autism spectrum disorder",
+        "object_category" => ["biolink:Disease"],
+        "predicate" => "biolink:applied_to_treat",
+        "clinical_approval_status" => "off_label_use",
+        "species_context_qualifier" => "NCBITaxon:9606",
+        "supporting_text" => ["species_context_qualifier_name: Homo sapiens (human)"],
+        "number_of_cases" => 61,
+        "sources" => [%{"resource_id" => "infores:faers"}]
+      }
+
+      items = Display.evidence(config, doc, @v1)
+
+      # One claim per item means the template can put each on its own line: an item is a segment
+      # list, not a fragment of one, and no item spans two sentences.
+      assert Enum.all?(items, &is_list/1)
+      refute Enum.any?(items, &(&1 |> Segment.to_text() |> String.contains?(". The original")))
+    end
+  end
+
   test "species phrases flow without a comma and link to NCBI Taxonomy", %{config: config} do
     for {taxon, name, label} <- [
           {"9606", "Homo sapiens (human)", "humans"},
@@ -384,14 +503,14 @@ defmodule EdgeLinkouts.DisplayTest do
       }
 
       evidence = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
-      text = Segment.to_text(evidence)
+      text = items_text(evidence)
 
       assert text =~ "3231 product labels"
       assert text =~ "set-1, set-2, set-3"
       assert text =~ "KGX download preserves the complete list"
       refute text =~ "set-4"
       refute text =~ "original subject"
-      refute Enum.any?(evidence, &match?({:more, _}, &1))
+      refute Enum.any?(Segment.flatten(evidence), &match?({:more, _}, &1))
 
       links = for {:link, _, _} = link <- Segment.flatten(evidence), do: link
       assert length(links) == 3
@@ -404,7 +523,7 @@ defmodule EdgeLinkouts.DisplayTest do
       }
 
       evidence = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
-      text = Segment.to_text(evidence)
+      text = items_text(evidence)
 
       assert text =~ "DailyMed documents this composition in"
       assert text =~ "2be5b3e2-c4a4-00ea-e063-6394a90a6163"
@@ -421,7 +540,7 @@ defmodule EdgeLinkouts.DisplayTest do
       }
 
       evidence = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
-      text = Segment.to_text(evidence)
+      text = items_text(evidence)
 
       assert text =~ "7860dfb7-a67c-7b5f-e053-2a91aa0ad59f"
       refute text =~ "product labels"
@@ -484,7 +603,7 @@ defmodule EdgeLinkouts.DisplayTest do
 
       assert edge, "expected a fixture edge with no approvals field at all"
 
-      refute config |> Display.evidence(edge.doc, edge.version) |> Segment.to_text() =~
+      refute evidence_text(config, edge.doc, edge.version) =~
                "documented under"
     end
 
@@ -547,7 +666,7 @@ defmodule EdgeLinkouts.DisplayTest do
 
       assert edge, "expected a fixture edge without a FAERS case count"
 
-      text = config |> Display.evidence(edge.doc, edge.version) |> Segment.to_text()
+      text = evidence_text(config, edge.doc, edge.version)
 
       # "holds  cases reporting this usage" with a hole in it would misstate the source.
       refute text =~ "FAERS"
@@ -566,7 +685,7 @@ defmodule EdgeLinkouts.DisplayTest do
       # Values like agent_type are humanized into words before they reach the paragraph; a
       # reader should never meet "manual_validation_of_automated_agent" in a sentence.
       for %{version: version, doc: doc} <- resolved, version == @v1 do
-        refute config |> Display.evidence(doc, version) |> Segment.to_text() =~ "_"
+        refute evidence_text(config, doc, version) =~ "_"
       end
     end
 
@@ -602,7 +721,7 @@ defmodule EdgeLinkouts.DisplayTest do
 
       assert edge, "expected a fixture edge with neither approvals nor product labels"
 
-      text = config |> Display.evidence(edge.doc, edge.version) |> Segment.to_text()
+      text = evidence_text(config, edge.doc, edge.version)
       refute text =~ "No FDA application numbers are recorded"
       refute text =~ "No structured-product-label set identifiers are recorded"
     end
@@ -643,7 +762,7 @@ defmodule EdgeLinkouts.DisplayTest do
         "object_category" => ["biolink:PhenotypicFeature"]
       }
 
-      text = config |> Display.evidence(doc, @v1) |> Segment.to_text()
+      text = evidence_text(config, doc, @v1)
 
       assert text =~
                "The original subject Zyrtec, Cetirizine, and Allergy relief mapped to CHEBI:3561, which is a ChemicalEntity; and the original object Itching and Pruritus mapped to HP:0000989, which is a PhenotypicFeature."
@@ -653,7 +772,7 @@ defmodule EdgeLinkouts.DisplayTest do
 
       for missing <- [nil, "", " | ", []] do
         partial = Map.put(doc, "original_subject", missing) |> Map.delete("object_category")
-        text = config |> Display.evidence(partial, @v1) |> Segment.to_text()
+        text = evidence_text(config, partial, @v1)
         refute text =~ "original subject"
         assert text =~ "The original object Itching and Pruritus mapped to HP:0000989."
         refute text =~ "which is a"
@@ -670,7 +789,7 @@ defmodule EdgeLinkouts.DisplayTest do
         ]
       }
 
-      text = config |> Display.evidence(doc, @v1) |> Segment.to_text()
+      text = evidence_text(config, doc, @v1)
 
       assert text =~
                "The original population context qualifier adults, patients, and people mapped to NCIT:C27954; and the original sex qualifier male and men mapped to PATO:0000384."
@@ -701,7 +820,7 @@ defmodule EdgeLinkouts.DisplayTest do
         "number_of_cases" => 61
       }
 
-      text = config |> Display.evidence(doc, @v1) |> Segment.to_text()
+      text = evidence_text(config, doc, @v1)
 
       assert text =~ "This assertion is about Homo sapiens (human). FAERS"
       refute text =~ "(human).."
@@ -714,7 +833,7 @@ defmodule EdgeLinkouts.DisplayTest do
         |> Map.put("sex_qualifier", "PATO:0000384")
         |> Map.update!("supporting_text", &["original_sex_qualifier: male" | &1])
 
-      joined = config |> Display.evidence(two_clauses, @v1) |> Segment.to_text()
+      joined = evidence_text(config, two_clauses, @v1)
 
       assert joined =~ "This assertion is about Homo sapiens (human); and"
       refute joined =~ ".; and"
@@ -961,7 +1080,7 @@ defmodule EdgeLinkouts.DisplayTest do
         ]
       }
 
-      text = config |> Display.evidence(doc, "infores:some-kp-1.0.0") |> Segment.to_text()
+      text = evidence_text(config, doc, "infores:some-kp-1.0.0")
 
       assert text =~ "This association is derived from"
     end

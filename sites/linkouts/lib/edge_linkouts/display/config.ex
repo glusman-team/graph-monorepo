@@ -98,9 +98,10 @@ defmodule EdgeLinkouts.Display.Config do
               default: [],
               doc: """
               Evidence sentences, each `%{value: spec}` with optional `:if` conditions. Every
-              sentence that passes its conditions and renders non-empty becomes part of one
-              prose paragraph on the edge page — the legacy page printed the same facts as
-              labelled lines; prose carries each fact's meaning without a field-name label.
+              sentence that passes its conditions and renders non-empty becomes its own bullet
+              of the Provenance list, closed as a sentence by the renderer - the legacy page
+              printed the same facts as labelled lines and the first port ran them together into
+              one paragraph; one bullet per claim keeps each fact citable on its own.
               """
             ],
             footnote: [

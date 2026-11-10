@@ -217,7 +217,7 @@ A minor-third scale with a 1.2 ratio and a 1rem base. At the browser's default 1
 The scale is a consistency tool, not a guarantee of visual quality. Review actual long labels at 320px and with 200% text sizing in both themes. [Modular Scale](https://www.modularscale.com/) explains the ratio method and explicitly permits breaking the scale for legibility.
 
 ### Named Rules
-**The Sentence Rule.** Facts about an edge are written as prose sentences with links inline, never as label-value pairs the reader must decode. The claim and its evidence sit at the same size so they read as one argument.
+**The Sentence Rule.** Facts about an edge are written as prose sentences with links inline, never as label-value pairs the reader must decode. The claim and its evidence sit at the same size so they read as one argument. Under Provenance the sentences are also listed, one bullet per claim: a list of sentences keeps each fact citable on its own, where one run-on paragraph makes the reader re-segment the block to find the claim they came for.
 
 **The Identifier Rule.** Identifiers (`infores:` curies, node IDs, versions) always render in mono, never in body face. A bare identifier in prose face is a defect.
 
