@@ -314,10 +314,14 @@ def test_shaper_artifact_excludes_generic_pain_spl(
         approved_treats, "build_drugsfda_ingredient_map", lambda *_: {"12345": {"EXAMPLESTATIN"}}
     )
     monkeypatch.setattr(approved_treats, "find_faers_cases", lambda *_, **__: cases)
+    disease_map = {"pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}}
     context = TaskContext(
         workdir=ctx.workdir,
         fixture_root=ctx.fixture_root,
-        params={"ner": approved_treats.DiseaseNER(gazetteer={"pain": "disease"})},
+        params={
+            "disease_map": disease_map,
+            "ner": approved_treats.DiseaseNER(gazetteer={"pain": "disease"}),
+        },
     )
     refs = ApprovedTreatsShaper().transform([], context)
     assert len(refs) == 1
@@ -469,8 +473,10 @@ def test_rows_identical_with_and_without_preparation_cache(
             [_host_mention("headache")],
             False,
         ),
-        # same CURIE, different surface spelling (dictionary CURIE-equality channel)
+        # same CURIE through an exact dictionary synonym (dictionary CURIE-equality channel)
         ("Migraine disorder responds to therapy.", "hemicrania", "MONDO:0005439", [], True),
+        # broad substring dictionary hit only: `pain` does not prove `Pain of skin` (issue #56)
+        ("Management of acute pain.", "Pain of skin", "MONDO:0020528", [], False),
         # different CURIE and no textual overlap: no channel corroborates
         ("Migraine disorder responds to therapy.", "episodic pain", "MONDO:9999999", [], False),
     ],
@@ -479,9 +485,20 @@ def test_section_mentions_condition_with_preparation_matches_without(
     section_text: str, object_text: str, object_curie: str, section_mentions: list, expected: bool
 ) -> None:
     local_map = {
-        "migraine disorder": {"curie": "MONDO:0005439", "name": "Migraine", "category": "Disease"}
+        "migraine disorder": {"curie": "MONDO:0005439", "name": "Migraine", "category": "Disease"},
+        "hemicrania": {"curie": "MONDO:0005439", "name": "Migraine", "category": "Disease"},
+        "pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"},
     }
-    cand = {"object_text": object_text, "object_curie": object_curie}
+    exact_curie = object_curie and any(
+        approved_treats.normalize_text(key) == approved_treats.normalize_text(object_text)
+        and entry["curie"] == object_curie
+        for key, entry in local_map.items()
+    )
+    cand = {
+        "object_text": object_text,
+        "object_curie": object_curie,
+        "object_curie_exact": "1" if exact_curie else "",
+    }
     cache = approved_treats._PreparationCache()
     uncached = approved_treats._section_mentions_condition(
         section_text, cand, local_map, section_mentions
