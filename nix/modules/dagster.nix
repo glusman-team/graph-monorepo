@@ -14,7 +14,7 @@ let
       name = "dakp-worker-source";
     };
     subPackages = [ "cmd/dakp-nercache" ];
-    vendorHash = "sha256-oCK/vO6vFZ0c8nIoEJLm/TdrxRmckLkpzI6CkSFJ08U=";
+    vendorHash = "sha256-pJhvOuYqnRsMQ2wGdMzisZJ2Oii1EUUR8omjziasYHI=";
     doCheck = false; # nercache tests are run by the Go/Nx test target
   };
   withDagsterHome = ''

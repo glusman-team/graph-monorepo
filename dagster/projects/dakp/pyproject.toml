@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Dagster code location for the DAKP knowledge graph: asset graph, narrow per-stage jobs, env-driven run config"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "dagster==1.13.28",
+  "dagster==1.13.29",
   "dakp-pipeline",
   "mo-core",
   "mo-kg",
@@ -13,7 +13,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-  "dagster-dg-cli==1.13.28",
+  "dagster-dg-cli==1.13.29",
   "pytest>=8.0",
   "ruff>=0.16.0",
 ]

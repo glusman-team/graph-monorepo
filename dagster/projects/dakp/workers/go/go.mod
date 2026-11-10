@@ -7,8 +7,8 @@ require (
 	github.com/hupe1980/dagster-pipes-go v0.0.10
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/zeebo/blake3 v0.2.4
-	golang.org/x/sync v0.24.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.43.0
 )
 

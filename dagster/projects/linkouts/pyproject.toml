@@ -4,15 +4,15 @@ version = "0.1.0"
 description = "Manually triggered Dagster code location for Linkouts KGX ingestion and serving-index publication"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "dagster==1.13.28",
+  "dagster==1.13.29",
   "linkouts-pipeline",
   "mo-dagster",
 ]
 
 [dependency-groups]
 dev = [
-  "dagster-dg-cli==1.13.28",
-  "dagster-pipes==1.13.28",
+  "dagster-dg-cli==1.13.29",
+  "dagster-pipes==1.13.29",
   "pytest>=8.0",
   "ruff>=0.16.0",
 ]
