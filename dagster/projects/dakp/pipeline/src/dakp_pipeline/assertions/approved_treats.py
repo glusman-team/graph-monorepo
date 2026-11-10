@@ -16,10 +16,8 @@ An approved-treats row requires an **NDA-bearing drug-indication pair** that sat
    normalized-text equality) or a verbatim word-bounded mention of the candidate indication
    text in the section (same normalized-space boundaries as
    :class:`~dakp_pipeline.ner.lexical.LexicalMatcher`) or an **NER mention** whose normalized
-   text equals the candidate or is word-contained IN it (the label naming the general
-   condition — e.g. ``breast cancer`` — corroborates the more specific FAERS report —
-   e.g. ``hormone receptor positive breast cancer``; the reverse direction would assert
-   more than the label supports and is never accepted). All three channels ignore sentences
+   text equals the candidate. A general mention does not corroborate a more specific candidate:
+   ``pain`` is not evidence for ``Pain of skin``. All three channels ignore sentences
    that disclaim efficacy or indication ("not indicated", "not recommended", "not approved",
    "not been established" — see :func:`_positive_context_text`), so boilerplate like the
    baclofen label's "efficacy ... in stroke, cerebral palsy, and Parkinson's disease has not
@@ -855,11 +853,9 @@ def _section_mentions_condition(
     dictionary baseline is small, so a verbatim word-bounded mention of the candidate indication
     text (normalized space, mirroring :class:`~dakp_pipeline.ner.lexical.LexicalMatcher`) also
     counts — real FAERS indications quoted on the label are not dropped for lack of a dictionary
-    entry. Finally, an NER mention of the section corroborates the candidate when their normalized
-    texts are equal or the mention is word-contained IN the candidate: the label naming the general
-    condition (``breast cancer``) covers the specific FAERS report (``hormone receptor positive
-    breast cancer``). The reverse (mention more specific than the candidate) never corroborates —
-    and needs no rule: it is already covered by the verbatim check.
+    entry. Finally, an NER mention of the section corroborates the candidate only when their
+    normalized texts are equal. A general mention contained in a more specific candidate does not
+    support it: ``pain`` is not evidence for ``Pain of skin`` (issue #56).
 
     All three channels run against :func:`_positive_context_text` output: sentences that disclaim
     efficacy or indication ("not indicated", "not recommended", "not approved", "not been
@@ -891,7 +887,7 @@ def _section_mentions_condition(
         if (
             mention_text
             and f" {mention_text} " in f" {normalized_section} "
-            and (mention_text == needle or f" {mention_text} " in f" {needle} ")
+            and mention_text == needle
         ):
             return True
     return False

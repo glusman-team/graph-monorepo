@@ -290,6 +290,46 @@ def test_shaper_writes_uncompressed_tsv_with_contract_columns(
     assert out.uri.read_bytes().startswith(b"subject_text\t")
 
 
+def test_shaper_artifact_excludes_generic_pain_spl(
+    ctx: TaskContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The published TSV must not cite generic-pain labels for Pain of skin."""
+    evidence = DailyMedEvidence(
+        approval_sets={"12345": {"SET-SKIN", "SET-GENERIC"}},
+        approval_display={"12345": "NDA012345"},
+        active_ingredients_by_set={
+            "SET-SKIN": [("Examplestatin", "UNII:X")],
+            "SET-GENERIC": [("Examplestatin", "UNII:X")],
+        },
+        indication_docs={
+            "SET-SKIN": [("SET-SKIN#34067-9", "Indicated for pain of skin.")],
+            "SET-GENERIC": [("SET-GENERIC#34067-9", "Indicated for acute pain.")],
+        },
+    )
+    cases = pl.DataFrame(
+        {"nda": ["012345"], "indication": ["Pain of skin"], "drugname": ["Examplestatin"]}
+    )
+    monkeypatch.setattr(approved_treats, "load_or_build_dailymed_evidence", lambda *_: evidence)
+    monkeypatch.setattr(
+        approved_treats, "build_drugsfda_ingredient_map", lambda *_: {"12345": {"EXAMPLESTATIN"}}
+    )
+    monkeypatch.setattr(approved_treats, "find_faers_cases", lambda *_, **__: cases)
+    context = TaskContext(
+        workdir=ctx.workdir,
+        fixture_root=ctx.fixture_root,
+        params={"ner": approved_treats.DiseaseNER(gazetteer={"pain": "disease"})},
+    )
+    refs = ApprovedTreatsShaper().transform([], context)
+    assert len(refs) == 1
+    rows = schemas.read_table(refs[0].uri).to_dicts()
+    assert len(rows) == 1
+    assert rows[0]["object_text"] == "Pain of skin"
+    assert rows[0]["supporting_spl_evidence"] == "dailymed:SET-SKIN"
+    assert rows[0]["edge_evidence"] == "dailymed:SET-SKIN"
+    assert "SET-GENERIC" not in rows[0]["supporting_spl_sets"]
+    assert "SET-GENERIC" not in rows[0]["supporting_spl_documents"]
+
+
 # --- run-scoped preparation cache (per-text invariants across many candidates) ---
 
 
@@ -413,13 +453,13 @@ def test_rows_identical_with_and_without_preparation_cache(
         ("Treats migraine headaches in adults.", "migraine headaches", "", [], True),
         # different spelling/case/punctuation: the normalized-text channel matches
         ("Treats Migraine-Headaches, chronic form.", "MIGRAINE    headaches!", "", [], True),
-        # NER mention word-contained IN the more specific candidate (model channel)
+        # A general NER mention does not support a more specific candidate (issue #56).
         (
-            "Hormone receptor positive breast cancer.",
+            "Breast cancer.",
             "hormone receptor positive breast cancer",
             "",
             [_host_mention("breast cancer")],
-            True,
+            False,
         ),
         # NER mention naming a condition that survives only in a negated sentence
         (
