@@ -1,0 +1,47 @@
+name: Documentation issue
+description: Something in the docs site is wrong, outdated, or missing (sites/docs, published to GitHub Pages).
+title: "[docs] "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The documentation site lives in `sites/docs/src/content/docs/` (Astro Starlight + Pagefind) and is
+        published to GitHub Pages. Use this template for wrong, outdated, or missing docs content: broken
+        links, commands that no longer run, pages that contradict the code.
+
+        Bugs in the Linkouts web app belong in "Linkouts web app bug". Pipeline problems belong in
+        "Pipeline bug report".
+  - type: input
+    id: where
+    attributes:
+      label: Page or path
+      description: The URL on the live Pages site, or the path under `sites/docs/src/content/docs/`.
+      placeholder: "https://glusman-team.github.io/graph-monorepo/linkouts/display/add-a-kg/"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong
+      description: What the page says and why that is wrong or outdated. Paste the exact sentence or command.
+      placeholder: "The page says `make linkouts-preview` needs a running Dagster daemon; it does not."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should say instead
+      description: The corrected sentence or command, or the page you expected to exist.
+      placeholder: "Preview runs Phoenix directly against the public contract corpus; no daemon involved."
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: This is about documentation content or search, not about the web app or the pipelines.
+          required: true

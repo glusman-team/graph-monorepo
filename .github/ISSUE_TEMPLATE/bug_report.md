@@ -1,5 +1,5 @@
 ---
-name: Bug report
+name: Pipeline bug report
 about: Report a reproducible problem in the graph-monorepo pipelines
 title: "[Bug]: "
 labels: bug
