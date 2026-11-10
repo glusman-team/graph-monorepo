@@ -61,7 +61,8 @@ def test_general_ner_mention_does_not_corroborate_specific_candidate() -> None:
         "Examplestatin is indicated for the management of acute pain in adults."
     )
     ner = DiseaseNER(gazetteer={"pain": "disease"})
-    rows = build_approved_treats_rows(_cases("Pain of skin"), ev, _MAPPING, {}, ner=ner)
+    disease_map = {"pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}}
+    rows = build_approved_treats_rows(_cases("Pain of skin"), ev, _MAPPING, disease_map, ner=ner)
     assert rows == []
 
 
