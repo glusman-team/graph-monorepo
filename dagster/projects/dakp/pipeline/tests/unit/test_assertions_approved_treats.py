@@ -510,3 +510,54 @@ def test_human_label_rows_carry_the_human_taxon_constant(
 
     assert rows
     assert all(r["species_context_text"] == "NCBITaxon:9606" for r in rows)
+
+
+def test_shaper_artifact_cites_only_specific_pain_spl(
+    ctx: TaskContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The published TSV must cite only SPLs naming the asserted original object."""
+    evidence = DailyMedEvidence(
+        approval_sets={"12345": {"SET-SKIN", "SET-GENERIC"}},
+        approval_display={"12345": "NDA012345"},
+        active_ingredients_by_set={
+            "SET-SKIN": [("Examplestatin", "UNII:X")],
+            "SET-GENERIC": [("Examplestatin", "UNII:X")],
+        },
+        indication_docs={
+            "SET-SKIN": [("SET-SKIN#34067-9", "Indicated for pain of skin.")],
+            "SET-GENERIC": [("SET-GENERIC#34067-9", "Indicated for acute pain.")],
+        },
+    )
+    cases = pl.DataFrame(
+        {"nda": ["012345"], "indication": ["Pain of skin"], "drugname": ["Examplestatin"]}
+    )
+    monkeypatch.setattr(approved_treats, "load_or_build_dailymed_evidence", lambda *_: evidence)
+    monkeypatch.setattr(
+        approved_treats, "build_drugsfda_ingredient_map", lambda *_: {"12345": {"EXAMPLESTATIN"}}
+    )
+    monkeypatch.setattr(approved_treats, "find_faers_cases", lambda *_, **__: cases)
+    context = TaskContext(
+        workdir=ctx.workdir,
+        fixture_root=ctx.fixture_root,
+        params={
+            "disease_map": {
+                "pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}
+            },
+            "ner": approved_treats.DiseaseNER(
+                gazetteer={"pain of skin": "disease", "pain": "disease"}
+            ),
+        },
+    )
+    refs = ApprovedTreatsShaper().transform([], context)
+    assert len(refs) == 1
+    rows = schemas.read_table(refs[0].uri).to_dicts()
+    assert len(rows) == 1
+    row = rows[0]
+    set_url = "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=SET-SKIN"
+    assert row["object_text"] == "Pain of skin"
+    assert row["supporting_spl_sets"] == set_url
+    assert row["supporting_spl_documents"] == f"{set_url}#34067-9"
+    assert row["supporting_spl_evidence"] == "dailymed:SET-SKIN"
+    assert row["edge_evidence"] == "dailymed:SET-SKIN"
+    assert "SET-GENERIC" not in row["supporting_spl_sets"]
+    assert "SET-GENERIC" not in row["supporting_spl_documents"]

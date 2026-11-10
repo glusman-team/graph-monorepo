@@ -66,6 +66,10 @@ def test_ner_mention_contained_in_candidate_corroborates() -> None:
         _cases("Hormone receptor positive breast cancer"), ev, _MAPPING, {}, ner=ner
     )
     assert [row["object_text"] for row in rows] == ["Hormone receptor positive breast cancer"]
+    # The general mention preserves the historical assertion, but it is not a citation for the
+    # more specific original object (issue #56).
+    assert rows[0]["supporting_spl_evidence"] == ""
+    assert rows[0]["edge_evidence"] == ""
 
 
 def test_ner_mention_equal_to_candidate_corroborates() -> None:
@@ -689,3 +693,45 @@ def test_shaper_uses_injected_ner(ctx: TaskContext, dailymed_refs: Any, drugsfda
     refs = ApprovedTreatsShaper().transform([*dailymed_refs, *drugsfda_refs], injected_ctx)
     assert len(refs) == 1
     assert refs[0].uri.name == "approved_treats_assertions.tsv"
+
+
+def test_general_mined_mention_does_not_cite_specific_candidate() -> None:
+    """Generic pain is not DailyMed publication evidence for Pain of skin (issue #56)."""
+    ev = _supported_evidence("Examplestatin is indicated for the management of acute pain.")
+    ner = DiseaseNER(gazetteer={"pain": "disease"})
+    disease_map = {"pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}}
+    rows = build_approved_treats_rows(_cases("Pain of skin"), ev, _MAPPING, disease_map, ner=ner)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["object_text"] == "Pain of skin"
+    assert row["FDA_regulatory_approvals"] == "NDA012345"
+    assert row["supporting_spl_evidence"] == ""
+    assert row["edge_evidence"] == ""
+
+
+def test_exact_mined_mention_cites_its_own_spl() -> None:
+    """An exact mined mention is publication evidence for the SPL that produced it."""
+    ev = DailyMedEvidence(
+        approval_sets={"12345": {"SET-A", "SET-B"}},
+        approval_display={"12345": "NDA012345"},
+        active_ingredients_by_set={
+            "SET-A": [("Examplestatin", "UNII:QFX8B1R4QF")],
+            "SET-B": [("Examplestatin", "UNII:QFX8B1R4QF")],
+        },
+        indication_docs={
+            "SET-A": [("SET-A#34067-9", "Examplestatin is indicated for pain of skin.")],
+            "SET-B": [("SET-B#34067-9", "Examplestatin is indicated for acute pain.")],
+        },
+    )
+    ner = DiseaseNER(gazetteer={"pain of skin": "disease", "pain": "disease"})
+    disease_map = {"pain": {"curie": "MONDO:0020528", "name": "pain", "category": "Disease"}}
+    rows = build_approved_treats_rows(_cases("Pain of skin"), ev, _MAPPING, disease_map, ner=ner)
+    assert len(rows) == 1
+    row = rows[0]
+    set_url = "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=SET-A"
+    assert row["supporting_spl_sets"] == set_url
+    assert row["supporting_spl_documents"] == f"{set_url}#34067-9"
+    assert row["supporting_spl_evidence"] == "dailymed:SET-A"
+    assert row["edge_evidence"] == "dailymed:SET-A"
+    assert "SET-B" not in row["supporting_spl_sets"]
+    assert "SET-B" not in row["supporting_spl_documents"]

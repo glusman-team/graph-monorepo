@@ -987,7 +987,7 @@ def load_or_build_dailymed_evidence(
 
 # Increment when assertion shaping semantics change without a schema/config change.
 # Mention-cache material stays independent: a new shaper can reuse valid mined spans.
-SHAPE_IMPLEMENTATION_VERSION = 4
+SHAPE_IMPLEMENTATION_VERSION = 7
 
 
 def shape_config_fingerprint(ctx: TaskContext) -> str:

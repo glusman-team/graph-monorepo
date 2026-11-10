@@ -509,3 +509,59 @@ def test_ner_mention_mined_only_from_a_disclaimer_sentence_does_not_corroborate(
         ner=ner,
     )
     assert rows == []
+
+
+def test_broad_dictionary_support_retains_row_without_citation(
+    disease_map: dict[str, dict[str, str]],
+) -> None:
+    """A broad dictionary hit may preserve the historical assertion but cannot cite the SPL."""
+    ev = _supported_evidence("Indicated for the management of pain.")
+    rows = build_approved_treats_rows(
+        _cases("Pain of skin"), ev, {"12345": {"EXAMPLESTATIN"}}, disease_map
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["object_text"] == "Pain of skin"
+    assert row["FDA_regulatory_approvals"] == "NDA012345"
+    assert row["supporting_spl_sets"] == ""
+    assert row["supporting_spl_documents"] == ""
+    assert row["supporting_spl_evidence"] == ""
+    assert row["edge_evidence"] == ""
+
+
+def test_each_original_object_cites_only_its_own_mined_spl(
+    disease_map: dict[str, dict[str, str]],
+) -> None:
+    """Shared broad dictionary support must not cross-cite another original object's SPL."""
+    ev = _supported_evidence(
+        "Indicated for Pain of skin.",
+        second_set_text="Indicated for Back pain.",
+    )
+    cases = pl.DataFrame(
+        {
+            "nda": ["012345", "012345"],
+            "indication": ["Pain of skin", "Back pain"],
+            "drugname": ["Examplestatin", "Examplestatin"],
+            "ingredient": ["Examplestatin", "Examplestatin"],
+        }
+    )
+    ner = DiseaseNER(
+        gazetteer={"pain of skin": "disease", "back pain": "disease", "pain": "disease"}
+    )
+    rows = build_approved_treats_rows(cases, ev, {"12345": {"EXAMPLESTATIN"}}, disease_map, ner=ner)
+    by_object = {row["object_text"]: row for row in rows}
+    assert set(by_object) == {"Pain of skin", "Back pain"}
+    expected = {
+        "Pain of skin": "SET-A",
+        "Back pain": "SET-B",
+    }
+    for object_text, set_id in expected.items():
+        row = by_object[object_text]
+        set_url = f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={set_id}"
+        other = "SET-B" if set_id == "SET-A" else "SET-A"
+        assert row["supporting_spl_sets"] == set_url
+        assert row["supporting_spl_documents"] == f"{set_url}#34067-9"
+        assert row["supporting_spl_evidence"] == f"dailymed:{set_id}"
+        assert row["edge_evidence"] == f"dailymed:{set_id}"
+        assert other not in row["supporting_spl_sets"]
+        assert other not in row["supporting_spl_documents"]

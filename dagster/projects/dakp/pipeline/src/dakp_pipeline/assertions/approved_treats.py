@@ -28,6 +28,13 @@ An approved-treats row requires an **NDA-bearing drug-indication pair** that sat
    no supporting label are dropped (``dropped_no_label_term_support``) — the legacy
    ``supportInDailyMed`` gate (``ref/legacy/bin/drug2indi2kg.py``).
 
+Rule 4 decides whether an FDA/FAERS-derived assertion is retained. The final DailyMed
+``publications`` provenance is narrower: an SPL set/document is cited only when the asserted
+object surface form was mined from that same SPL section, or occurs there verbatim as a
+word-bounded entity mention. Broad dictionary CURIE equality and general-to-specific NER
+containment may preserve the historical assertion, but they do not make a label a citation
+for the row's original object (issue #56).
+
 Candidate drug-indication pairs come from **FAERS** (``cases.parquet`` rows carrying an NDA +
 indication) — the primary source, wired into this stage by the DAG. Placeholder/usage-context
 FAERS indications ("Product used for unknown indication", bare "Prophylaxis", ...) are dropped
@@ -283,6 +290,30 @@ def _model_matches_candidate(mention: Mention, candidate_text: str) -> bool:
     return bool(mention_text and (mention_text == needle or f" {mention_text} " in f" {needle} "))
 
 
+def _mention_normalized(mention: Mention) -> str:
+    """The normalized surface form of a mined mention."""
+    return (mention.normalized or normalize_text(mention.text)).strip()
+
+
+def _candidate_surface_forms(candidate: Mapping[str, str]) -> frozenset[str]:
+    """Normalized surface forms that may make an SPL a citation for this candidate.
+
+    Only the asserted object text is used. The dictionary-derived ``object_name`` is deliberately
+    excluded: the production lexical baseline is broad, so its canonical name can be a different,
+    less specific concept than the row's original object.
+    """
+    raw = str(candidate.get("object_text", "") or "")
+    forms = {normalize_text(part) for part in raw.split("|")}
+    forms.add(normalize_text(raw))
+    return frozenset(form for form in forms if form)
+
+
+def _sentence_cites_forms(normalized_sentence: str, forms: frozenset[str]) -> bool:
+    """True when one candidate surface form occurs word-bounded in a normalized sentence."""
+    haystack = f" {normalized_sentence} "
+    return any(f" {form} " in haystack for form in forms)
+
+
 def _indication_observations(
     dailymed: DailyMedEvidence,
     sets: Sequence[str],
@@ -298,6 +329,7 @@ def _indication_observations(
     or without it.
     """
     observations: list[dict[str, Any]] = []
+    citation_forms = _candidate_surface_forms(candidate)
     for set_id in sets:
         for occurrence, (doc_id, text) in enumerate(dailymed.indication_docs.get(set_id, [])):
             doc_mentions = list((mentions or {}).get((set_id, _doc_key(doc_id, occurrence)), []))
@@ -316,14 +348,17 @@ def _indication_observations(
                 if preparations is not None
                 else _sentence_spans(text)
             ):
+                sentence_preparation = (
+                    preparations.prepare(sentence, disease_map)
+                    if preparations is not None
+                    else None
+                )
                 if not _section_mentions_condition(
                     sentence,
                     candidate,
                     disease_map,
                     doc_mentions,
-                    preparation=preparations.prepare(sentence, disease_map)
-                    if preparations is not None
-                    else None,
+                    preparation=sentence_preparation,
                 ):
                     continue
                 sentence_end = start + len(sentence)
@@ -334,11 +369,22 @@ def _indication_observations(
                     _sentence_local(m, start, sentence_end, sentence) for m in sentence_mentions
                 ]
                 objects = object_mentions(local_mentions)
-                host = [m for m in objects if _model_matches_candidate(m, candidate["object_text"])]
+                exact_model_host = [m for m in objects if _mention_normalized(m) in citation_forms]
+                host = exact_model_host or [
+                    m for m in objects if _model_matches_candidate(m, candidate["object_text"])
+                ]
                 if not host:
                     lexical = _candidate_mention(sentence, candidate, 0)
                     if lexical is not None:
                         host = [lexical]
+                normalized_sentence = (
+                    sentence_preparation.normalized_text
+                    if sentence_preparation is not None
+                    else normalize_text(sentence)
+                )
+                citable = bool(exact_model_host) or _sentence_cites_forms(
+                    normalized_sentence, citation_forms
+                )
                 qualifiers = [m for m in local_mentions if m not in objects]
                 sentence_of = lambda _mention, value=sentence: value
                 attached, qualifier_scores = (
@@ -386,6 +432,7 @@ def _indication_observations(
                         "qualifier_scores": merged_scores,
                         "model": best_model.context_model if best_model else "",
                         "model_score": best_model.context_model_score if best_model else 0.0,
+                        "citable": citable,
                     }
                 )
     return observations
@@ -666,6 +713,7 @@ def build_approved_treats_rows(
     dropped_no_label_term_support = 0
     dropped_no_subject = 0
     dropped_unattributable_species = 0
+    uncited_support_observations = 0
     for cand in candidates:
         candidates_seen += 1
         norm = cand["norm_nda"]
@@ -735,8 +783,11 @@ def build_approved_treats_rows(
                         animal_edge=dailymed.is_animal_set(observation["set_id"]),
                     )
                 )
-                agg["sets"].append(observation["set_id"])
-                agg["docs"].append(observation["doc_id"])
+                if observation.get("citable", True):
+                    agg["sets"].append(observation["set_id"])
+                    agg["docs"].append(observation["doc_id"])
+                else:
+                    uncited_support_observations += 1
                 agg["faers_source_records"].extend(cand.get("faers_source_records", []))
                 agg["faers_urls"].extend(cand.get("faers_urls", []))
                 model_score = float(observation["model_score"])
@@ -763,6 +814,7 @@ def build_approved_treats_rows(
         dropped_no_label_term_support=dropped_no_label_term_support,
         dropped_no_subject=dropped_no_subject,
         dropped_unattributable_species=dropped_unattributable_species,
+        uncited_support_observations=uncited_support_observations,
         assertions=len(aggregated),
     )
     fda_rows = [_finalize_row(agg) for _key, agg in sorted(aggregated.items())]
