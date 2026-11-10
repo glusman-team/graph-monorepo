@@ -24,10 +24,48 @@ defmodule EdgeLinkouts.Display.ValueTest do
           ] do
         ctx = %{doc: %{"original" => value}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
         assert Value.render({:names, "original"}, ctx) |> Segment.to_text() == expected
-
-        framed = Value.render({:names, "original", "Original: ", "."}, ctx) |> Segment.to_text()
-        assert framed == if(expected == "", do: "", else: "Original: #{expected}.")
       end
+    end
+
+    test "the framed form quotes each original and drops the frame with nothing to frame" do
+      # Issue #63: a framed sentence mixes the source's own words with prose this page wrote,
+      # and without quotes "The original treatment FLUOXETINE mapped to CHEBI:5118" reads as if
+      # the identifier were part of the source string. Quoting is per term, so the conjunctions
+      # stay outside the quotes - the source wrote two strings, not the phrase "A and B".
+      for {value, expected} <- [
+            {"Zyrtec", "Original: \"Zyrtec\"."},
+            {"A|B", "Original: \"A\" and \"B\"."},
+            {"A|B|C|A", "Original: \"A\", \"B\", and \"C\"."},
+            {nil, ""},
+            {"", ""},
+            {" | ", ""},
+            {[], ""}
+          ] do
+        ctx = %{doc: %{"original" => value}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
+
+        framed =
+          Value.render({:names, "original", "Original: ", "."}, ctx) |> Segment.to_text()
+
+        assert framed == expected
+      end
+    end
+
+    test "a name that already carries quotes prints as written, not nested" do
+      # A stored original can arrive with its own quotes ("Acute "flare""). Wrapping it again
+      # would print nested quotes, so a quote-bearing term is left exactly as stored and only
+      # clean terms get the frame's quotes.
+      ctx = %{
+        doc: %{"original" => ~s(Acute "flare")},
+        version: "kg-1.0.0",
+        slots: %{},
+        aliases: %{}
+      }
+
+      framed =
+        Value.render({:names, "original", "Original: ", "."}, ctx) |> Segment.to_text()
+
+      assert framed == ~s(Original: Acute "flare".)
+      refute framed =~ ~s("Acute)
     end
   end
 

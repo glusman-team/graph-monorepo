@@ -94,8 +94,9 @@ defmodule EdgeLinkouts.DisplayTest do
 
       items = Display.evidence(config, doc, @v1)
       # The fixture is fully specified, so the count is pinned: a claim that stopped rendering
-      # has to fail here rather than quietly shorten the list.
-      assert length(items) == 3
+      # has to fail here rather than quietly shorten the list. Subject and object mappings are
+      # separate claims, so a fully loaded document carries four.
+      assert length(items) == 4
 
       for item <- items do
         text = Segment.to_text(item)
@@ -764,17 +765,31 @@ defmodule EdgeLinkouts.DisplayTest do
 
       text = evidence_text(config, doc, @v1)
 
+      # Issue #63: each node's own mapping is its own claim, so each gets its own line, the
+      # source's words sit inside quotes, and the role word comes from the KG's config
+      # (DrugApprovals says treatment/condition, not the storage vocabulary subject/object).
       assert text =~
-               "The original subject Zyrtec, Cetirizine, and Allergy relief mapped to CHEBI:3561, which is a ChemicalEntity; and the original object Itching and Pruritus mapped to HP:0000989, which is a PhenotypicFeature."
+               "The original treatment \"Zyrtec\", \"Cetirizine\", and \"Allergy relief\" mapped to CHEBI:3561, which is a ChemicalEntity. The original condition \"Itching\" and \"Pruritus\" mapped to HP:0000989, which is a PhenotypicFeature."
 
-      assert text =~
-               "the original object Itching and Pruritus mapped to HP:0000989, which is a PhenotypicFeature."
+      lines =
+        config
+        |> Display.evidence(doc, @v1)
+        |> Enum.map(&Segment.to_text/1)
+        |> Enum.filter(&(&1 =~ "mapped to"))
+
+      # One line per node, not one compound sentence: a claim the reader can cite on its own.
+      assert length(lines) == 2, "expected one mapping line per node: #{inspect(lines)}"
+      [subject_line, object_line] = lines
+      assert subject_line =~ "The original treatment"
+      refute subject_line =~ "original condition"
+      assert object_line =~ "The original condition"
+      refute object_line =~ "original treatment"
 
       for missing <- [nil, "", " | ", []] do
         partial = Map.put(doc, "original_subject", missing) |> Map.delete("object_category")
         text = evidence_text(config, partial, @v1)
-        refute text =~ "original subject"
-        assert text =~ "The original object Itching and Pruritus mapped to HP:0000989."
+        refute text =~ "The original treatment"
+        assert text =~ "The original condition \"Itching\" and \"Pruritus\" mapped to HP:0000989."
         refute text =~ "which is a"
       end
     end
@@ -792,7 +807,7 @@ defmodule EdgeLinkouts.DisplayTest do
       text = evidence_text(config, doc, @v1)
 
       assert text =~
-               "The original population context qualifier adults, patients, and people mapped to NCIT:C27954; and the original sex qualifier male and men mapped to PATO:0000384."
+               "The original population context qualifier \"adults\", \"patients\", and \"people\" mapped to NCIT:C27954; and the original sex qualifier \"male\" and \"men\" mapped to PATO:0000384."
 
       refute text =~ "original subject"
       refute text =~ "original object"
@@ -802,8 +817,7 @@ defmodule EdgeLinkouts.DisplayTest do
       # Issue #58, on the page a reviewer actually read: the species clause carries its own "."
       # suffix and the compound closer appended a second one unconditionally, so Provenance
       # printed "This assertion is about Homo sapiens (human).. FAERS and Canada Vigilance
-      # record 61 cases of this usage." Sentence punctuation belongs to the closer, so the
-      # period has to be idempotent for a value that already ends in one.
+      # record 61 cases of this usage."
       doc = %{
         "subject" => "CHEBI:5118",
         "subject_name" => "fluoxetine",
@@ -826,18 +840,20 @@ defmodule EdgeLinkouts.DisplayTest do
       refute text =~ "(human).."
       refute text =~ ~r/\.\./
 
-      # The same clause inside a multi-clause compound must hand its mark to the "; and" join
-      # rather than gluing a period onto the connector.
-      two_clauses =
+      # The species sentence stands on its own line even beside another qualifier, and adding
+      # that qualifier must not reintroduce a doubled mark anywhere in the block.
+      with_qualifier =
         doc
         |> Map.put("sex_qualifier", "PATO:0000384")
         |> Map.update!("supporting_text", &["original_sex_qualifier: male" | &1])
 
-      joined = evidence_text(config, two_clauses, @v1)
+      items = Display.evidence(config, with_qualifier, @v1)
 
-      assert joined =~ "This assertion is about Homo sapiens (human); and"
-      refute joined =~ ".; and"
-      refute joined =~ ~r/\.\./
+      assert Enum.any?(items, fn item ->
+               Segment.to_text(item) == "This assertion is about Homo sapiens (human)."
+             end)
+
+      refute Enum.any?(items, &(&1 |> Segment.to_text() |> String.contains?("..")))
     end
 
     test "methods name the integrator, then its supporting sources", %{

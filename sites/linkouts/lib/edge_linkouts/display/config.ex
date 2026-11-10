@@ -109,7 +109,7 @@ defmodule EdgeLinkouts.Display.Config do
               doc: """
               An optional trailing sentence rendered as its own paragraph beneath the evidence
               paragraph — for helper text a reader acts on ("On DailyMed, search ...") rather
-              than a fact about the edge, which would dilute the evidence paragraph's argument.
+              than a fact about the edge, which would dilute the provenance list's argument.
               """
             ]
           )
@@ -270,7 +270,7 @@ defmodule EdgeLinkouts.Display.Config do
   defp check_requirement(_, _where), do: []
 
   defp section_problems(section, where) do
-    # Each section is one sentence of the evidence paragraph; a sentence must render something.
+    # Each section is one line of the provenance list; a line must render something.
     required =
       if Map.has_key?(section, :value) do
         []

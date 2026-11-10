@@ -276,7 +276,7 @@ defmodule EdgeLinkouts.Display do
   Renders the footnote line, when the config declares one.
 
   Helper text a reader acts on rather than a fact about the edge: search links, resolver
-  hints. Rendered as its own paragraph beneath the evidence paragraph so it does not dilute
+  hints. Rendered as its own paragraph beneath the provenance list so it does not dilute
   the evidence argument; an empty render (or no footnote) means no paragraph.
   """
   @spec footnote(t() | nil, map(), String.t()) :: [Segment.t()]

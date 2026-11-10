@@ -23,7 +23,8 @@ defmodule EdgeLinkouts.Display.Value do
         {:count, :field}                           the length of a list
         {:default, :field, fallback}               fallback when the field is absent or empty
         {:names, field}                            pipe-delimited names as an Oxford-comma list
-        {:names, field, prefix, suffix}             framed names; empty input drops the frame
+        {:names, field, prefix, suffix}             framed names, each one quoted; empty input
+                                                   drops the frame
         {:or_query, name, original_name}           a Lucene OR group of every name a source
                                                    used for the concept: the preferred name
                                                    plus each pipe-delimited original, quoted
@@ -279,21 +280,10 @@ defmodule EdgeLinkouts.Display.Value do
   # Source names share the search query's pipe splitting and deduplication, but read as
   # prose with the same Oxford-comma rule as source lists, without truncating originals.
   # Blank counts as absent (the {:default} convention), so an emptied field falls back to
-  # the supporting_text log rather than printing nothing.
+  # the supporting_text log rather than printing nothing. The bare form renders the words as
+  # they are; the framed form quotes them (see the 4-tuple below).
   def render({:names, name}, ctx) do
-    values =
-      case fetch(ctx, name) do
-        nil -> original_entries(ctx.doc, to_string(name))
-        "" -> original_entries(ctx.doc, to_string(name))
-        [] -> original_entries(ctx.doc, to_string(name))
-        value -> [value]
-      end
-
-    values
-    |> query_terms()
-    |> Enum.map(&[Segment.text(&1)])
-    |> interleave_with(", ", "and", [])
-    |> Segment.join()
+    names_segments(name, ctx, false)
   end
 
   # {:compound, clauses}: one sentence out of sentence-shaped clauses, each already framed
@@ -329,8 +319,13 @@ defmodule EdgeLinkouts.Display.Value do
     |> close_sentence()
   end
 
+  # The framed form exists to put a source's own words inside a sentence this page wrote, so it
+  # quotes them: "The original treatment FLUOXETINE mapped to CHEBI:5118" reads as if the
+  # identifier were part of the source string (issue #63). Each pipe-delimited variant gets its
+  # own pair of quotes, because they are separate strings the source wrote, not one
+  # comma-separated phrase. Straight ASCII quotes: the page never introduces smart punctuation.
   def render({:names, name, prefix, suffix}, ctx) do
-    case render({:names, name}, ctx) do
+    case names_segments(name, ctx, true) do
       [] -> []
       names -> Segment.join([render(prefix, ctx), names, render(suffix, ctx)])
     end
@@ -412,6 +407,35 @@ defmodule EdgeLinkouts.Display.Value do
     `mix linkouts.check` reports this at build time rather than on a page view.
     """
   end
+
+  # Shared by both {:names} arities: the bare form quotes nothing, the framed form quotes each
+  # term. Quoting happens per term, before the Oxford-comma join, so the conjunctions stay
+  # outside the quotes ("A" and "B", never "A and B").
+  defp names_segments(name, ctx, quoted?) do
+    values =
+      case fetch(ctx, name) do
+        nil -> original_entries(ctx.doc, to_string(name))
+        "" -> original_entries(ctx.doc, to_string(name))
+        [] -> original_entries(ctx.doc, to_string(name))
+        value -> [value]
+      end
+
+    values
+    |> query_terms()
+    |> Enum.map(&[Segment.text(term_phrase(&1, quoted?))])
+    |> interleave_with(", ", "and", [])
+    |> Segment.join()
+  end
+
+  # A term that already carries double quotes is not wrapped again. An original stored as
+  # ~s(Pain "acute") would otherwise print as "Pain "acute"" - nested quotes the reader has to
+  # unpick. Such a term is rare enough that printing it as written beats inventing a second
+  # quoting style for it.
+  defp term_phrase(term, true) do
+    if String.contains?(term, "\""), do: term, else: "\"" <> term <> "\""
+  end
+
+  defp term_phrase(term, false), do: term
 
   # Sentence assembly for {:compound, clauses}. Kept below the render/2 multi-clause so the
   # public clauses stay grouped together (the compiler warns otherwise, and CI runs with

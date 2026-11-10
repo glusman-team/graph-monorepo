@@ -22,7 +22,7 @@ A config is a map with these keys:
 | `asserts`       |          | the lead-in line above the sentence naming who makes the claim (often `"{kp}"`); the page ends it with a colon and renders the sentence below it  |
 | `methods`       |          | value spec rendered under Methods, describing how the association was generated and its sources                                                   |
 | `footnote`      |          | helper links rendered under Tips, using the same heading and body sizes as the other sections                                                     |
-| `evidence`      |          | sentences under Provenance: `%{value: spec, if: [conditions]}`. Each matching, nonempty sentence becomes one bullet of the Provenance list, including original-name mappings |
+| `evidence`      |          | sentences under Provenance: `%{value: spec, if: [conditions]}`. Each matching, nonempty sentence becomes one bullet of the Provenance list, including original-name mappings | (feat(linkouts): name each node by its role and quote source strings)
 The edge page presents the claim once, followed by Methods, Provenance, and Tips. Empty
 sections are omitted. These headings use the same section style as About.
 
@@ -34,9 +34,12 @@ sections are omitted. These headings use the same section style as About.
 and removes case-insensitive duplicates, preserving the first spelling. It renders `A`,
 `A and B`, or `A, B, and C`. All names remain visible.
 
-`{:names, "original_subject", "The original subject ", " mapped to {subject_id}."}`
-adds a template prefix and suffix only when at least one name survives. Missing or blank
-originals produce no sentence. CURIEs and Biolink classes use the existing link specs.
+`{:names, "original_subject", "The original {subject_role} ", " mapped to {subject_id}."}`
+adds a template prefix and suffix only when at least one name survives, and every surviving
+name prints inside double quotes, so the reader sees where the stored string ends. A name
+that already contains double quotes prints as written instead of gaining a second pair.
+Missing or blank originals produce no sentence. CURIEs and Biolink classes use the existing
+link specs.
 
 Anywhere a value is expected you may write any of these forms.
 
@@ -152,13 +155,18 @@ renders when `inner` renders nothing.
 Pipe-delimited original names (a document field, or `"key: a|b"` entries in
 `supporting_text`) as an Oxford-comma list: `A`, `A and B`, `A, B, and C`. Blank counts as
 absent. With a prefix and suffix the framed sentence renders only when at least one name
-survives.
+survives, and every name prints inside double quotes - `The original treatment "FLUOXETINE" and
+"fluoxetine HCl" mapped to ...` - so a reader can tell the source's own words from the sentence
+around them. The bare form leaves them unquoted for use as plain prose.
 
 ### `{:compound, clauses}`
 
 Several sentence-shaped clauses as one compound sentence. Empty clauses drop; one clause
 stays a plain sentence; several join with `"; and "` and close with a single period.
-Continuation clauses downcase a leading capitalized word, never a CURIE prefix or acronym.
+Continuation clauses downcase a leading capitalized word, never a CURIE prefix or acronym. The
+terminal mark is idempotent: a clause that already ends in sentence punctuation is not given a
+second one, and an interior clause hands its mark to the join, so a value ending in `.` never
+prints `..`.
 
 ### `{:supporting, key, prefix, suffix, rewordings, fallback}`
 
