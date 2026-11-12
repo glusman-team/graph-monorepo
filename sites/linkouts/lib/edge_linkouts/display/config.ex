@@ -507,6 +507,15 @@ defmodule EdgeLinkouts.Display.Config do
   defp condition_problem({:eq, _, _} = other, where),
     do: ["#{where}: {:eq, name, value} expected, got #{inspect(other)}"]
 
+  # Preferred-name comparison: both sides name a field, and the runtime treats an absent side
+  # as "no difference" rather than an error.
+  defp condition_problem({:differs, name, original}, _where)
+       when (is_binary(name) or is_atom(name)) and (is_binary(original) or is_atom(original)),
+       do: []
+
+  defp condition_problem({:differs, _, _} = other, where),
+    do: ["#{where}: {:differs, name_field, original_field} expected, got #{inspect(other)}"]
+
   defp condition_problem({:matches, name, pattern}, _where)
        when (is_binary(name) or is_atom(name)) and is_binary(pattern), do: []
 

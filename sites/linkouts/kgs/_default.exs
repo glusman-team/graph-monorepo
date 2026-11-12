@@ -26,9 +26,25 @@
     "object_display" => {:default, "object_name", {:field, "object"}},
     "subject_id" => {:link, "subject", "subject"},
     "object_id" => {:link, "object", "object"},
+    # The resolved concept's preferred name earns its place in the sentence only when it says
+    # something the original string does not: "0.9% SODIUM CHLORIDE" mapped to UMLS:C0445115,
+    # which is Normal saline. A case-only difference ("FLUOXETINE" vs "fluoxetine") adds
+    # nothing the original has not already printed, so the sentence stays as it was.
     "subject_mapping_kind" =>
+      {:if, [{:differs, "subject_name", "original_subject"}],
+       ", which is {subject_preferred}{subject_named_kind}", "{subject_plain_kind}"},
+    "subject_preferred" =>
+      {:if, [{:differs, "subject_name", "original_subject"}], {:field, "subject_name"}},
+    "subject_named_kind" => {:if, [{:present, "subject_category"}], ", a {subject_kind}"},
+    "subject_plain_kind" =>
       {:if, [{:present, "subject_category"}], ", which is a {subject_kind}"},
-    "object_mapping_kind" => {:if, [{:present, "object_category"}], ", which is a {object_kind}"},
+    "object_mapping_kind" =>
+      {:if, [{:differs, "object_name", "original_object"}],
+       ", which is {object_preferred}{object_named_kind}", "{object_plain_kind}"},
+    "object_preferred" =>
+      {:if, [{:differs, "object_name", "original_object"}], {:field, "object_name"}},
+    "object_named_kind" => {:if, [{:present, "object_category"}], ", a {object_kind}"},
+    "object_plain_kind" => {:if, [{:present, "object_category"}], ", which is a {object_kind}"},
     # What a KG calls its two nodes, in words its own readers know. The generic KGX wording is
     # subject/object; DrugApprovals overrides these to treatment/condition, because "the
     # original subject" makes a curator re-read the sentence (issue #63). A role name is a bare

@@ -40,7 +40,9 @@ defmodule EdgeLinkouts.Display.Value do
         {:if, conditions, then_spec, else_spec}    conditional inclusion
 
     Conditions: `{:present, :field}`, `{:eq, :field, value}`, `{:matches, :field, "regex"}`,
-    `{:lt | :gt | :lte | :gte, :field, number}`, `{:version, ">1.0.0"}`, and `{:all | :any, [...]}`.
+    `{:lt | :gt | :lte | :gte, :field, number}`, `{:differs, :field, :field}` (case-insensitive
+    comparison of a node's preferred name against its pipe-delimited original string),
+    `{:version, ">1.0.0"}`, and `{:all | :any, [...]}`.
 
     Missing values are the normal case in KGX, not an error: a field the release renamed, a node
     the join could not resolve. Every form renders to nothing when its input is absent, so a
@@ -684,6 +686,32 @@ defmodule EdgeLinkouts.Display.Value do
     case fetch(ctx, name) do
       nil -> false
       value -> stringify(value) == stringify(expected)
+    end
+  end
+
+  # Whether a node's preferred name says something the source's original string does not. The
+  # comparison ignores letter case and reads the original as a pipe-delimited list, so
+  # "FLUOXETINE" vs "fluoxetine" is the same word the source already printed, while "0.9%
+  # SODIUM CHLORIDE" vs "Normal saline" earns the name a place in the sentence. Absent or empty
+  # on either side is false: no name, no difference, no clause.
+  def condition?({:differs, name_field, original_field}, ctx) do
+    case fetch(ctx, name_field) do
+      name when is_binary(name) and name != "" ->
+        case fetch(ctx, original_field) do
+          original when is_binary(original) and original != "" ->
+            downcased = String.downcase(name)
+
+            original
+            |> String.split("|")
+            |> Enum.any?(fn part -> String.downcase(String.trim(part)) == downcased end)
+            |> Kernel.not()
+
+          _ ->
+            false
+        end
+
+      _ ->
+        false
     end
   end
 

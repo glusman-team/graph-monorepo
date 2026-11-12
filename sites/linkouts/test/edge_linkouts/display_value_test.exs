@@ -563,6 +563,33 @@ defmodule EdgeLinkouts.Display.ValueTest do
     end
   end
 
+  describe "{:differs, name_field, original_field}" do
+    # The preferred-name clause rides on this condition, so its edges are the sentence's edges:
+    # a real alternative name renders, a recasing or one spelling among several does not, and a
+    # missing side means no clause rather than a crash.
+    test "true only when the name says something no pipe part already said" do
+      ctx = fn doc -> %{doc: doc, version: "kg-1.0.0", slots: %{}, aliases: %{}} end
+
+      assert Value.condition?(
+               {:differs, "name", "original"},
+               ctx.(%{"name" => "Normal saline", "original" => "0.9% SODIUM CHLORIDE"})
+             )
+
+      for doc <- [
+            %{},
+            %{"name" => "fluoxetine"},
+            %{"original" => "FLUOXETINE"},
+            %{"name" => "", "original" => "FLUOXETINE"},
+            %{"name" => "fluoxetine", "original" => ""},
+            %{"name" => "fluoxetine", "original" => "FLUOXETINE"},
+            %{"name" => "desflurane", "original" => "DESFLURANE|Desflurane USAN"},
+            %{"name" => "fluoxetine", "original" => ["FLUOXETINE"]}
+          ] do
+        refute Value.condition?({:differs, "name", "original"}, ctx.(doc))
+      end
+    end
+  end
+
   # Pulls the label out of the first link segment, so a test can say what the link itself
   # prints rather than trusting the flattened sentence.
   defp link_label(segments) do

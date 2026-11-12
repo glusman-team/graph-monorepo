@@ -557,7 +557,7 @@ defmodule EdgeLinkouts.DisplayTest do
       items = Display.evidence(config, doc, version)
 
       assert item_texts(items) == [
-               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115.),
+               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115, which is Normal saline.),
                ~s(The original active ingredient "CHLORIDE ION" mapped to CHEBI:17996.)
              ]
 
@@ -577,9 +577,46 @@ defmodule EdgeLinkouts.DisplayTest do
         text = items_text(items)
 
         refute text =~ "matched"
-        assert text =~ ~s(mapped to UMLS:C0445115.)
+        assert text =~ ~s(mapped to UMLS:C0445115, which is Normal saline.)
         assert text =~ ~s(mapped to CHEBI:17996.)
       end
+    end
+
+    test "a preferred name that adds information joins the mapping sentence", %{config: config} do
+      # The nodes file knows the concept by its own name: an original of "0.9% SODIUM CHLORIDE"
+      # mapped to "Normal saline" tells the curator what they are looking at. With a category
+      # present the name takes the article's place: "which is Normal saline, a ChemicalEntity",
+      # not "which is a ChemicalEntity".
+      doc = Map.put(composition_doc(), "subject_category", ["biolink:ChemicalEntity"])
+      version = "infores:drugapprovals-kp-1.27.0"
+
+      text = evidence_text(config, doc, version)
+
+      assert text =~
+               ~s(mapped to UMLS:C0445115, which is Normal saline, a ChemicalEntity.)
+    end
+
+    test "a preferred name that only recases the original does not join", %{config: config} do
+      # "FLUOXETINE" and "fluoxetine" are the same word; printing the preferred name would only
+      # repeat what the original already says in the source's own casing. Same for an original
+      # that lists several spellings and the name equals one of them.
+      version = "infores:drugapprovals-kp-1.27.0"
+
+      recased =
+        composition_doc()
+        |> Map.put("subject_name", "0.9% sodium chloride")
+        |> Map.put("object_name", "chloride ion")
+
+      text = evidence_text(config, recased, version)
+      refute text =~ "0.9% sodium chloride"
+      assert text =~ ~s(mapped to UMLS:C0445115.)
+
+      one_of_several =
+        composition_doc()
+        |> Map.put("original_subject", "SALINE DRESSING|0.9% SODIUM CHLORIDE")
+        |> Map.put("subject_name", "0.9% Sodium Chloride")
+
+      refute evidence_text(config, one_of_several, version) =~ "0.9% Sodium Chloride"
     end
   end
 

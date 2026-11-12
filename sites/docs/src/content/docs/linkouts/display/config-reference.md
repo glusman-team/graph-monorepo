@@ -214,15 +214,16 @@ phrase-only; `%{variants: [:phrase]}` is its exact equivalent.
 
 ## Conditions
 
-| condition                                    | true when                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `{:present, name}`                           | the field exists and is not empty                                                                 |
-| `{:eq, name, value}`                         | the field equals `value`, compared as text                                                        |
-| `{:matches, name, "regex"}`                  | the field matches the regex. Use this for predicate families such as `^biolink:contraindicated`   |
-| `{:lt \| :gt \| :lte \| :gte, name, number}` | the field is a number and compares true. A missing or non-number field is false, never an error   |
-| `{:count_gt, name, n}`                       | the list field has more than `n` elements                                                         |
-| `{:version, ">1.0.0"}`                       | the version being displayed satisfies the requirement. Comparison is numeric, so `1.9.0 < 1.16.0` |
-| `{:all, [...]}`, `{:any, [...]}`             | combinators                                                                                       |
+| condition                                    | true when                                                                                                                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `{:present, name}`                           | the field exists and is not empty                                                                                                       |
+| `{:eq, name, value}`                         | the field equals `value`, compared as text                                                                                              |
+| `{:differs, name, original}`                 | `name`'s text says something `original` does not: case-insensitive against each pipe-delimited original, absent on either side is false |
+| `{:matches, name, "regex"}`                  | the field matches the regex. Use this for predicate families such as `^biolink:contraindicated`                                         |
+| `{:lt \| :gt \| :lte \| :gte, name, number}` | the field is a number and compares true. A missing or non-number field is false, never an error                                         |
+| `{:count_gt, name, n}`                       | the list field has more than `n` elements                                                                                               |
+| `{:version, ">1.0.0"}`                       | the version being displayed satisfies the requirement. Comparison is numeric, so `1.9.0 < 1.16.0`                                       |
+| `{:all, [...]}`, `{:any, [...]}`             | combinators                                                                                                                             |
 
 ## Safety
 

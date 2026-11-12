@@ -154,7 +154,11 @@ Provenance each distinct claim gets its own line: the original subject and objec
 graph uses (`subject_role`, `object_role`: "subject" and "object" in the default, "treatment"
 and "condition" for a DrugApprovals treatment edge). Roles can follow the predicate, so the
 same sentence stays true on a different edge shape: a DrugApprovals composition edge calls
-them "product" and "active ingredient". The species sentence stands
+them "product" and "active ingredient". When the resolved concept's preferred name says
+something the source's string does not ("0.9% SODIUM CHLORIDE" vs "Normal saline"), the mapping
+sentence names it: "... mapped to UMLS:C0445115, which is Normal saline, a ChemicalEntity." A
+case-only difference ("FLUOXETINE" vs "fluoxetine") adds nothing the original has not already
+printed, so the sentence stays as it was. The species sentence stands
 alone (`mapping_species_context_qualifier`), and the remaining qualifier originals share one
 compound sentence (`qualifier_mappings`). Every original string prints in double quotes, so a
 reader can tell the source's words from the sentence around them. Pipe-delimited names use an
