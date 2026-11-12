@@ -557,7 +557,7 @@ defmodule EdgeLinkouts.DisplayTest do
       items = Display.evidence(config, doc, version)
 
       assert item_texts(items) == [
-               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115, which is Normal saline.),
+               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115, which is "Normal saline".),
                ~s(The original active ingredient "CHLORIDE ION" mapped to CHEBI:17996.)
              ]
 
@@ -577,7 +577,7 @@ defmodule EdgeLinkouts.DisplayTest do
         text = items_text(items)
 
         refute text =~ "matched"
-        assert text =~ ~s(mapped to UMLS:C0445115, which is Normal saline.)
+        assert text =~ ~s(mapped to UMLS:C0445115, which is "Normal saline".)
         assert text =~ ~s(mapped to CHEBI:17996.)
       end
     end
@@ -585,15 +585,16 @@ defmodule EdgeLinkouts.DisplayTest do
     test "a preferred name that adds information joins the mapping sentence", %{config: config} do
       # The nodes file knows the concept by its own name: an original of "0.9% SODIUM CHLORIDE"
       # mapped to "Normal saline" tells the curator what they are looking at. With a category
-      # present the name takes the article's place: "which is Normal saline, a ChemicalEntity",
-      # not "which is a ChemicalEntity".
+      # present the sentence names the concept first: "which is the ChemicalEntity \"Normal
+      # saline\"" - the name is what the curator came for, and the quotes mark it as the KG's
+      # own wording, the same way the originals are quoted as the source's words.
       doc = Map.put(composition_doc(), "subject_category", ["biolink:ChemicalEntity"])
       version = "infores:drugapprovals-kp-1.27.0"
 
       text = evidence_text(config, doc, version)
 
       assert text =~
-               ~s(mapped to UMLS:C0445115, which is Normal saline, a ChemicalEntity.)
+               ~s(mapped to UMLS:C0445115, which is the ChemicalEntity "Normal saline".)
     end
 
     test "a preferred name that only recases the original does not join", %{config: config} do
