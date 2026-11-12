@@ -116,7 +116,6 @@ defmodule EdgeLinkoutsWeb.RandomControllerTest do
       # Two point reads: the index says which releases exist and how big they are, then only
       # the chosen release's ids are fetched. Nothing queries the container.
       assert [{:get_edge, @index_id}, {:get_edge, pool_id}] = Cosmos.Fake.calls()
-      assert Cosmos.reserved_id?(pool_id)
       assert String.starts_with?(pool_id, "__random_pool__:#{@slug}:")
     end
 
@@ -250,7 +249,7 @@ defmodule EdgeLinkoutsWeb.RandomControllerTest do
 
   defp all_fixture_edge_ids do
     Fixtures.docs()
-    |> Enum.reject(&Cosmos.reserved_id?(&1["id"]))
+    |> Enum.reject(&String.starts_with?(&1["id"], "__random_pool__"))
     |> Enum.map(& &1["id"])
   end
 end

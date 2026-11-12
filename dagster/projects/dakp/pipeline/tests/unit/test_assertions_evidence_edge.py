@@ -405,7 +405,10 @@ def test_fda_approval_index_expands_faers_numbers_from_drugsfda(tmp_path: Path) 
     assert index.expand("125514") == ["BLA125514"]
     assert index.expand("0125514") == ["BLA125514"]  # any FAERS spelling normalizes to one entry
     assert index.expand("17977") == ["NDA017977"]  # padding restored from the register
-    assert index.expand_all(["17977", "125514", "125514"]) == ["BLA125514", "NDA017977"]
+    assert index.expand_all_for_edge(["17977", "125514", "125514"], animal_edge=False) == [
+        "BLA125514",
+        "NDA017977",
+    ]
     # A well-formed number no register knows is still a resolvable identifier, so it rides through.
     assert index.expand("ANDA065432") == ["ANDA065432"]
     # A BARE number no register knows is not: without its application type it resolves to nothing,
@@ -516,7 +519,10 @@ def test_fda_approval_index_expands_one_form_per_number_for_the_edges_animalness
         "NADA065470",
         "NADA200123",
     ]
-    assert index.expand_all(["065470", "200123", "018780"]) == ["ANDA065470", "BLA018780"]
+    assert index.expand_all_for_edge(["065470", "200123", "018780"], animal_edge=False) == [
+        "ANDA065470",
+        "BLA018780",
+    ]
 
 
 def test_fda_approval_index_register_wins_on_human_edges_and_the_animal_form_rides_animal_edges(

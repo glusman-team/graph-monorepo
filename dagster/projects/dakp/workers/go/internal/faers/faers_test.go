@@ -24,6 +24,15 @@ const goldenCasesTSV = "quarter\tprimaryid\tcaseid\tsource\toccp_cod\treporter_c
 
 // --- test helpers --------------------------------------------------------------
 
+func hasWarning(w *Warnings, code string) bool {
+	for _, item := range w.Items() {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 // testSource builds a Source from a testdata file, hashing its content like the CLI does.
 func testSource(t *testing.T, name string) Source {
 	t.Helper()
@@ -194,7 +203,7 @@ func TestParseMissingPrimaryIDRecordsWarning(t *testing.T) {
 	if tbl := ParseSource(src, warn); tbl != nil {
 		t.Fatal("expected nil table for missing primaryid")
 	}
-	if !warn.Has("missing_primaryid") {
+	if !hasWarning(warn, "missing_primaryid") {
 		t.Fatalf("expected missing_primaryid warning, got %v", warn.Items())
 	}
 }
@@ -204,7 +213,7 @@ func TestParseEmptyRecordsWarning(t *testing.T) {
 	if tbl := ParseSource(inlineSource("24Q3", "DEMO", "DEMO24Q3.txt", "   \r\n"), warn); tbl != nil {
 		t.Fatal("expected nil table for blank content")
 	}
-	if !warn.Has("empty_file") {
+	if !hasWarning(warn, "empty_file") {
 		t.Fatalf("expected empty_file warning, got %v", warn.Items())
 	}
 	// Header but no data rows.
@@ -212,7 +221,7 @@ func TestParseEmptyRecordsWarning(t *testing.T) {
 	if tbl := ParseSource(inlineSource("24Q3", "DEMO", "DEMO24Q3.txt", "PRIMARYID$CASEID$\r\n"), warn2); tbl != nil {
 		t.Fatal("expected nil table for header-only content")
 	}
-	if !warn2.Has("empty_file") {
+	if !hasWarning(warn2, "empty_file") {
 		t.Fatalf("expected empty_file warning, got %v", warn2.Items())
 	}
 }
@@ -401,7 +410,7 @@ func TestBuildQuarterCasesDeletedRowsWarning(t *testing.T) {
 	fam := parseFamilies(t, "DEMO24Q3.txt", "DRUG24Q3.txt", "INDI24Q3.txt", "REAC24Q3.txt", "RPSR24Q3.txt", "DELETE24Q3.txt")
 	warn := &Warnings{}
 	BuildQuarterCases(fam, "24Q3", DeletedPrimaryIDs(fam["DELETE"]), warn)
-	if !warn.Has("deleted_rows_dropped") {
+	if !hasWarning(warn, "deleted_rows_dropped") {
 		t.Fatalf("expected deleted_rows_dropped warning, got %v", warn.Items())
 	}
 }
@@ -658,7 +667,7 @@ func TestParseStreamEmptyAndWarnings(t *testing.T) {
 	if tbl := ParseStream(strings.NewReader(""), "24Q3", "DEMO", "DEMO24Q3.txt", warn); tbl != nil {
 		t.Fatal("expected nil table for empty stream")
 	}
-	if !warn.Has("empty_file") {
+	if !hasWarning(warn, "empty_file") {
 		t.Fatalf("expected empty_file warning, got %v", warn.Items())
 	}
 	// Header but no data rows.
@@ -666,7 +675,7 @@ func TestParseStreamEmptyAndWarnings(t *testing.T) {
 	if tbl := ParseStream(strings.NewReader("PRIMARYID$CASEID$\r\n"), "24Q3", "DEMO", "DEMO24Q3.txt", warn2); tbl != nil {
 		t.Fatal("expected nil table for header-only stream")
 	}
-	if !warn2.Has("empty_file") {
+	if !hasWarning(warn2, "empty_file") {
 		t.Fatalf("expected empty_file warning, got %v", warn2.Items())
 	}
 }

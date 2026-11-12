@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator
 
-from linkouts_pipeline.jsonio import canonical_json, hash_bytes, write_json_atomic
+from linkouts_pipeline.jsonio import write_json_atomic
 from linkouts_pipeline.refs import ArtifactRef, Blake3Id, ContractModel
 
 STAGE_SCHEMA = "linkouts.stage/1"
@@ -64,9 +64,6 @@ class StageManifest(ContractModel):
     @property
     def store_path(self) -> Path:
         return Path(self.store.removeprefix("file:"))
-
-    def content_id(self) -> str:
-        return hash_bytes(canonical_json(self.model_dump(mode="json", exclude_none=True)))
 
     def validate_for_publication(self, *, require_store: bool = True) -> StageManifest:
         if not self.complete:

@@ -302,10 +302,6 @@ class FDAApprovalIndex:
             for display in self.expand_for_edge(value, animal_edge=animal_edge)
         )
 
-    def expand_all(self, values: Iterable[Any]) -> list[str]:
-        """Sorted unique non-animal-edge display forms for many raw application numbers."""
-        return self.expand_all_for_edge(values, animal_edge=False)
-
 
 def _index_display(
     displays: dict[str, list[str]],
@@ -776,18 +772,6 @@ class DailyMedEvidence:
             return animal_row_species(sentence, self.species_by_set.get(set_id, frozenset()))
         return species_row_species(
             self.label_types.get(set_id, ""), sentence, self.species_by_set.get(set_id, frozenset())
-        )
-
-    def contraindication_sets_for_drug(self, drug_text: str) -> list[str]:
-        """Sorted SPL set ids whose active ingredient matches ``drug_text`` and that have a
-        contraindication section (the "first-scope" contraindication-support link)."""
-        drug = drug_text.strip().lower()
-        if not drug:
-            return []
-        return merge_unique(
-            set_id
-            for set_id, (name, _unii) in self.set_ingredient.items()
-            if name.strip().lower() == drug and self.contraindication_docs.get(set_id)
         )
 
 

@@ -69,22 +69,6 @@ func PoolDocID(slug, version string) string {
 	return RandomPoolID + ":" + slug + ":" + version
 }
 
-// SplitPoolDocID is the inverse of PoolDocID. ok is false for any id that is not a pool document,
-// including the pool index itself.
-func SplitPoolDocID(id string) (slug, version string, ok bool) {
-	rest, found := strings.CutPrefix(id, RandomPoolID+":")
-	if !found {
-		return "", "", false
-	}
-	// Split at the last colon, not the first: a KG name that somehow kept a colon would
-	// otherwise be truncated and the version mis-parsed.
-	i := strings.LastIndex(rest, ":")
-	if i <= 0 || i == len(rest)-1 {
-		return "", "", false
-	}
-	return rest[:i], rest[i+1:], true
-}
-
 // IsReservedID reports whether an id belongs to the app rather than to an edge: the pool index
 // and the per-release pool documents. The worker's status operation uses it to count edge documents without
 // scanning, and purge uses it to leave the reserved documents out of an edge-only wipe.

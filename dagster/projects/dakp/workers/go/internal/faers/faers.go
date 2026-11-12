@@ -178,16 +178,6 @@ func (w *Warnings) Items() []Warning {
 	return out
 }
 
-// Has reports whether any warning carries the given code.
-func (w *Warnings) Has(code string) bool {
-	for _, it := range w.Items() {
-		if it.Code == code {
-			return true
-		}
-	}
-	return false
-}
-
 // quarterInNameRe extracts the two-digit year + quarter from a FAERS filename (mirrors
 // faers_ascii._QUARTER_IN_NAME_RE), e.g. "DEMO24Q3.txt" -> ("24","3"), "ascii/DEMO2018q2"
 // is NOT matched (needs exactly two year digits; the fetcher canonicalizes full years).

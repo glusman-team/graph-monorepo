@@ -20,7 +20,6 @@ A config is a map with these keys:
 | `title`         |          | short label for the page title; defaults to "subject and object"                                                                                  |
 | `edge`          | yes      | the sentence describing the relationship                                                                                                          |
 | `asserts`       |          | the lead-in line above the sentence naming who makes the claim (often `"{kp}"`); the page ends it with a colon and renders the sentence below it  |
-| `relationship`  |          | legacy rendering API; the edge page no longer repeats this sentence                                                                               |
 | `methods`       |          | value spec rendered under Methods, describing how the association was generated and its sources                                                   |
 | `evidence`      |          | sentences under Provenance: `%{value: spec, if: [conditions]}`. Matching, nonempty sentences form one paragraph, including original-name mappings |
 | `footnote`      |          | helper links rendered under Tips, using the same heading and body sizes as the other sections                                                     |

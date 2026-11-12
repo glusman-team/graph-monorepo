@@ -2,7 +2,7 @@
 
 Covers the public API of ``dakp_pipeline.ner.dictionary``: deterministic text normalization
 (with offset maps back into the original text), raw-label canonicalization, and the immutable
-``Gazetteer`` — construction, frame/TSV builders, and lookup/iteration queries.
+``Gazetteer`` — construction, frame/TSV builders, and iteration/membership queries.
 """
 
 from __future__ import annotations
@@ -137,14 +137,16 @@ def test_canonical_type_unknown_label_lowercased_fallback() -> None:
 
 def test_gazetteer_normalizes_keys_and_canonicalizes_types() -> None:
     gaz = Gazetteer({"  Peptic Ulcer Disease ": "Diseases", "HEADACHE": "PhenotypicFeature"})
-    assert gaz.type_for("peptic ulcer disease") == TYPE_DISEASE
-    assert gaz.type_for("headache") == TYPE_PHENOTYPE
+    assert dict(gaz.items()) == {
+        "peptic ulcer disease": TYPE_DISEASE,
+        "headache": TYPE_PHENOTYPE,
+    }
 
 
 def test_gazetteer_last_inserted_type_wins_for_duplicate_keys() -> None:
     gaz = Gazetteer({"fever": "disease", "Fever": "phenotype"})
     assert len(gaz) == 1
-    assert gaz.type_for("fever") == TYPE_PHENOTYPE
+    assert dict(gaz.items()) == {"fever": TYPE_PHENOTYPE}
 
 
 # --- builders ------------------------------------------------------------------
@@ -159,32 +161,27 @@ def test_from_frame_builds_and_canonicalizes_biolink_categories() -> None:
         }
     )
     gaz = Gazetteer.from_frame(frame)
-    assert gaz.type_for("myocardial infarction") == TYPE_DISEASE
-    assert gaz.type_for("headache") == TYPE_PHENOTYPE
+    assert dict(gaz.items()) == {
+        "myocardial infarction": TYPE_DISEASE,
+        "headache": TYPE_PHENOTYPE,
+    }
     assert len(gaz) == 2
 
 
 def test_from_frame_honors_custom_columns() -> None:
     frame = pl.DataFrame({"term": ["asthma"], "kind": ["disease"]})
     gaz = Gazetteer.from_frame(frame, text_col="term", type_col="kind")
-    assert gaz.type_for("asthma") == TYPE_DISEASE
+    assert dict(gaz.items()) == {"asthma": TYPE_DISEASE}
 
 
 def test_from_tsv_reads_tab_separated_terms(tmp_path: Path) -> None:
     path = tmp_path / "terms.tsv"
     path.write_text("text\ttype\nasthma\tDisease\nfever\tphenotype\n")
     gaz = Gazetteer.from_tsv(path)
-    assert gaz.type_for("asthma") == TYPE_DISEASE
-    assert gaz.type_for("fever") == TYPE_PHENOTYPE
+    assert dict(gaz.items()) == {"asthma": TYPE_DISEASE, "fever": TYPE_PHENOTYPE}
 
 
 # --- queries -------------------------------------------------------------------
-
-
-def test_type_for_hit_and_miss() -> None:
-    gaz = Gazetteer({"asthma": "disease"})
-    assert gaz.type_for("asthma") == TYPE_DISEASE
-    assert gaz.type_for("missing") is None
 
 
 def test_contains_true_and_false() -> None:
@@ -196,11 +193,6 @@ def test_contains_true_and_false() -> None:
 def test_len_counts_distinct_normalized_phrases() -> None:
     assert len(Gazetteer({})) == 0
     assert len(Gazetteer({"asthma": "disease", "Asthma": "disease", "fever": "phenotype"})) == 2
-
-
-def test_normalized_terms_sorted() -> None:
-    gaz = Gazetteer({"pain": "disease", "asthma": "disease", "fever": "phenotype"})
-    assert gaz.normalized_terms() == ("asthma", "fever", "pain")
 
 
 def test_items_yields_sorted_pairs() -> None:

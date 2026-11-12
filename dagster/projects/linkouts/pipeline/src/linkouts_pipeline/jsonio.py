@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import tempfile
@@ -12,11 +11,6 @@ from typing import Any
 import blake3
 
 
-def hash_bytes(raw: bytes) -> str:
-    """Return the monorepo's ``b3:<hex>`` content identifier."""
-    return f"b3:{blake3.blake3(raw).hexdigest()}"
-
-
 def hash_file(path: Path) -> str:
     """Hash one file without loading a potentially large KGX input into memory."""
     digest = blake3.blake3()
@@ -24,13 +18,6 @@ def hash_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return f"b3:{digest.hexdigest()}"
-
-
-def canonical_json(value: Any) -> bytes:
-    """Canonical JSON used for manifest identity and cross-language fixtures."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
-        "utf-8"
-    )
 
 
 def write_json_atomic(path: Path, value: Any) -> None:
@@ -47,12 +34,3 @@ def write_json_atomic(path: Path, value: Any) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
-
-
-def sha256_file(path: Path) -> str:
-    """Return a SHA-256 hex digest for interoperability checks, not artifact identity."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()

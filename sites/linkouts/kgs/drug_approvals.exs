@@ -79,7 +79,7 @@
             "is contraindicated for patients with", "has been used for {verb}"}
        }},
 
-    # The text relationship line names each node with its linkout; the CURIE itself is an
+    # The edge page names each node with its linkout; the CURIE itself is an
     # identifier, not part of the claim, so it sits behind a "curie" chip that reveals it in
     # place — one click to see or copy, no parentheses breaking the sentence.
     "subject_curie" => {:fold, "curie", {:link, "subject", "subject"}},
@@ -297,7 +297,6 @@
      }},
 
   # Methods retain how the statement was produced, without repeating the headline.
-  relationship: nil,
   methods:
     {:pick, "predicate",
      %{

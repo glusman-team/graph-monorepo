@@ -91,36 +91,13 @@ func TestCompareOrdersNumericallyNotLexically(t *testing.T) {
 	}
 }
 
-func TestSortAndNewest(t *testing.T) {
+func TestNewest(t *testing.T) {
 	in := []string{"drug-approvals-kg-1.16.0", "drug-approvals-kg-1.9.0", "drug-approvals-kg-1.11.2"}
-	got := SortKeys(in)
-	want := []string{"drug-approvals-kg-1.9.0", "drug-approvals-kg-1.11.2", "drug-approvals-kg-1.16.0"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("SortKeys = %v, want %v", got, want)
-		}
-	}
-	// The input must not be reordered in place: callers still hold it.
-	if in[0] != "drug-approvals-kg-1.16.0" {
-		t.Errorf("SortKeys mutated its input: %v", in)
-	}
 	if got := Newest(in); got != "drug-approvals-kg-1.16.0" {
 		t.Errorf("Newest = %q", got)
 	}
 	if got := Newest(nil); got != "" {
 		t.Errorf("Newest(nil) = %q", got)
-	}
-}
-
-func TestSameKG(t *testing.T) {
-	a, _ := Parse("drug-approvals-kg-1.11.2")
-	b, _ := Parse("drug-approvals-kg-1.16.0")
-	c, _ := Parse("wellness_kg-1.0.0")
-	if !SameKG(a, b) {
-		t.Error("two releases of one KG were not recognised as the same KG")
-	}
-	if SameKG(a, c) {
-		t.Error("different KGs matched")
 	}
 }
 

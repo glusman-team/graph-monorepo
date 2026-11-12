@@ -8,7 +8,7 @@ LINKOUTS = dagster/projects/linkouts
 LINKOUTS_GO = $(LINKOUTS)/workers/go
 LINKOUTS_WEB = sites/linkouts
 
-.PHONY: dev up test lint fmt hooks locks go-test-race check help
+.PHONY: dev up test lint fmt hooks locks go-test-race dead-code-check check help
 .PHONY: docs-dev docs-build docs-test docs-format docs-check
 .PHONY: dakp-test dakp-lint
 .PHONY: linkouts-test linkouts-lint linkouts-pipeline-test linkouts-dag-test linkouts-dag-lint
@@ -41,7 +41,10 @@ locks:
 go-test-race:
 	scripts/run-go-tests.sh --all
 
-check: lint test go-test-race docs-test linkouts-check-deploy
+dead-code-check:
+	python3 scripts/check_dead_code.py
+
+check: lint test go-test-race dead-code-check docs-test linkouts-check-deploy
 
 # Documentation (Astro Starlight + Pagefind).
 docs-dev:
@@ -132,6 +135,7 @@ help:
 	@echo "make check                 offline aggregate verification"
 	@echo "make locks                 recursive uv/npm/Go/Mix lock checks"
 	@echo "make go-test-race          race suites in every independent Go module"
+	@echo "make dead-code-check       Python and Go unused-code gates"
 	@echo "make docs-dev / docs-test  Starlight development server or full documentation checks"
 	@echo "make dakp-test             DAKP Python tests"
 	@echo "make linkouts-test         all Linkouts Python, Go, and Phoenix tests"

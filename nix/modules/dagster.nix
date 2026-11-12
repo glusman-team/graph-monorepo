@@ -3,10 +3,11 @@
 #
 # Fixed ports: UI on 3000 everywhere (dg dev and process-compose alike).
 # No auth: the dagster OSS webserver has none - nothing to configure.
-{ pkgs, ... }:
+{ pkgs, inputs', ... }:
 let
+  go = inputs'.nixpkgs-go.legacyPackages.go_1_26;
   dagsterDir = "dagster";
-  nercachePackage = pkgs.buildGoModule {
+  nercachePackage = (pkgs.buildGoModule.override { inherit go; }) {
     pname = "dakp-nercache";
     version = "0.1.0";
     src = pkgs.lib.cleanSourceWith {

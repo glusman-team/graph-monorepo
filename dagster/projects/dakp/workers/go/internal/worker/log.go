@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 )
 
 // One stat per log line.
@@ -24,18 +23,6 @@ func Stat(ctx context.Context, event, key string, value any) {
 // StatDebug emits one DEBUG log line: "<event>: <key> = <value>" (per-artifact detail).
 func StatDebug(ctx context.Context, event, key string, value any) {
 	slog.DebugContext(ctx, fmt.Sprintf("%s: %s = %v", event, key, value))
-}
-
-// Started marks a phase beginning: "<event>: started".
-func Started(ctx context.Context, event string) {
-	slog.InfoContext(ctx, event+": started")
-}
-
-// Finished marks a phase end with its elapsed time, one line each:
-// "<event>: finished = true" and "<event>: elapsed_s = <N>".
-func Finished(ctx context.Context, event string, start time.Time) {
-	slog.InfoContext(ctx, event+": finished = true")
-	Stat(ctx, event, "elapsed_s", fmt.Sprintf("%.3f", time.Since(start).Seconds()))
 }
 
 // StatOutput narrates one registered output artifact - output name, then path / blake3 / rows /

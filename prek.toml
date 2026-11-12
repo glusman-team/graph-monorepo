@@ -106,6 +106,15 @@ pass_filenames = true
 stages = ["pre-push"]
 
 [[repos.hooks]]
+id = "dead-code"
+name = "Python and Go dead-code check"
+entry = "python3 scripts/check_dead_code.py"
+language = "system"
+files = '''\.py$|\.go$|^nix/modules/devshell\.nix$'''
+pass_filenames = false
+stages = ["pre-push"]
+
+[[repos.hooks]]
 id = "nx-affected"
 name = "Nx affected test and lint"
 entry = "scripts/run-nx-affected.sh"

@@ -46,6 +46,12 @@ from dakp_pipeline.ner.ner import (
 # --- helpers -------------------------------------------------------------------
 
 
+def _extract_via_span_path(backend: DiseaseNER, texts: list[str]) -> list[list[Mention]]:
+    """Exercise the production raw-span extraction and deterministic merge path."""
+    spans = backend.extract_spans_batch(texts)
+    return [backend.merge_spans(text, span) for text, span in zip(texts, spans, strict=True)]
+
+
 @contextmanager
 def _captured_logs() -> Iterator[list[str]]:
     """Collect rendered loguru lines emitted inside the block (sink removed on exit)."""
@@ -489,7 +495,7 @@ def test_trained_labels_preserve_disease_and_phenotype_types(
     ]
 
 
-def test_extract_batch_uses_padded_inference_and_matches_single_texts(
+def test_span_batch_uses_padded_inference_and_matches_single_texts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A production worker sends multiple windows through one GLiNER batch call."""
@@ -500,7 +506,7 @@ def test_extract_batch_uses_padded_inference_and_matches_single_texts(
     backend = DiseaseNER(offline=False, gazetteer={}, inference_batch_size=2)
     texts = ["porphyria", "porphyria"]
 
-    batched = backend.extract_batch(texts)
+    batched = _extract_via_span_path(backend, (texts))
     single = [backend.extract(text) for text in texts]
 
     assert batched == single
@@ -508,7 +514,7 @@ def test_extract_batch_uses_padded_inference_and_matches_single_texts(
     assert len(model.calls) == 4  # one inference item for each of two batched + two single calls
 
 
-def test_extract_batch_handles_empty_text_and_model_filters(
+def test_span_batch_handles_empty_text_and_model_filters(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     model = _FakeExtractorModel(
@@ -519,10 +525,10 @@ def test_extract_batch_handles_empty_text_and_model_filters(
     )
     _install_fake_gliner2(monkeypatch, tmp_path, [], model=model)
     backend = DiseaseNER(offline=False, gazetteer={})
-    assert backend.extract_batch([" "]) == [[]]
-    assert [mention.text for row in backend.extract_batch(["women", ""]) for mention in row] == [
-        "women"
-    ]
+    assert _extract_via_span_path(backend, ([" "])) == [[]]
+    assert [
+        mention.text for row in _extract_via_span_path(backend, (["women", ""])) for mention in row
+    ] == ["women"]
 
 
 class _OverrunModel:
@@ -553,7 +559,7 @@ class _OverrunModel:
         ]
 
 
-def test_extract_batch_survives_a_span_that_overruns_the_window(
+def test_span_batch_survives_a_span_that_overruns_the_window(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Regression guard for the run-8/run-9 shard killer: an over-running offset clamps instead of
@@ -561,14 +567,14 @@ def test_extract_batch_survives_a_span_that_overruns_the_window(
     text = "indicated for chronic obstructive pulmonary disease"  # no terminal punctuation
     _install_fake_gliner2(monkeypatch, tmp_path, [], model=_OverrunModel())
     backend = DiseaseNER(offline=False, gazetteer={}, device="cpu", workdir=tmp_path)
-    mentions = backend.extract_batch([text])[0]
+    mentions = _extract_via_span_path(backend, ([text]))[0]
     assert [(mention.text, mention.type) for mention in mentions] == [
         ("chronic obstructive pulmonary disease", "Disease")
     ]
     assert text[mentions[0].start : mentions[0].end] == mentions[0].text
 
 
-def test_extract_batch_isolates_an_unreadable_window_result(
+def test_span_batch_isolates_an_unreadable_window_result(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A malformed model result costs ONE window its spans, not the shard its 40 minutes of GPU
@@ -583,30 +589,10 @@ def test_extract_batch_isolates_an_unreadable_window_result(
 
     monkeypatch.setattr(ner_module, "_spans_from_result", _boom)
     with _captured_logs() as lines:
-        out = backend.extract_batch(["asthma in adults", "chronic hives"])
+        out = _extract_via_span_path(backend, (["asthma in adults", "chronic hives"]))
     assert [[mention.text for mention in row] for row in out] == [["asthma"], []]
     assert any("ner_window_spans: unreadable model result" in line for line in lines)
     assert any("ner_span_pass: degraded_windows = 2 of 2" in line for line in lines)
-
-
-def test_extract_batch_isolates_a_text_whose_post_processing_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A failure in the per-text merge degrades only that text to its lexical mentions."""
-    _install_fake_gliner2(monkeypatch, tmp_path, [], model=_FakeExtractorModel([]))
-    backend = DiseaseNER(
-        offline=False, gazetteer={"asthma": "disease"}, device="cpu", workdir=tmp_path
-    )
-
-    def _boom(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("merge blew up")
-
-    monkeypatch.setattr(ner_module, "_merge_straddling_spans", _boom)
-    with _captured_logs() as lines:
-        out = backend.extract_batch(["asthma in adults"])
-    assert [mention.text for mention in out[0]] == ["asthma"]
-    assert any("ner_extract_text: post-processing failed" in line for line in lines)
-    assert any("ner_extract_batch: degraded_texts = 1 of 1" in line for line in lines)
 
 
 def test_model_labels_override_is_requested_verbatim(
@@ -1390,15 +1376,14 @@ def test_config_can_reconstruct_equivalent_backend(tmp_path: Path) -> None:
 # --- Tier B raw-span path (extract_spans_batch / merge_spans) --------------------
 
 
-def test_span_path_is_byte_identical_to_extract_batch(
+def test_span_path_matches_single_text_extraction(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """extract_spans_batch + merge_spans must produce EXACTLY what extract_batch produces.
+    """The split span/merge path must produce exactly what single-text extraction produces.
 
     The two-tier cache rides on this: cached raw spans re-merged parent-side replace a GPU
-    re-mine, so any drift between the split path and the fused path would silently change
-    production mentions depending on cache state. The equality is the invariant, asserted per
-    text on real (fake-model) output including gazetteer contests and qualifier routing.
+    re-mine, so drift would silently change production mentions depending on cache state. The
+    equality is asserted on fake-model output including gazetteer contests and qualifier routing.
     """
     predictions = [
         {
@@ -1426,10 +1411,10 @@ def test_span_path_is_byte_identical_to_extract_batch(
         workdir=tmp_path,
     )
 
-    fused = backend.extract_batch(texts)
+    single = [backend.extract(text) for text in texts]
     raw = backend.extract_spans_batch(texts)
     split = [backend.merge_spans(text, spans) for text, spans in zip(texts, raw, strict=True)]
-    assert split == fused
+    assert split == single
 
 
 def test_raw_text_spans_cache_round_trip_and_window_mismatch(tmp_path: Path) -> None:

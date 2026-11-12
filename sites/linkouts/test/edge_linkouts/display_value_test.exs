@@ -290,7 +290,6 @@ defmodule EdgeLinkouts.Display.ValueTest do
           slots: %{"items" => {:preview, "publications", "{label}", ", ", 3}}
         })
 
-      assert "label" in Config.referenced_names(config)
       assert "label" in Config.undefined_slots(config)
     end
   end

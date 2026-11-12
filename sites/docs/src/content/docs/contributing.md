@@ -30,6 +30,7 @@ Useful commands:
 
 ```sh
 npx nx affected -t test
+make dead-code-check
 npm run docs:check
 npm run docs:build
 prek run --all-files --hook-stage pre-push

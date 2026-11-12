@@ -1,7 +1,7 @@
 defmodule EdgeLinkoutsWeb.EdgeLive do
   @moduledoc """
-  The linkout page for one edge: the display-config sentence and text relationship,
-  the version switcher, the diff against the previous version, and the evidence panel.
+  The linkout page for one edge: the display-config claim, the version switcher,
+  the diff against the previous version, and the evidence panel.
 
   One Cosmos read per page view: `mount/3` reads nothing, and `handle_params/3` only calls
   the backend when the id changed. The blob carries every stored version, so switching

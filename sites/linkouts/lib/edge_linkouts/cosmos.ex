@@ -53,17 +53,6 @@ defmodule EdgeLinkouts.Cosmos do
     Enum.join([@pool_index_id, slug, version_label], @pool_id_separator)
   end
 
-  @doc """
-  Whether a document id belongs to the app rather than to an edge.
-
-  Every reserved id starts with the pool index's, so the pool index and each release's pool
-  match, and no edge id does: an edge id is a UUID. The worker applies the same rule
-  (`cosmos.IsReservedID`), which is what lets a test split a fixture file into edges and
-  metadata without knowing the naming scheme twice.
-  """
-  @spec reserved_id?(String.t()) :: boolean()
-  def reserved_id?(id) when is_binary(id), do: String.starts_with?(id, @pool_index_id)
-
   @doc "The configured backend module; defaults to the real HTTP client."
   @spec impl() :: module()
   def impl do

@@ -251,13 +251,6 @@
   edge:
     "This relationship states that {subject_display} {relation} {object_display}{context}{qualifier_species}{qualifier_anatomical}{qualifier_frequency}{qualifier_population}{qualifier_sex}{qualifier_temporal}.",
 
-  # Same shape as the DrugApprovals page: the claim with categories inline, then the
-  # provenance. A plain string, not a heredoc — the closing newline would print as a blank
-  # line under white-space: pre-line.
-  relationship:
-    "{subject_display}{subject_kind_clause} {relation} {object_display}{object_kind_clause}{context}{qualifier_species}{qualifier_anatomical}{qualifier_frequency}{qualifier_population}{qualifier_sex}{qualifier_temporal}. " <>
-      "{provenance}",
-
   # The one sentence every KGX dump with sources supports; a KG config appends its own
   # sections (approval status, case counts) above it.
   methods: "{provenance}",

@@ -249,7 +249,6 @@
   edge: "{subject} {relation} {object}{qualifier_anatomical}{qualifier_population}.",
 
   # Methods retain how the statement was produced, without repeating the headline.
-  relationship: nil,
   methods: "{provenance} {generated_by}",
 
   # The evidence block, as prose: the statistical claim first, then publication and

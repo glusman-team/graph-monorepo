@@ -3,6 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    # Cached Go security fix while nixos-unstable still defaults to 1.26.10.
+    nixpkgs-go.url = "github:nixos/nixpkgs/f4ab37cadb72e0788838bdfc0eb91446b238a86c";
     flake-parts.url = "github:hercules-ci/flake-parts";
     # provides the pi coding agent (same input as /etc/nixos)
     agent-of-empires.url = "github:agent-of-empires/agent-of-empires";

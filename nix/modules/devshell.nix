@@ -8,18 +8,23 @@
   ...
 }:
 let
+  go = inputs'.nixpkgs-go.legacyPackages.go_1_26;
   sharedPackages = [
     # python (dagster itself runs via uv inside dagster/, wheels from uv.lock)
+    pkgs.python3
     pkgs.uv
 
     # node (nx task graph; nx itself comes from npm, not nixpkgs)
     pkgs.nodejs_24
 
-    # go workers
-    pkgs.go
+    # go workers (1.26.11 fixes GO-2026-6859)
+    go
     pkgs.gopls
     pkgs.golangci-lint
     pkgs.govulncheck
+    # dead-code gates (vulture + deadcode)
+    pkgs.python313Packages.vulture
+    pkgs.gotools
 
     # Phoenix LiveView (BEAM/OTP 28)
     pkgs.beam28Packages.elixir_1_19

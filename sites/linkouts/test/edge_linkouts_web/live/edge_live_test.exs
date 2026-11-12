@@ -20,7 +20,7 @@ defmodule EdgeLinkoutsWeb.EdgeLiveTest do
   end
 
   describe "the linkout page" do
-    test "renders the sentence, relationship line and evidence paragraph at both stored versions",
+    test "renders the sentence and evidence paragraph at both stored versions",
          %{
            id: id
          } do
@@ -74,7 +74,7 @@ defmodule EdgeLinkoutsWeb.EdgeLiveTest do
     end
 
     test "every stored predicate uses the same sections and asserts lead-in" do
-      for stored <- Fixtures.docs(), not Cosmos.reserved_id?(stored["id"]) do
+      for stored <- Fixtures.docs(), not String.starts_with?(stored["id"], "__random_pool__") do
         {:ok, view, _html} = live(build_conn(), "/edges/#{stored["id"]}")
         assert has_element?(view, ".edge-asserts", "asserts:")
         assert has_element?(view, ".edge-methods h2.section-title", "Methods")

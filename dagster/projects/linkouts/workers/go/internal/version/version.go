@@ -84,9 +84,6 @@ func parseVersion(v string) ([]int, string) {
 	return parts, suffix
 }
 
-// String returns the original key.
-func (k Key) String() string { return k.Raw }
-
 // Slug is the KG part of this key without the infores prefix, which is what gets stored on the
 // document and used to build the reserved pool document id.
 func (k Key) Slug() string { return Slug(k.KG) }
@@ -168,17 +165,6 @@ func CompareLabels(a, b string) int {
 // that is not followed by a digit, so the split still lands on the label's own first segment.
 const labelPrefix = "kg-"
 
-// SortKeys orders keys oldest first.
-func SortKeys(keys []string) []string {
-	out := append([]string(nil), keys...)
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && CompareKeys(out[j-1], out[j]) > 0; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
-		}
-	}
-	return out
-}
-
 // Newest returns the highest-ordering key, or "" when there are none.
 func Newest(keys []string) string {
 	best := ""
@@ -189,7 +175,3 @@ func Newest(keys []string) string {
 	}
 	return best
 }
-
-// SameKG reports whether two keys belong to the same knowledge graph, which is what decides
-// whether a delta between them is even meaningful.
-func SameKG(a, b Key) bool { return a.KG == b.KG }

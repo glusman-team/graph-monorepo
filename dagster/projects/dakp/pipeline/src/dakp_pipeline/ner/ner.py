@@ -1404,7 +1404,7 @@ class DiseaseNER:
         return sorted(self._merge_qualifier_mentions(lexical_qualifiers, emitted), key=_sort_key)
 
     def extract_spans_batch(self, texts: Sequence[str]) -> list[RawTextSpans]:
-        """Run the model half of :meth:`extract_batch` and return RAW spans per text.
+        """Run the model half of batched extraction and return RAW spans per text.
 
         This is the Tier B span-cache hot path (:meth:`merge_spans` is its deterministic
         complement): one windowed inference stream per shard, per-channel span routing, and
@@ -1477,9 +1477,8 @@ class DiseaseNER:
         """Finish :meth:`extract_spans` output: the deterministic per-text merge, CPU-cheap.
 
         The parent-side half of the Tier B split - runs per run, never cached, so gazetteer
-        growth, threshold sweeps, and merge-logic edits re-merge instead of re-mining. Byte
-        identity with :meth:`extract_batch` is by construction: this calls the same
-        :meth:`_mentions_for_text` with the same inputs the batch path assembles.
+        growth, threshold sweeps, and merge-logic edits re-merge instead of re-mining. This calls
+        the same :meth:`_mentions_for_text` as single-text extraction with the same inputs.
         """
         if not text or not text.strip() or self._offline:
             return self.extract(text)
@@ -1492,78 +1491,6 @@ class DiseaseNER:
             self._gazetteer_qualifier_mentions(text),
         )
 
-    def extract_batch(self, texts: Sequence[str]) -> list[list[Mention]]:
-        """Extract several texts with one padded GLiNER2 inference stream.
-
-        Each text retains its own sentence-aware windows and per-channel merge, while all windows
-        are submitted together to GLiNER2's batched ``batch_extract_entities`` API. This is the
-        hot path used by per-device workers; offline extraction remains a cheap deterministic
-        loop. Results are mixed-channel, exactly like :meth:`extract`.
-
-        Implemented as :meth:`extract_spans_batch` + :meth:`merge_spans` so the raw-span and
-        mention paths cannot drift: the span pass is shared verbatim, and the per-text merge is
-        the same call the parent-side Tier B re-merge makes.
-
-        Failure is contained to the smallest unit that can fail, because this runs tens of
-        minutes per shard inside a spawned worker whose exception reaches the parent as a bare
-        pickled object: a batch that raises falls back to per-window inference
-        (:meth:`_infer_windows`), an unreadable per-window result costs that window its model
-        spans, and a text whose post-processing raises keeps its deterministic lexical mentions.
-        Every degradation is logged with a text preview and tallied in one
-        ``ner_extract_batch`` ERROR line - degraded results are what the mention cache stores for
-        those texts, so the count is what tells an operator whether a re-mine is warranted.
-        """
-        values = list(texts)
-        if self._offline:
-            return [self.extract(text) for text in values]
-        gazetteer = [
-            list(self._matcher.match(text)) if text and text.strip() else [] for text in values
-        ]
-        lexical_qualifiers = [
-            self._gazetteer_qualifier_mentions(text) if text and text.strip() else []
-            for text in values
-        ]
-        spans = self.extract_spans_batch(values)
-        output: list[list[Mention]] = []
-        degraded = 0
-        for index, text in enumerate(values):
-            if not text or not text.strip():
-                output.append([])
-                continue
-            try:
-                output.append(
-                    self._mentions_for_text(
-                        text,
-                        spans[index].windows,
-                        spans[index].objects,
-                        spans[index].qualifiers,
-                        gazetteer[index],
-                        lexical_qualifiers[index],
-                    )
-                )
-            except Exception:
-                # Per-text isolation. A shard is tens of minutes of GPU inference and the parent
-                # only ever sees the pickled exception, so one pathological text used to discard
-                # ALL of it (and the whole DAG run with it). The affected text falls back to its
-                # deterministic lexical mentions - logged loudly, because that degraded result is
-                # what the mention cache will store for this text until it is re-mined.
-                degraded += 1
-                logger.exception(
-                    "ner_extract_text: post-processing failed; kept lexical mentions only (preview={!r})",
-                    text[:200],
-                )
-                output.append(
-                    sorted(
-                        self._merge_qualifier_mentions(
-                            lexical_qualifiers[index], list(gazetteer[index])
-                        ),
-                        key=_sort_key,
-                    )
-                )
-        if degraded:
-            logger.error("ner_extract_batch: degraded_texts = {} of {}", degraded, len(values))
-        return output
-
     def _mentions_for_text(
         self,
         text: str,
@@ -1575,7 +1502,7 @@ class DiseaseNER:
     ) -> list[Mention]:
         """Merge ONE text's per-window spans into its final sorted mixed-channel mention list.
 
-        The per-text half of :meth:`extract_batch`, split out so that half can be isolated: the
+        The per-text half of batched extraction, split out so that half can be isolated: the
         straddling-span merge, hedge trimming, gazetteer contest, acceptance floor and qualifier
         channel all run here, over spans already remapped to full-text coordinates.
         ``object_spans`` is one span list per window and is mutated in place by

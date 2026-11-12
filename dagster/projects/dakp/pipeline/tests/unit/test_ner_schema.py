@@ -14,7 +14,7 @@ silently regress it, and neither shows up as an exception:
    ``tables/``.
 
 Channel routing is tested at both levels: the pure span routers (fast, hermetic) and the full
-``extract`` / ``extract_batch`` paths through the fake ``gliner2`` module shared with
+``extract`` / span-batch paths through the fake ``gliner2`` module shared with
 ``test_ner_edge.py`` (the established injection pattern — extended here, not duplicated).
 """
 
@@ -25,7 +25,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from test_ner_edge import _FakeAutoExtractor, _FakeExtractorModel, _install_fake_gliner2, _span
+from test_ner_edge import (
+    _extract_via_span_path,
+    _FakeAutoExtractor,
+    _FakeExtractorModel,
+    _install_fake_gliner2,
+    _span,
+)
 
 from dakp_pipeline.assertions import object_mentions
 from dakp_pipeline.ner.dictionary import (
@@ -205,7 +211,7 @@ def test_both_call_paths_receive_the_described_vocabulary_verbatim(
     assert [(m.text, m.type) for m in backend.extract(text)] == [
         ("pulmonary hypertension", TYPE_DISEASE)
     ]
-    assert [(m.text, m.type) for m in backend.extract_batch([text])[0]] == [
+    assert [(m.text, m.type) for m in _extract_via_span_path(backend, ([text]))[0]] == [
         ("pulmonary hypertension", TYPE_DISEASE)
     ]
 
@@ -382,7 +388,7 @@ def test_unmodelled_qualifier_never_becomes_a_mention(
     backend = _backend()
 
     single = backend.extract(text)
-    batched = backend.extract_batch([text])[0]
+    batched = _extract_via_span_path(backend, ([text]))[0]
 
     assert [(m.text, m.type, m.notes) for m in single] == [("asthma", TYPE_DISEASE, "gliner")]
     assert batched == single
@@ -632,7 +638,7 @@ def test_schema_attribute_path_is_built_once_for_models_with_extract(
     }
 
 
-def test_extract_batch_uses_schema_model_batch_extract(
+def test_span_batch_uses_schema_model_batch_extract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Newer gliner2 exposes ``batch_extract`` and must still receive the attribute schema."""
@@ -655,10 +661,10 @@ def test_extract_batch_uses_schema_model_batch_extract(
 
     backend = _backend()
     backend._model = _BatchSchemaModel()
-    assert backend.extract_batch(["asthma"]) == [[]]
+    assert _extract_via_span_path(backend, (["asthma"])) == [[]]
 
 
-def test_extract_batch_routes_qualifiers_exactly_like_single_extract(
+def test_span_batch_routes_qualifiers_exactly_like_single_extract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The worker hot path batches every window of every text into ONE call; per-text channel
@@ -674,7 +680,7 @@ def test_extract_batch_routes_qualifiers_exactly_like_single_extract(
     _install_fake_gliner2(monkeypatch, tmp_path, [], model=model)
     backend = _backend()
 
-    batched = backend.extract_batch([text, "", "   ", text])
+    batched = _extract_via_span_path(backend, ([text, "", "   ", text]))
     single = backend.extract(text)
 
     assert batched[1] == []

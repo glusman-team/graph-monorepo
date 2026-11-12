@@ -156,17 +156,6 @@ def test_indication_support_requires_approval_and_section(dailymed_refs: list[Ar
     assert ev.indication_support("99999") == ([], [])
 
 
-def test_contraindication_sets_for_drug_is_first_scope(dailymed_refs: list[ArtifactRef]) -> None:
-    ev = build_dailymed_evidence(dailymed_refs)
-
-    # Ibuprofen has a DailyMed contraindication section -> linked (case-insensitive).
-    assert ev.contraindication_sets_for_drug("ibuprofen") == ["SETID-IBUPROFEN-002"]
-    assert ev.contraindication_sets_for_drug("IBUPROFEN") == ["SETID-IBUPROFEN-002"]
-    # Warfarin has no DailyMed document -> no support.
-    assert ev.contraindication_sets_for_drug("Warfarin") == []
-    assert ev.contraindication_sets_for_drug("") == []
-
-
 def test_build_dailymed_evidence_empty_without_tables() -> None:
     ev = build_dailymed_evidence([])
     assert ev.approval_sets == {}

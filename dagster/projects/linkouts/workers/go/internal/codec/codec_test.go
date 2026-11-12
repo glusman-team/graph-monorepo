@@ -386,23 +386,6 @@ func TestDecodeBlobRejectsWrongSchema(t *testing.T) {
 	}
 }
 
-func TestSampleDocsSpacesEvenly(t *testing.T) {
-	docs := make([][]byte, 100)
-	for i := range docs {
-		docs[i] = []byte{byte(i)}
-	}
-	got := SampleDocs(docs, 10)
-	if len(got) != 10 {
-		t.Fatalf("len = %d, want 10", len(got))
-	}
-	if got[0][0] != 0 || got[9][0] != 90 {
-		t.Fatalf("first=%d last=%d, want 0 and 90", got[0][0], got[9][0])
-	}
-	if all := SampleDocs(docs, 0); len(all) != 100 {
-		t.Fatalf("limit 0 returned %d docs, want all", len(all))
-	}
-}
-
 func TestCompressDecompressRoundTrip(t *testing.T) {
 	raw := []byte(`{"a":"` + strings.Repeat("payload ", 200) + `"}`)
 	for _, level := range []int{1, 3, 9, 19} {

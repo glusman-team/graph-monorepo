@@ -1,13 +1,9 @@
 package pipeline
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/glusman-team/dakp/go/internal/blake3store"
 )
 
 var b3IDRe = regexp.MustCompile(`^b3:[0-9a-f]{64}$`)
@@ -52,68 +48,5 @@ func TestSourceRecordIDDeterministicAndDistinct(t *testing.T) {
 	}
 	if a == SourceRecordID(src, "set", "K2") {
 		t.Error("different local key must yield a different id")
-	}
-}
-
-func TestInferMediaType(t *testing.T) {
-	cases := []struct {
-		path string
-		want string
-	}{
-		{"x.xml", "application/xml"},
-		{"x.xml.gz", "application/gzip"}, // compound suffix wins over .gz
-		{"x.gz", "application/gzip"},
-		{"x.zip", "application/zip"},
-		{"x.parquet", "application/vnd.apache.parquet"},
-		{"x.tsv", "text/tab-separated-values"},
-		{"x.csv", "text/csv"},
-		{"x.jsonl", "application/x-ndjson"}, // .jsonl wins over .json
-		{"x.json", "application/json"},
-		{"x.txt", "text/plain"},
-		{"x.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
-		{"X.XML", "application/xml"}, // case-insensitive
-		{"x.unknown", "application/octet-stream"},
-		{"noext", "application/octet-stream"},
-		{"/some/dir/x.tsv", "text/tab-separated-values"}, // only the base name matters
-	}
-	for _, c := range cases {
-		if got := InferMediaType(c.path); got != c.want {
-			t.Errorf("InferMediaType(%q) = %q, want %q", c.path, got, c.want)
-		}
-	}
-}
-
-func TestFixture(t *testing.T) {
-	root := t.TempDir()
-	content := []byte("fixture bytes\n")
-	if err := os.WriteFile(filepath.Join(root, "sample.tsv"), content, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	ctx := &TaskContext{Profile: "mock", Workdir: t.TempDir(), FixtureRoot: &root}
-
-	ref, err := ctx.Fixture("sample.tsv")
-	if err != nil {
-		t.Fatalf("Fixture: %v", err)
-	}
-	if ref.Blake3 != blake3store.HashBytes(content) {
-		t.Errorf("Fixture blake3 = %q, want %q", ref.Blake3, blake3store.HashBytes(content))
-	}
-	if ref.MediaType != "text/tab-separated-values" {
-		t.Errorf("Fixture media type = %q", ref.MediaType)
-	}
-	if ref.URI != filepath.Join(root, "sample.tsv") {
-		t.Errorf("Fixture URI = %q", ref.URI)
-	}
-}
-
-func TestFixtureErrors(t *testing.T) {
-	// Nil fixture root.
-	if _, err := (&TaskContext{}).Fixture("x.tsv"); err == nil {
-		t.Error("expected error for nil FixtureRoot")
-	}
-	// Missing fixture file.
-	root := t.TempDir()
-	if _, err := (&TaskContext{FixtureRoot: &root}).Fixture("absent.tsv"); err == nil {
-		t.Error("expected error for a missing fixture")
 	}
 }

@@ -481,21 +481,8 @@ func TestPoolDocIDs(t *testing.T) {
 	if id != "__random_pool__:drugapprovals-kp:1.16.0" {
 		t.Errorf("PoolDocID = %q", id)
 	}
-	slug, label, ok := SplitPoolDocID(id)
-	if !ok || slug != "drugapprovals-kp" || label != "1.16.0" {
-		t.Errorf("SplitPoolDocID(%q) = %q, %q, %v", id, slug, label, ok)
-	}
-	// A pre-release suffix is part of the label, not a separator.
-	if _, label, ok := SplitPoolDocID(PoolDocID("kg", "1.0.0-rc1")); !ok || label != "1.0.0-rc1" {
-		t.Errorf("pre-release label = %q, %v", label, ok)
-	}
-	for _, notAPool := range []string{
-		RandomPoolID, "", "575af3e8-8015-3718-be03-4da18a0bacfc",
-		"__random_pool__:kg", "__random_pool__::1.0.0", "__random_pool__:kg:",
-	} {
-		if _, _, ok := SplitPoolDocID(notAPool); ok {
-			t.Errorf("SplitPoolDocID(%q) accepted something that is not a pool document", notAPool)
-		}
+	if got := PoolDocID("kg", "1.0.0-rc1"); got != "__random_pool__:kg:1.0.0-rc1" {
+		t.Errorf("pre-release PoolDocID = %q", got)
 	}
 	// Reserved documents must never be mistaken for edges: purge skips them by this test, and a
 	// UUID can never start with the reserved prefix.
