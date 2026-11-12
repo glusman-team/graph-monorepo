@@ -321,6 +321,20 @@ def test_production_model_failure_does_not_fall_back(monkeypatch: pytest.MonkeyP
         ner_gold_eval.extract_predictions([_case()], offline=False)
 
 
+def test_committed_gold_passes_offline_embedded_gazetteer() -> None:
+    """The full offline regression must include every gold-backed gazetteer repair.
+
+    This also proves the losartan clause emits diabetes alone: aliskiren, losartan, and
+    coadministration must never become disease/phenotype objects through the embedded lexicon.
+    """
+    gold = ner_gold_eval.load_gold()
+    predictions = ner_gold_eval.extract_predictions(gold["cases"], offline=True)
+    report = ner_gold_eval.score_gold(gold, predictions)
+    assert report["summary"]["false_positive"] == 0
+    assert report["summary"]["false_negative"] == 0
+    assert report["summary"]["perfect_cases"] == len(gold["cases"])
+
+
 def test_offline_cli_writes_report_and_accepts_perfect_gold(tmp_path: Path) -> None:
     """The lightweight CLI must execute the real gazetteer and honor a perfect result."""
     gold_path = tmp_path / "gold.json"

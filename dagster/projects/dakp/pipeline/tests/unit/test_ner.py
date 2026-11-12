@@ -140,7 +140,7 @@ def test_offline_empty_and_blank_text_yield_nothing() -> None:
 
 
 def test_offline_gazetteer_covers_high_frequency_contraindications() -> None:
-    """Gazetteer growth (see ner/BENCHMARK.md): maximal-span matches for recurring diseases."""
+    """Gold-backed gazetteer growth must preserve each maximal disease span and canonical type."""
     ner = DiseaseNER()
     for term in (
         "congestive heart failure",
@@ -148,6 +148,12 @@ def test_offline_gazetteer_covers_high_frequency_contraindications() -> None:
         "hepatic encephalopathy",
         "acute kidney injury",
         "hepatocellular carcinoma",
+        "diabetes",
+        "myasthenia gravis",
+        "pheochromocytoma",
+        "porphyria",
+        "pulmonary hypertension",
+        "portal hypertension",
     ):
         mentions = ner.extract(f"Contraindicated in patients with {term}.")
         assert [(m.text, m.type) for m in mentions] == [(term, TYPE_DISEASE)]

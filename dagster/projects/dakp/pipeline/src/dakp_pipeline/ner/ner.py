@@ -154,7 +154,7 @@ MODEL_LABELS: dict[str, str] = {
     "biolink:PhenotypicFeature": (
         "A clinical finding, symptom, lab abnormality or condition-state, not a named disorder, drawn "
         "as the maximal qualified term, e.g. hypersensitivity, pregnancy, renal impairment, QT "
-        "prolongation, bleeding."
+        "prolongation, bleeding; omit persistent."
     ),
     "biolink:AnatomicalEntity": (
         "An organ, tissue or body site named as such, drawn on the site phrase alone and never "
@@ -327,8 +327,8 @@ _INFERENCE_CHUNK_WINDOWS = 2048
 _MAX_OOM_HALVINGS = 2
 
 # Curated high-precision disease/phenotype gazetteer — the offline mode's embedded vocabulary
-# (the same terms benchmarked in ner/BENCHMARK.md). Not exhaustive by design: production mode
-# adds GLiNER recall for out-of-gazetteer mentions. term -> canonical type.
+# (exercised by tests/eval/ner_gold.json). Not exhaustive by design: production mode adds GLiNER
+# recall for out-of-gazetteer mentions. term -> canonical type.
 EMBEDDED_GAZETTEER: dict[str, str] = {
     # disease (named disorders / syndromes)
     "asthma": TYPE_DISEASE,
@@ -355,6 +355,7 @@ EMBEDDED_GAZETTEER: dict[str, str] = {
     "glaucoma": TYPE_DISEASE,
     "narrow angle glaucoma": TYPE_DISEASE,
     "hypercholesterolemia": TYPE_DISEASE,
+    "diabetes": TYPE_DISEASE,
     "diabetes mellitus": TYPE_DISEASE,
     "type 2 diabetes mellitus": TYPE_DISEASE,
     "chronic obstructive pulmonary disease": TYPE_DISEASE,
@@ -364,13 +365,20 @@ EMBEDDED_GAZETTEER: dict[str, str] = {
     "depression": TYPE_DISEASE,
     "migraine": TYPE_DISEASE,
     # High-frequency contraindication diseases observed in hand-checked label/FAERS snippets
-    # (see ner/BENCHMARK.md "Small-example checks"): gazetteer growth keeps the maximal-span
+    # (see tests/eval/ner_gold.json): gazetteer growth keeps the maximal-span
     # policy ("congestive heart failure", not just "heart failure") and speeds offline recall.
     "congestive heart failure": TYPE_DISEASE,
     "cirrhosis": TYPE_DISEASE,
     "hepatic encephalopathy": TYPE_DISEASE,
     "acute kidney injury": TYPE_DISEASE,
     "hepatocellular carcinoma": TYPE_DISEASE,
+    # Gold-backed maximal disease spans; these also prevent a shorter embedded subspan (for
+    # example, hypertension) from displacing the annotated condition in offline mode.
+    "myasthenia gravis": TYPE_DISEASE,
+    "pheochromocytoma": TYPE_DISEASE,
+    "porphyria": TYPE_DISEASE,
+    "pulmonary hypertension": TYPE_DISEASE,
+    "portal hypertension": TYPE_DISEASE,
     # phenotype (clinical findings / symptoms / condition-states)
     "hypersensitivity": TYPE_PHENOTYPE,
     "transaminase elevations": TYPE_PHENOTYPE,
