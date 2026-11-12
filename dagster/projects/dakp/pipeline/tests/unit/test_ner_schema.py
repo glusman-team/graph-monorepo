@@ -135,6 +135,18 @@ def test_every_label_carries_a_bounded_span_description_not_a_task_instruction()
         ), label
 
 
+def test_phenotype_description_excludes_the_measured_persistent_boundary_error() -> None:
+    """The real checkpoint expanded gold `transaminase elevations` to include `persistent`.
+
+    `persistent` is course wording in this corpus, not part of the clinical finding. Keeping the
+    exclusion in the prompt protects the exact boundary without tightening the extension floor or
+    weakening the maximal-span rule for true clinical modifiers.
+    """
+    description = MODEL_LABELS["biolink:PhenotypicFeature"]
+    assert "omit persistent" in description
+    assert "maximal qualified term" in description
+
+
 def test_label_material_is_a_deterministic_module_constant() -> None:
     """The mention-cache fingerprint folds the label material, so it must be reproducible.
 

@@ -32,6 +32,7 @@ DAKP F1 of 0.8081 (DAKP specialist) and 0.7037 (round-2 zero-shot); these are re
 diagnostic probes, not a controlled comparison in this pipeline.
 
 Model cards:
+
 - https://huggingface.co/SkyeAv/relmedner-biomed-dakp-20261020
 - https://huggingface.co/SkyeAv/relmedner-biomed-zeroshot-20261021
 
@@ -48,3 +49,47 @@ the public base model. Tokens are not included in DAKP manifests or cache keys.
 Verified model cache hits require no download or token. The changed model ID gets
 its own cache directory and mention-cache identity, so old base-model mentions
 are not reused for the specialist.
+
+## NER gold evaluation
+
+`tests/eval/ner_gold.json` contains 36 cases and 44 exact disease/phenotype object
+mentions: the original 34-case corpus plus the losartan coadministration/diabetes
+and fetal-toxicity/pregnancy cases from graph-monorepo issue 57. The evaluator
+validates unique, non-overlapping surfaces, derives zero-based half-open offsets,
+and reports duplicate-aware micro precision, recall, F1, missing mentions, and
+false-positive mentions. DailyMed uses the contraindication profile and FAERS uses
+the indication profile. Qualifier-channel mentions are outside this object-only
+metric.
+
+Run the torch-free unit and offline gates from this directory:
+
+```sh
+uv run pytest -q -n 0 tests/unit/test_ner_gold.py
+uv run python tests/eval/ner_gold_eval.py --offline --require-perfect \
+  --output /tmp/ner-gold-offline.json
+```
+
+Run the real configured checkpoint on the NER build host:
+
+```sh
+CUDA_VISIBLE_DEVICES=0 uv run --group ner python tests/eval/ner_gold_eval.py \
+  --require-perfect --output /tmp/ner-gold-production.json
+```
+
+Production mode uses the private checkpoint and authentication described above;
+it never falls back to offline extraction or a public model. `--require-perfect`
+returns nonzero for any missing or extra object mention. The JSON report records
+the mode, model ID, aggregate counts, and every case's predictions.
+
+The current composite offline and production results are both 44 true positives,
+zero false positives, and zero false negatives across these 36 cases. This is a
+small, repeatedly used development corpus, not independent clinical validation or
+a model-card-comparable score. In particular, the raw model-only output still
+includes `persistent transaminase elevations`; the prompt lowers its confidence
+so the unchanged 0.95 strict-extension merge retains the exact `transaminase
+elevations` gazetteer anchor.
+
+The issue-57 cases verify `diabetes` and `pregnancy` extraction and reject
+medication names as disease/phenotype objects. They do not model or display the
+aliskiren coadministration condition; that assertion-qualifier work is separate
+from this NER metric.
