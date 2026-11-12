@@ -78,7 +78,7 @@ defmodule EdgeLinkoutsWeb.EdgeLiveTest do
       # items is only half the fix: the template has to put each one on its own line, so this
       # counts the <li> elements against the renderer's own items for every stored edge.
       counts =
-        for stored <- Fixtures.docs(), not Cosmos.reserved_id?(stored["id"]) do
+        for stored <- Fixtures.docs(), not String.starts_with?(stored["id"], "__random_pool__") do
           for version <- [@v1, @v2] do
             {:ok, _view, html} = live(build_conn(), "/edges/#{stored["id"]}?version=#{version}")
             {:ok, blob} = Codec.decode(stored["b"])
