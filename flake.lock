@@ -87,6 +87,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-go": {
+      "locked": {
+        "lastModified": 1794517033,
+        "narHash": "sha256-Sl6vHvenaHdotYC3kT170CPRLZB3RsmO0pUOKTl5Uwg=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "f4ab37cadb72e0788838bdfc0eb91446b238a86c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "f4ab37cadb72e0788838bdfc0eb91446b238a86c",
+        "type": "github"
+      }
+    },
     "nixpkgs-lib": {
       "locked": {
         "lastModified": 1769909678,
@@ -137,7 +153,8 @@
       "inputs": {
         "agent-of-empires": "agent-of-empires",
         "flake-parts": "flake-parts_2",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "nixpkgs-go": "nixpkgs-go"
       }
     }
   },
