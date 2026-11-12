@@ -25,6 +25,8 @@ from dakp_pipeline.ner.dictionary import OBJECT_TYPES
 from dakp_pipeline.ner.ner import DiseaseNER, default_model_id
 
 SCHEMA_VERSION = "dakp.ner.gold.v1"
+# Corpus drift guard only. Source selects the profile; all DailyMed sections currently
+# use the contraindication acceptance profile, including boxed warnings.
 DAILYMED_LOINCS = {"34066-1", "34070-3"}
 SOURCES = {"dailymed", "faers"}
 DEFAULT_GOLD = Path(__file__).resolve().with_name("ner_gold.json")

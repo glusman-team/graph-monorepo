@@ -74,6 +74,15 @@ def test_committed_gold_preserves_history_and_adds_issue_57() -> None:
     ]
 
 
+def test_annotation_policy_explains_the_persistent_exception() -> None:
+    """Future annotators must not confuse course duration with concept-changing qualifiers."""
+    gold = ner_gold_eval.load_gold()
+    assert (
+        "gold for 'persistent transaminase elevations' is 'transaminase elevations'"
+        in gold["annotation_policy"]
+    )
+
+
 @pytest.mark.parametrize(
     ("payload", "match"),
     [
