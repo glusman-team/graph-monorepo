@@ -250,7 +250,7 @@ def extract_predictions(cases: Sequence[Case], *, offline: bool) -> dict[str, li
             DiseaseNER.for_contraindications if source == "dailymed" else DiseaseNER.for_indications
         )
         with factory(offline=offline) as ner:
-            batches = ner.extract_batch([case["text"] for case in selected])
+            batches = [ner.extract(case["text"]) for case in selected]
         for case, mentions in zip(selected, batches, strict=True):
             predictions[case["id"]] = [
                 {

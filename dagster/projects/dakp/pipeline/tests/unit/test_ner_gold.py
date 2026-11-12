@@ -275,17 +275,12 @@ class _FakeNER:
     def __exit__(self, *_exc: Any) -> None:
         return None
 
-    def extract_batch(self, texts: list[str]) -> list[list[Mention]]:
-        output = []
-        for text in texts:
-            start = text.index("asthma")
-            output.append(
-                [
-                    Mention("asthma", start, start + 6, TYPE_DISEASE, 1.0),
-                    Mention("asthma", start, start + 6, "BiologicalSex", 1.0),
-                ]
-            )
-        return output
+    def extract(self, text: str) -> list[Mention]:
+        start = text.index("asthma")
+        return [
+            Mention("asthma", start, start + 6, TYPE_DISEASE, 1.0),
+            Mention("asthma", start, start + 6, "BiologicalSex", 1.0),
+        ]
 
 
 def test_extraction_uses_source_profiles_and_filters_qualifiers(
