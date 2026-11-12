@@ -98,9 +98,10 @@ defmodule EdgeLinkouts.Display.Config do
               default: [],
               doc: """
               Evidence sentences, each `%{value: spec}` with optional `:if` conditions. Every
-              sentence that passes its conditions and renders non-empty becomes part of one
-              prose paragraph on the edge page — the legacy page printed the same facts as
-              labelled lines; prose carries each fact's meaning without a field-name label.
+              sentence that passes its conditions and renders non-empty becomes its own bullet
+              of the Provenance list, closed as a sentence by the renderer - the legacy page
+              printed the same facts as labelled lines and the first port ran them together into
+              one paragraph; one bullet per claim keeps each fact citable on its own.
               """
             ],
             footnote: [
@@ -108,7 +109,7 @@ defmodule EdgeLinkouts.Display.Config do
               doc: """
               An optional trailing sentence rendered as its own paragraph beneath the evidence
               paragraph — for helper text a reader acts on ("On DailyMed, search ...") rather
-              than a fact about the edge, which would dilute the evidence paragraph's argument.
+              than a fact about the edge, which would dilute the provenance list's argument.
               """
             ]
           )
@@ -269,7 +270,7 @@ defmodule EdgeLinkouts.Display.Config do
   defp check_requirement(_, _where), do: []
 
   defp section_problems(section, where) do
-    # Each section is one sentence of the evidence paragraph; a sentence must render something.
+    # Each section is one line of the provenance list; a line must render something.
     required =
       if Map.has_key?(section, :value) do
         []
@@ -505,6 +506,15 @@ defmodule EdgeLinkouts.Display.Config do
 
   defp condition_problem({:eq, _, _} = other, where),
     do: ["#{where}: {:eq, name, value} expected, got #{inspect(other)}"]
+
+  # Preferred-name comparison: both sides name a field, and the runtime treats an absent side
+  # as "no difference" rather than an error.
+  defp condition_problem({:differs, name, original}, _where)
+       when (is_binary(name) or is_atom(name)) and (is_binary(original) or is_atom(original)),
+       do: []
+
+  defp condition_problem({:differs, _, _} = other, where),
+    do: ["#{where}: {:differs, name_field, original_field} expected, got #{inspect(other)}"]
 
   defp condition_problem({:matches, name, pattern}, _where)
        when (is_binary(name) or is_atom(name)) and is_binary(pattern), do: []

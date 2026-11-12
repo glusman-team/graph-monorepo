@@ -812,12 +812,30 @@ a.diff-field:hover {
   color: var(--color-base-content);
 }
 
-/* Methods, provenance, and tips share one body scale and the existing section heading. */
-.edge-prose p {
+/* Methods, provenance, and tips share one body scale and the existing section heading. The
+   provenance list items take the same scale: a bullet is a sentence, not a smaller footnote. */
+.edge-prose p,
+.edge-prose li {
   margin: 0;
   font-size: var(--type-body);
   line-height: var(--leading-body);
   color: color-mix(in oklab, var(--color-base-content) 80%, var(--color-base-100));
+}
+
+/* Provenance lists the claims instead of running them together (issue #63): one sentence per
+   line, so a reader scans for the fact they want instead of re-segmenting a paragraph. The
+   marker is quiet ink, not the teal accent: structure, not emphasis, and the accent stays
+   reserved for links. */
+.edge-evidence {
+  margin: 0;
+  padding-left: 1.25rem;
+  list-style: disc;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.edge-evidence li::marker {
+  color: color-mix(in oklab, var(--color-base-content) 55%, var(--color-base-100));
 }
 
 /* A release the config flags with a known error: one plain prose section like Methods or

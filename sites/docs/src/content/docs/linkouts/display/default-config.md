@@ -148,12 +148,23 @@ gives (DrugApprovals does, for the agencies it cites).
 | `methods`  | the assertion-method prose from `{provenance}`                                                              |
 | `evidence` | original-name mappings when supplied, plus "This association is derived from {sources}." when sources exist |
 
-The page no longer repeats the headline as a relationship paragraph or diagram. Original
-subject and object names appear under Provenance as one compound sentence (`node_mappings`),
-and qualifier originals form their own compound sentence (`qualifier_mappings`), each mapped
-to its linked CURIE and Biolink class. Pipe-delimited names use an Oxford-comma list; absent
-originals omit the mapping, and absent categories omit only the class clause. Configured
-helper links appear under Tips. All section headings use the same style as About.
+The page no longer repeats the headline as a relationship paragraph or diagram. Under
+Provenance each distinct claim gets its own line: the original subject and object names each map
+(`subject_mapping`, `object_mapping`) in a sentence that calls them by the role the knowledge
+graph uses (`subject_role`, `object_role`: "subject" and "object" in the default, "treatment"
+and "condition" for a DrugApprovals treatment edge). Roles can follow the predicate, so the
+same sentence stays true on a different edge shape: a DrugApprovals composition edge calls
+them "product" and "active ingredient". When the resolved concept's preferred name says
+something the source's string does not ("0.9% SODIUM CHLORIDE" vs "Normal saline"), the mapping
+sentence names it: "... mapped to UMLS:C0445115, which is the ChemicalEntity \"Normal saline\"." A
+case-only difference ("FLUOXETINE" vs "fluoxetine") adds nothing the original has not already
+printed, so the sentence stays as it was. The species sentence stands
+alone (`mapping_species_context_qualifier`), and the remaining qualifier originals share one
+compound sentence (`qualifier_mappings`). Every original string prints in double quotes, so a
+reader can tell the source's words from the sentence around them. Pipe-delimited names use an
+Oxford-comma list; absent originals omit the mapping, and absent categories omit only the class
+clause. Configured helper links appear under Tips. All section headings use the same style as
+About.
 
 ## Writing an override
 

@@ -23,7 +23,8 @@ defmodule EdgeLinkouts.Display.Value do
         {:count, :field}                           the length of a list
         {:default, :field, fallback}               fallback when the field is absent or empty
         {:names, field}                            pipe-delimited names as an Oxford-comma list
-        {:names, field, prefix, suffix}             framed names; empty input drops the frame
+        {:names, field, prefix, suffix}             framed names, each one quoted; empty input
+                                                   drops the frame
         {:or_query, name, original_name}           a Lucene OR group of every name a source
                                                    used for the concept: the preferred name
                                                    plus each pipe-delimited original, quoted
@@ -33,12 +34,15 @@ defmodule EdgeLinkouts.Display.Value do
         {:supporting, key, prefix, suffix, rewordings, fallback}
                                                    text from a supporting_text "key: value"
                                                    entry, framed as "prefix + value + suffix";
-                                                   rewordings swaps the value for a keyed
-                                                   replacement (keys downcased)
+                                                   prefix and suffix are templates and may
+                                                   reference slots; rewordings swaps the value
+                                                   for a keyed replacement (keys downcased)
         {:if, conditions, then_spec, else_spec}    conditional inclusion
 
     Conditions: `{:present, :field}`, `{:eq, :field, value}`, `{:matches, :field, "regex"}`,
-    `{:lt | :gt | :lte | :gte, :field, number}`, `{:version, ">1.0.0"}`, and `{:all | :any, [...]}`.
+    `{:lt | :gt | :lte | :gte, :field, number}`, `{:differs, :field, :field}` (case-insensitive
+    comparison of a node's preferred name against its pipe-delimited original string),
+    `{:version, ">1.0.0"}`, and `{:all | :any, [...]}`.
 
     Missing values are the normal case in KGX, not an error: a field the release renamed, a node
     the join could not resolve. Every form renders to nothing when its input is absent, so a
@@ -46,7 +50,9 @@ defmodule EdgeLinkouts.Display.Value do
       - `{:compound, clauses}` renders several sentence-shaped clauses as one compound
       sentence: empty clauses drop, one clause stays a plain sentence, several join with
       "; and " and close with a single period. Continuation clauses downcase a leading
-      capitalized word but never a CURIE prefix or acronym.
+      capitalized word but never a CURIE prefix or acronym. The period is idempotent: a clause
+      that already ends in sentence punctuation is not given a second one, and an interior
+      clause yields its mark to the join, so a value ending in "." never prints "..".
   """
 
   alias EdgeLinkouts.Display.{Segment, Version}
@@ -270,61 +276,61 @@ defmodule EdgeLinkouts.Display.Value do
 
       value ->
         reworded = Map.get(rewordings, String.downcase(value), value)
-        [Segment.text(prefix <> reworded <> suffix)]
+        # The frame is a template, not literal text: a role-worded prefix ("The {subject_role}
+        # name matched ") has to follow the same predicate-aware slots the mapping sentences use.
+        Segment.join([render(prefix, ctx), Segment.text(reworded), render(suffix, ctx)])
     end
   end
 
   # Source names share the search query's pipe splitting and deduplication, but read as
   # prose with the same Oxford-comma rule as source lists, without truncating originals.
   # Blank counts as absent (the {:default} convention), so an emptied field falls back to
-  # the supporting_text log rather than printing nothing.
+  # the supporting_text log rather than printing nothing. The bare form renders the words as
+  # they are; the framed form quotes them (see the 4-tuple below).
   def render({:names, name}, ctx) do
-    values =
-      case fetch(ctx, name) do
-        nil -> original_entries(ctx.doc, to_string(name))
-        "" -> original_entries(ctx.doc, to_string(name))
-        [] -> original_entries(ctx.doc, to_string(name))
-        value -> [value]
-      end
-
-    values
-    |> query_terms()
-    |> Enum.map(&[Segment.text(&1)])
-    |> interleave_with(", ", "and", [])
-    |> Segment.join()
+    names_segments(name, ctx, false)
   end
 
   # {:compound, clauses}: one sentence out of sentence-shaped clauses, each already framed
   # and self-dropping. Empty clauses vanish; one clause stays a plain sentence; several are
   # joined with "; and " and closed with one period. Continuation clauses drop their capital
   # so the join reads as prose, but only for word openers — a CURIE or acronym stays as-is.
+  #
+  # Exactly one terminal mark per sentence is the renderer's job, not each config's. A clause
+  # can arrive already punctuated: the species clause is configured with a "." suffix, and any
+  # stored value can end in one. Appending blindly printed "Homo sapiens (human).." (issue #58)
+  # mid-paragraph, so an interior clause hands its mark to the "; and " join and the assembled
+  # sentence only receives a period through close_sentence/1, which every sentence-shaped
+  # render shares.
   def render({:compound, clauses}, ctx) do
-    clauses
-    |> Enum.map(&render(&1, ctx))
-    |> Enum.reject(&(&1 == []))
+    rendered =
+      clauses
+      |> Enum.map(&render(&1, ctx))
+      |> Enum.reject(&blank_clause?/1)
+
+    last_index = length(rendered) - 1
+
+    rendered
     |> Enum.with_index()
-    |> Enum.map(fn
-      {clause, 0} ->
-        clause
-
-      {[{:text, <<first::utf8, second::utf8, rest::binary>>} | tail], _}
-      when first in ?A..?Z and second in ?a..?z ->
-        [{:text, String.downcase(<<first::utf8>>) <> <<second::utf8>> <> rest} | tail]
-
-      {clause, _} ->
-        clause
+    |> Enum.map(fn {clause, index} ->
+      clause = if(index == 0, do: clause, else: downcase_opener(clause))
+      if(index == last_index, do: clause, else: strip_terminal(clause))
     end)
-    |> case do
-      [] ->
-        []
-
-      clauses ->
-        Segment.join([Enum.intersperse(clauses, Segment.text("; and ")), Segment.text(".")])
-    end
+    # Stripping an interior clause's mark can empty it outright - a clause that was nothing but
+    # "." - and an empty side of a "; and " join prints "A; and ; and B".
+    |> Enum.reject(&blank_clause?/1)
+    |> Enum.intersperse(Segment.text("; and "))
+    |> Segment.join()
+    |> close_sentence()
   end
 
+  # The framed form exists to put a source's own words inside a sentence this page wrote, so it
+  # quotes them: "The original treatment FLUOXETINE mapped to CHEBI:5118" reads as if the
+  # identifier were part of the source string (issue #63). Each pipe-delimited variant gets its
+  # own pair of quotes, because they are separate strings the source wrote, not one
+  # comma-separated phrase. Straight ASCII quotes: the page never introduces smart punctuation.
   def render({:names, name, prefix, suffix}, ctx) do
-    case render({:names, name}, ctx) do
+    case names_segments(name, ctx, true) do
       [] -> []
       names -> Segment.join([render(prefix, ctx), names, render(suffix, ctx)])
     end
@@ -406,6 +412,132 @@ defmodule EdgeLinkouts.Display.Value do
     `mix linkouts.check` reports this at build time rather than on a page view.
     """
   end
+
+  # Shared by both {:names} arities: the bare form quotes nothing, the framed form quotes each
+  # term. Quoting happens per term, before the Oxford-comma join, so the conjunctions stay
+  # outside the quotes ("A" and "B", never "A and B").
+  defp names_segments(name, ctx, quoted?) do
+    values =
+      case fetch(ctx, name) do
+        nil -> original_entries(ctx.doc, to_string(name))
+        "" -> original_entries(ctx.doc, to_string(name))
+        [] -> original_entries(ctx.doc, to_string(name))
+        value -> [value]
+      end
+
+    values
+    |> query_terms()
+    |> Enum.map(&[Segment.text(term_phrase(&1, quoted?))])
+    |> interleave_with(", ", "and", [])
+    |> Segment.join()
+  end
+
+  # A term that already carries double quotes is not wrapped again. An original stored as
+  # ~s(Pain "acute") would otherwise print as "Pain "acute"" - nested quotes the reader has to
+  # unpick. Such a term is rare enough that printing it as written beats inventing a second
+  # quoting style for it.
+  defp term_phrase(term, true) do
+    if String.contains?(term, "\""), do: term, else: "\"" <> term <> "\""
+  end
+
+  defp term_phrase(term, false), do: term
+
+  # Sentence assembly for {:compound, clauses}. Kept below the render/2 multi-clause so the
+  # public clauses stay grouped together (the compiler warns otherwise, and CI runs with
+  # --warnings-as-errors).
+
+  # Continuation clauses read as prose, not as sentences glued together: only a word opener is
+  # downcased, so "Gene family MESH:D001 involved" keeps its acronym and a CURIE opener is
+  # never mangled.
+  defp downcase_opener([{:text, <<first::utf8, second::utf8, rest::binary>>} | tail])
+       when first in ?A..?Z and second in ?a..?z do
+    [{:text, String.downcase(<<first::utf8>>) <> <<second::utf8>> <> rest} | tail]
+  end
+
+  defp downcase_opener(clause), do: clause
+
+  # An interior clause keeps no terminal mark: "...(human).; and the object mapped to X" reads
+  # as two sentences fighting over one connector. The mark and any spacing around it go, so a
+  # stored value ending in ". " cannot print "(human) ; and".
+  @interior_mark ~r/[.;,]+\z/
+
+  defp strip_terminal(clause) do
+    update_trailing_text(clause, &interior_text/1)
+  end
+
+  defp interior_text(text) do
+    text
+    |> String.trim_trailing()
+    |> strip_marks()
+    |> String.trim_trailing()
+  end
+
+  defp strip_marks(text), do: Regex.replace(@interior_mark, text, "")
+
+  defp blank_clause?(clause), do: clause |> Segment.to_text() |> String.trim() == ""
+
+  @doc """
+  Close a rendered sentence with exactly one terminal mark.
+
+  A sentence-shaped render - a compound sentence, one provenance bullet - owns its punctuation,
+  so a value that already ends in "." never prints ".." (issue #58). A clause ending in "!",
+  "?", ";" or ":" is left exactly as written, because gluing a period onto it ("Really?.") is
+  worse than the mark it carries, and an empty render stays empty rather than printing a bare
+  ".".
+  """
+  @spec close_sentence([Segment.t()]) :: [Segment.t()]
+  def close_sentence(body) do
+    body = body |> update_trailing_text(&tidy_trailing/1) |> Segment.join()
+
+    case body |> Segment.to_text() |> String.last() do
+      nil -> body
+      mark when mark in [".", "!", "?", ";", ":"] -> body
+      _ -> Segment.join([body, Segment.text(".")])
+    end
+  end
+
+  # "Foo ." from a value that ended in a space becomes "Foo.", so the mark the sentence already
+  # has sits against its words instead of hanging off one.
+  @space_before_mark ~r/\s+([.;!?])\z/
+
+  defp tidy_trailing(text) do
+    text |> String.trim_trailing() |> pull_mark_to_words()
+  end
+
+  defp pull_mark_to_words(text), do: Regex.replace(@space_before_mark, text, "\\1")
+
+  # The last thing a sentence prints is not always a plain text segment: it can be a link label
+  # or the inside of an emphasis chip or a "show more" fold. Punctuation and spacing decisions
+  # have to see that trailing text where it actually lives, or the mark check and the rewrite
+  # disagree and "...(human).." comes back through a different path.
+  defp update_trailing_text(segments, fun) do
+    case segments |> Enum.reverse() |> Enum.reject(&is_nil/1) do
+      [{:text, text} | rest] ->
+        Enum.reverse(rest, [Segment.text(fun.(text))])
+
+      [{:link, href, label} | rest] ->
+        Enum.reverse(rest, [Segment.link(href, fun.(label))])
+
+      [{:strong, inner} | rest] ->
+        Enum.reverse(rest, wrap(:strong, update_trailing_text(inner, fun)))
+
+      [{:more, inner} | rest] ->
+        Enum.reverse(rest, wrap(:more, update_trailing_text(inner, fun)))
+
+      [{:fold, label, inner} | rest] ->
+        Enum.reverse(rest, [{:fold, label, update_trailing_text(inner, fun)}])
+
+      [] ->
+        []
+
+      [other | rest] ->
+        Enum.reverse(rest, [other])
+    end
+    |> Segment.join()
+  end
+
+  defp wrap(_tag, []), do: nil
+  defp wrap(tag, inner), do: [{tag, inner}]
 
   defp render_list(name, inner, separator, max, conjunction, ctx) do
     case fetch(ctx, name) do
@@ -554,6 +686,32 @@ defmodule EdgeLinkouts.Display.Value do
     case fetch(ctx, name) do
       nil -> false
       value -> stringify(value) == stringify(expected)
+    end
+  end
+
+  # Whether a node's preferred name says something the source's original string does not. The
+  # comparison ignores letter case and reads the original as a pipe-delimited list, so
+  # "FLUOXETINE" vs "fluoxetine" is the same word the source already printed, while "0.9%
+  # SODIUM CHLORIDE" vs "Normal saline" earns the name a place in the sentence. Absent or empty
+  # on either side is false: no name, no difference, no clause.
+  def condition?({:differs, name_field, original_field}, ctx) do
+    case fetch(ctx, name_field) do
+      name when is_binary(name) and name != "" ->
+        case fetch(ctx, original_field) do
+          original when is_binary(original) and original != "" ->
+            downcased = String.downcase(name)
+
+            original
+            |> String.split("|")
+            |> Enum.any?(fn part -> String.downcase(String.trim(part)) == downcased end)
+            |> Kernel.not()
+
+          _ ->
+            false
+        end
+
+      _ ->
+        false
     end
   end
 

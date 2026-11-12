@@ -74,23 +74,28 @@ defmodule EdgeLinkouts.Display.Segment do
   end
 
   @doc """
-  The full paragraph as one flat segment list, folds expanded.
+  The rendered block as one flat segment list, folds and nested items expanded.
 
   A `{:more, inner}` fold is a presentation cut, not a content cut: extracting links or plain
-  text from a rendered list must see the items behind the disclosure too.
+  text from a rendered list must see the items behind the disclosure too. The same holds for a
+  list of items, which is how the provenance block renders (one sub-list per claim), so a
+  caller asking for "every link on this block" gets them across bullets.
   """
-  @spec flatten([t()]) :: [t()]
+  @spec flatten([nested()]) :: [t()]
   def flatten(segments) do
     Enum.flat_map(segments, fn
       {:more, inner} -> flatten(inner)
       {:fold, _label, inner} -> flatten(inner)
       {:strong, inner} -> flatten(inner)
+      # A plain nested list is another segment list, not a new kind of segment: the provenance
+      # block is a list of items, and extracting links or text from it must see inside each item.
+      inner when is_list(inner) -> flatten(inner)
       seg -> [seg]
     end)
   end
 
   @doc "Segments as a single plain-text string, links reduced to their labels."
-  @spec to_text([t()]) :: String.t()
+  @spec to_text([nested()]) :: String.t()
   def to_text(segments) do
     segments
     |> flatten()

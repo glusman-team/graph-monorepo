@@ -73,7 +73,11 @@
             class="edge-provenance edge-prose"
           >
             <h2 class="section-title">Provenance</h2>
-            <p><EdgeComponents.segments segments={@evidence} /></p>
+            <ul class="edge-evidence">
+              <li :for={item <- @evidence}>
+                <EdgeComponents.segments segments={item} />
+              </li>
+            </ul>
           </section>
 
           <%= if @config && @config.description do %>

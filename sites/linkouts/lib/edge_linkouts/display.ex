@@ -246,15 +246,19 @@ defmodule EdgeLinkouts.Display do
   end
 
   @doc """
-  Renders the evidence block as one paragraph of prose.
+  Renders the provenance block as one entry per distinct claim.
 
-  Each config entry is a sentence; entries whose `:if` conditions fail, or whose template
-  renders nothing, drop out, and what survives is joined with spaces into one segment list the
-  page prints as a single paragraph. The legacy page ran the same facts as optional labelled
-  lines; as prose, each sentence carries its own meaning, so no field-name label asks the
-  reader to decode what a row is.
+  Each config entry is one sentence; entries whose `:if` conditions fail, or whose template
+  renders nothing, drop out, and each survivor is closed as a sentence by `Value.close_sentence/1`
+  so a reader sees one claim per line. The legacy page ran these same facts as optional labelled
+  lines, and the first port ran them as one paragraph; both buried the structure. As a list, each
+  line still reads as prose (no field-name label asks the reader to decode a row), but the reader
+  no longer has to re-segment a run-on block to find the fact they want (issue #63).
+
+  Returns items, not one flat run: the page needs the boundaries to emit one `<li>` per claim,
+  and a flattened segment list cannot recover them.
   """
-  @spec evidence(t(), map(), String.t()) :: [Segment.t()]
+  @spec evidence(t(), map(), String.t()) :: [[Segment.t()]]
   def evidence(%Config{} = config, doc, version) do
     ctx = context(config, doc, version)
 
@@ -262,15 +266,17 @@ defmodule EdgeLinkouts.Display do
     |> Enum.filter(&Value.all?(Map.get(&1, :if, []), ctx))
     |> Enum.map(&Value.render(Map.get(&1, :value), ctx))
     |> Enum.reject(&(&1 == []))
-    |> Enum.intersperse([Segment.text(" ")])
-    |> List.flatten()
+    |> Enum.map(&Value.close_sentence/1)
+    # close_sentence/1 keeps a render of nothing empty, but a render of only whitespace or only a
+    # stray mark is not a claim: drop it rather than print an empty bullet.
+    |> Enum.reject(&(&1 |> Segment.to_text() |> String.trim() == ""))
   end
 
   @doc """
   Renders the footnote line, when the config declares one.
 
   Helper text a reader acts on rather than a fact about the edge: search links, resolver
-  hints. Rendered as its own paragraph beneath the evidence paragraph so it does not dilute
+  hints. Rendered as its own paragraph beneath the provenance list so it does not dilute
   the evidence argument; an empty render (or no footnote) means no paragraph.
   """
   @spec footnote(t() | nil, map(), String.t()) :: [Segment.t()]

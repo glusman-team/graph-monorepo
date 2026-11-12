@@ -26,18 +26,41 @@
     "object_display" => {:default, "object_name", {:field, "object"}},
     "subject_id" => {:link, "subject", "subject"},
     "object_id" => {:link, "object", "object"},
+    # The resolved concept's preferred name earns its place in the sentence only when it says
+    # something the original string does not: "0.9% SODIUM CHLORIDE" mapped to UMLS:C0445115,
+    # which is the ChemicalEntity Normal saline. A case-only difference ("FLUOXETINE" vs
+    # "fluoxetine") adds nothing the original has not already printed, so the sentence stays
+    # as it was.
     "subject_mapping_kind" =>
+      {:if, [{:differs, "subject_name", "original_subject"}], ", which is {subject_named}",
+       "{subject_plain_kind}"},
+    "subject_named" =>
+      {:if, [{:present, "subject_category"}], {:names, "subject_name", "the {subject_kind} ", ""},
+       {:names, "subject_name", "", ""}},
+    "subject_plain_kind" =>
       {:if, [{:present, "subject_category"}], ", which is a {subject_kind}"},
-    "object_mapping_kind" => {:if, [{:present, "object_category"}], ", which is a {object_kind}"},
+    "object_mapping_kind" =>
+      {:if, [{:differs, "object_name", "original_object"}], ", which is {object_named}",
+       "{object_plain_kind}"},
+    "object_named" =>
+      {:if, [{:present, "object_category"}], {:names, "object_name", "the {object_kind} ", ""},
+       {:names, "object_name", "", ""}},
+    "object_plain_kind" => {:if, [{:present, "object_category"}], ", which is a {object_kind}"},
+    # What a KG calls its two nodes, in words its own readers know. The generic KGX wording is
+    # subject/object; DrugApprovals overrides these to treatment/condition, because "the
+    # original subject" makes a curator re-read the sentence (issue #63). A role name is a bare
+    # word, never a claim about the category: the category still prints separately as
+    # "which is a SmallMolecule".
+    "subject_role" => "subject",
+    "object_role" => "object",
     "subject_mapping" =>
       {:if, [{:present, "subject"}],
-       {:names, "original_subject", "The original subject ",
+       {:names, "original_subject", "The original {subject_role} ",
         " mapped to {subject_id}{subject_mapping_kind}"}},
     "object_mapping" =>
       {:if, [{:present, "object"}],
-       {:names, "original_object", "The original object ",
+       {:names, "original_object", "The original {object_role} ",
         " mapped to {object_id}{object_mapping_kind}"}},
-    "node_mappings" => {:compound, ["{subject_mapping}", "{object_mapping}"]},
     "mapping_disease_context_qualifier" =>
       {:if, [{:present, "disease_context_qualifier"}],
        {:names, "original_disease_context_qualifier", "The original disease context qualifier ",
@@ -74,13 +97,16 @@
         " mapped to {temporal_context_qualifier_id}"}},
     "temporal_context_qualifier_id" =>
       {:link, "temporal_context_qualifier", "temporal_context_qualifier"},
+    # The species sentence states its own case and ends with its own period, so it stands as one
+    # provenance line rather than a clause inside the qualifier sentence.
     "mapping_species_context_qualifier" =>
       {:if, [{:present, "species_context_qualifier"}],
        {:supporting, "species_context_qualifier_name", "This assertion is about ", ".", %{}, ""}},
+    # The remaining qualifier originals share one concept - how the source's own qualifier words
+    # resolved - so they stay one compound sentence instead of spending a line per qualifier.
     "qualifier_mappings" =>
       {:compound,
        [
-         "{mapping_species_context_qualifier}",
          "{mapping_disease_context_qualifier}",
          "{mapping_anatomical_context_qualifier}",
          "{mapping_frequency_qualifier}",
@@ -254,8 +280,13 @@
   # The one sentence every KGX dump with sources supports; a KG config appends its own
   # sections (approval status, case counts) above it.
   methods: "{provenance}",
+  # One line per distinct claim (issue #63): each entry renders one sentence and the page lists
+  # them, so a reader scans for the fact they want instead of re-segmenting a paragraph. An entry
+  # whose conditions fail, or whose template renders nothing, drops out entirely.
   evidence: [
-    %{value: "{node_mappings}"},
+    %{value: "{subject_mapping}"},
+    %{value: "{object_mapping}"},
+    %{value: "{mapping_species_context_qualifier}"},
     %{value: "{qualifier_mappings}"},
     %{
       value: "This association is derived from {sources}.",

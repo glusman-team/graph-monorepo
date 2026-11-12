@@ -251,9 +251,9 @@
   # Methods retain how the statement was produced, without repeating the headline.
   methods: "{provenance} {generated_by}",
 
-  # The evidence block, as prose: the statistical claim first, then publication and
-  # mapping provenance. Each entry is one sentence; the :if conditions drop the ones the
-  # document cannot support; the renderer joins what survives into one paragraph.
+  # The provenance list, one bullet per claim: the statistical claim first, then publication and
+  # mapping provenance. The :if conditions drop the claims the document cannot support, and an
+  # entry that renders no text drops instead of printing an empty bullet.
   evidence: [
     %{
       # Every statistic reads in printf %.4g ({effect_size_g4} and friends): effect sizes
@@ -301,7 +301,9 @@
     #   * has_supporting_studies, because it is a publication-keyed map and the slot ops
     #     iterate lists, not maps - its study_context sentence is exactly what a reader
     #     would want, but there is no spec form that reaches it today.
-    %{value: "{node_mappings}"},
+    %{value: "{subject_mapping}"},
+    %{value: "{object_mapping}"},
+    %{value: "{mapping_species_context_qualifier}"},
     %{value: "{qualifier_mappings}"},
     %{
       value: "This association is derived from {sources}.",
@@ -311,7 +313,7 @@
 
   # Helper text the reader acts on, not a fact about the edge: the PMC searches, mirroring
   # the DailyMed searches the drug approvals page ends with. It renders as its own
-  # paragraph beneath the evidence paragraph, so an action item does not dilute the
+  # paragraph beneath the provenance list, so an action item does not dilute the
   # evidence argument.
   footnote:
     "Try searching PubMed Central for {search_subject}, {search_object}, or {search_both}."

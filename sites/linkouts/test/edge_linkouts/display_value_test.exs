@@ -24,10 +24,48 @@ defmodule EdgeLinkouts.Display.ValueTest do
           ] do
         ctx = %{doc: %{"original" => value}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
         assert Value.render({:names, "original"}, ctx) |> Segment.to_text() == expected
-
-        framed = Value.render({:names, "original", "Original: ", "."}, ctx) |> Segment.to_text()
-        assert framed == if(expected == "", do: "", else: "Original: #{expected}.")
       end
+    end
+
+    test "the framed form quotes each original and drops the frame with nothing to frame" do
+      # Issue #63: a framed sentence mixes the source's own words with prose this page wrote,
+      # and without quotes "The original treatment FLUOXETINE mapped to CHEBI:5118" reads as if
+      # the identifier were part of the source string. Quoting is per term, so the conjunctions
+      # stay outside the quotes - the source wrote two strings, not the phrase "A and B".
+      for {value, expected} <- [
+            {"Zyrtec", "Original: \"Zyrtec\"."},
+            {"A|B", "Original: \"A\" and \"B\"."},
+            {"A|B|C|A", "Original: \"A\", \"B\", and \"C\"."},
+            {nil, ""},
+            {"", ""},
+            {" | ", ""},
+            {[], ""}
+          ] do
+        ctx = %{doc: %{"original" => value}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
+
+        framed =
+          Value.render({:names, "original", "Original: ", "."}, ctx) |> Segment.to_text()
+
+        assert framed == expected
+      end
+    end
+
+    test "a name that already carries quotes prints as written, not nested" do
+      # A stored original can arrive with its own quotes ("Acute "flare""). Wrapping it again
+      # would print nested quotes, so a quote-bearing term is left exactly as stored and only
+      # clean terms get the frame's quotes.
+      ctx = %{
+        doc: %{"original" => ~s(Acute "flare")},
+        version: "kg-1.0.0",
+        slots: %{},
+        aliases: %{}
+      }
+
+      framed =
+        Value.render({:names, "original", "Original: ", "."}, ctx) |> Segment.to_text()
+
+      assert framed == ~s(Original: Acute "flare".)
+      refute framed =~ ~s("Acute)
     end
   end
 
@@ -42,6 +80,128 @@ defmodule EdgeLinkouts.Display.ValueTest do
              "The subject mapped to X:1; and the object mapped to Y:2."}
           ] do
         assert Value.render({:compound, clauses}, ctx) |> Segment.to_text() == expected
+      end
+    end
+
+    test "a clause that already ends in sentence punctuation is not given a second mark" do
+      # Regression for issue #58: the species clause is configured with a "." suffix and the
+      # closer used to append another one unconditionally, printing "Homo sapiens (human)..".
+      # The closer owns sentence punctuation, so it must be idempotent for any value that
+      # arrives already punctuated, not just for that one config line.
+      ctx = %{doc: %{}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
+
+      for {clauses, expected} <- [
+            {["This assertion is about Homo sapiens (human)."],
+             "This assertion is about Homo sapiens (human)."},
+            {["Did the label say so?"], "Did the label say so?"},
+            {["Human curation!"], "Human curation!"},
+            {["Recorded by FAERS;"], "Recorded by FAERS;"},
+            # A stored value can carry trailing whitespace, and the mark it ends with can sit
+            # after that space. Neither may survive as "(human) ." or "(human)..".
+            {["This assertion is about Homo sapiens (human). "],
+             "This assertion is about Homo sapiens (human)."},
+            {["This assertion is about Homo sapiens (human) "],
+             "This assertion is about Homo sapiens (human)."}
+          ] do
+        text = Value.render({:compound, clauses}, ctx) |> Segment.to_text()
+        assert text == expected
+        refute text =~ ".."
+        refute text =~ " ."
+      end
+    end
+
+    test "the closer sees punctuation inside a link or a chip, not only plain text" do
+      # The last thing a sentence prints is often a link ("...mapped to CHEBI:5118") or the
+      # inside of an emphasis chip. If the mark check and the mark strip only looked at a
+      # trailing {:text} segment they would miss a mark living there, and ".." would come back
+      # through a path the config never wrote.
+      ctx = %{
+        doc: %{"label" => "CHEBI:5118.", "curie" => "CHEBI:5118"},
+        version: "kg-1.0.0",
+        slots: %{"id" => {:link, "label", "curie"}},
+        aliases: %{}
+      }
+
+      ending_in_link = Value.render({:compound, ["The subject mapped to {id}"]}, ctx)
+
+      assert Segment.to_text(ending_in_link) == "The subject mapped to CHEBI:5118."
+      assert link_label(ending_in_link) == "CHEBI:5118."
+
+      chip = Value.render({:compound, [{:strong, "FAERS reports."}]}, ctx)
+      assert Segment.to_text(chip) == "FAERS reports."
+
+      # Interior: the mark inside the link label has to yield to the "; and " join as plain
+      # text does, and the label itself must not keep it.
+      joined =
+        Value.render({:compound, ["The subject mapped to {id}", "The object mapped to Y:2"]}, ctx)
+        |> Segment.to_text()
+
+      assert joined == "The subject mapped to CHEBI:5118; and the object mapped to Y:2."
+      refute joined =~ ".."
+      refute joined =~ ".; and"
+    end
+
+    test "an interior clause left empty by its own mark does not buy a joiner" do
+      # A clause that is nothing but "." loses that mark to the "; and " join and collapses to
+      # nothing. Joining it anyway printed "A; and ; and B".
+      ctx = %{doc: %{"id" => "x"}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
+
+      text =
+        Value.render(
+          {:compound, ["The subject mapped to X:1", ".", "The object mapped to Y:2"]},
+          ctx
+        )
+        |> Segment.to_text()
+
+      assert text == "The subject mapped to X:1; and the object mapped to Y:2."
+      refute text =~ "; and ;"
+      refute text =~ "; and ."
+    end
+
+    test "an interior clause yields its terminal mark to the '; and' join" do
+      # Two sentences cannot share one connector: "...(human).; and the object mapped to X"
+      # reads as a broken sentence. The mark belongs to the assembled sentence, so only the
+      # closing clause carries one.
+      ctx = %{doc: %{}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
+
+      text =
+        Value.render(
+          {:compound,
+           ["This assertion is about Homo sapiens (human).", "The object mapped to X:1"]},
+          ctx
+        )
+        |> Segment.to_text()
+
+      assert text ==
+               "This assertion is about Homo sapiens (human); and the object mapped to X:1."
+
+      refute text =~ ".; and"
+    end
+
+    test "a clause that renders to nothing prints no bare period" do
+      # An empty evidence entry must drop out entirely; a lone "." on the page is worse than
+      # no sentence, and it is what the old unconditional closer produced for blank input.
+      ctx = %{doc: %{}, version: "kg-1.0.0", slots: %{}, aliases: %{}}
+
+      for clauses <- [[""], [nil], ["", nil], []] do
+        assert Value.render({:compound, clauses}, ctx) |> Segment.to_text() == ""
+      end
+    end
+
+    test "close_sentence/1 is idempotent, for any sentence-shaped render" do
+      # The closer is shared by {:compound} and the provenance list, so a caller that builds a
+      # sentence outside a compound gets the same one-mark rule. Without it a bullet ending in
+      # a period would double it exactly like the compound closer used to.
+      for {input, expected} <- [
+            {[], ""},
+            {[Segment.text("The product lists fluoxetine")], "The product lists fluoxetine."},
+            {[Segment.text("This assertion is about Homo sapiens (human).")],
+             "This assertion is about Homo sapiens (human)."},
+            # A trailing link label is part of the sentence, so its punctuation counts.
+            {[Segment.text("mapped to "), Segment.link("https://x/1", "CHEBI:1.")],
+             "mapped to CHEBI:1."}
+          ] do
+        assert Value.close_sentence(input) |> Segment.to_text() == expected
       end
     end
 
@@ -401,5 +561,43 @@ defmodule EdgeLinkouts.Display.ValueTest do
              )
              |> Segment.to_text() == ~s("desflurane" OR "Desflurane USAN")
     end
+  end
+
+  describe "{:differs, name_field, original_field}" do
+    # The preferred-name clause rides on this condition, so its edges are the sentence's edges:
+    # a real alternative name renders, a recasing or one spelling among several does not, and a
+    # missing side means no clause rather than a crash.
+    test "true only when the name says something no pipe part already said" do
+      ctx = fn doc -> %{doc: doc, version: "kg-1.0.0", slots: %{}, aliases: %{}} end
+
+      assert Value.condition?(
+               {:differs, "name", "original"},
+               ctx.(%{"name" => "Normal saline", "original" => "0.9% SODIUM CHLORIDE"})
+             )
+
+      for doc <- [
+            %{},
+            %{"name" => "fluoxetine"},
+            %{"original" => "FLUOXETINE"},
+            %{"name" => "", "original" => "FLUOXETINE"},
+            %{"name" => "fluoxetine", "original" => ""},
+            %{"name" => "fluoxetine", "original" => "FLUOXETINE"},
+            %{"name" => "desflurane", "original" => "DESFLURANE|Desflurane USAN"},
+            %{"name" => "fluoxetine", "original" => ["FLUOXETINE"]}
+          ] do
+        refute Value.condition?({:differs, "name", "original"}, ctx.(doc))
+      end
+    end
+  end
+
+  # Pulls the label out of the first link segment, so a test can say what the link itself
+  # prints rather than trusting the flattened sentence.
+  defp link_label(segments) do
+    segments
+    |> Segment.flatten()
+    |> Enum.find_value(fn
+      {:link, _href, label} -> label
+      _ -> nil
+    end)
   end
 end

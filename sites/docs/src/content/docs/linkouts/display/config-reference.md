@@ -7,25 +7,24 @@ sidebar:
 
 A config is a map with these keys:
 
-| key             | required | what it is                                                                                                                                        |
-| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`          | yes      | the `<name>` of the version keys this config renders                                                                                              |
-| `extends`       |          | the base config this one builds on; only `"default"` is valid. See [The default config](../default-config/)                                       |
-| `display_name`  |          | the human name, shown in the edge page header; when omitted the header names the graph from the stored version key                                |
-| `url`           |          | the knowledge source's own documentation                                                                                                          |
-| `description`   |          | prose about the KG, shown in the edge page's about section                                                                                        |
-| `feedback_repo` |          | GitHub repo whose issues take corrections for this KG                                                                                             |
-| `aliases`       |          | alternative field spellings, see [Adding a KG](../add-a-kg/)                                                                                      |
-| `slots`         |          | named value specs a template can reference as `{name}`                                                                                            |
-| `title`         |          | short label for the page title; defaults to "subject and object"                                                                                  |
-| `edge`          | yes      | the sentence describing the relationship                                                                                                          |
-| `asserts`       |          | the lead-in line above the sentence naming who makes the claim (often `"{kp}"`); the page ends it with a colon and renders the sentence below it  |
-| `methods`       |          | value spec rendered under Methods, describing how the association was generated and its sources                                                   |
-| `evidence`      |          | sentences under Provenance: `%{value: spec, if: [conditions]}`. Matching, nonempty sentences form one paragraph, including original-name mappings |
-| `footnote`      |          | helper links rendered under Tips, using the same heading and body sizes as the other sections                                                     |
-
-The edge page presents the claim once, followed by Methods, Provenance, and Tips. Empty
-sections are omitted. These headings use the same section style as About.
+| key                                                                                     | required | what it is                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                                                                  | yes      | the `<name>` of the version keys this config renders                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `extends`                                                                               |          | the base config this one builds on; only `"default"` is valid. See [The default config](../default-config/)                                                                                                                                                                                                                                                                                                                                                             |
+| `display_name`                                                                          |          | the human name, shown in the edge page header; when omitted the header names the graph from the stored version key                                                                                                                                                                                                                                                                                                                                                      |
+| `url`                                                                                   |          | the knowledge source's own documentation                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `description`                                                                           |          | prose about the KG, shown in the edge page's about section                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `feedback_repo`                                                                         |          | GitHub repo whose issues take corrections for this KG                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `aliases`                                                                               |          | alternative field spellings, see [Adding a KG](../add-a-kg/)                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `slots`                                                                                 |          | named value specs a template can reference as `{name}`                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `title`                                                                                 |          | short label for the page title; defaults to "subject and object"                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `edge`                                                                                  | yes      | the sentence describing the relationship                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `asserts`                                                                               |          | the lead-in line above the sentence naming who makes the claim (often `"{kp}"`); the page ends it with a colon and renders the sentence below it                                                                                                                                                                                                                                                                                                                        |
+| `methods`                                                                               |          | value spec rendered under Methods, describing how the association was generated and its sources                                                                                                                                                                                                                                                                                                                                                                         |
+| `footnote`                                                                              |          | helper links rendered under Tips, using the same heading and body sizes as the other sections                                                                                                                                                                                                                                                                                                                                                                           |
+| `evidence`                                                                              |          | sentences under Provenance: `%{value: spec, if: [conditions]}`. Each matching, nonempty sentence becomes one bullet of the Provenance list, including original-name mappings. Declaring this key replaces the default claim list wholesale, so a custom list should carry the mapping claims (`{subject_mapping}`, `{object_mapping}`), the qualifier claims (`{qualifier_mappings}`), and the species context (`{mapping_species_context_qualifier}`) it wants to keep |
+| The edge page presents the claim once, followed by Methods, Provenance, and Tips. Empty |
+| sections are omitted. These headings use the same section style as About.               |
 
 ## Value specs
 
@@ -35,9 +34,12 @@ sections are omitted. These headings use the same section style as About.
 and removes case-insensitive duplicates, preserving the first spelling. It renders `A`,
 `A and B`, or `A, B, and C`. All names remain visible.
 
-`{:names, "original_subject", "The original subject ", " mapped to {subject_id}."}`
-adds a template prefix and suffix only when at least one name survives. Missing or blank
-originals produce no sentence. CURIEs and Biolink classes use the existing link specs.
+`{:names, "original_subject", "The original {subject_role} ", " mapped to {subject_id}."}`
+adds a template prefix and suffix only when at least one name survives, and every surviving
+name prints inside double quotes, so the reader sees where the stored string ends. A name
+that already contains double quotes prints as written instead of gaining a second pair.
+Missing or blank originals produce no sentence. CURIEs and Biolink classes use the existing
+link specs.
 
 Anywhere a value is expected you may write any of these forms.
 
@@ -153,20 +155,27 @@ renders when `inner` renders nothing.
 Pipe-delimited original names (a document field, or `"key: a|b"` entries in
 `supporting_text`) as an Oxford-comma list: `A`, `A and B`, `A, B, and C`. Blank counts as
 absent. With a prefix and suffix the framed sentence renders only when at least one name
-survives.
+survives, and every name prints inside double quotes - `The original treatment "FLUOXETINE" and
+"fluoxetine HCl" mapped to ...` - so a reader can tell the source's own words from the sentence
+around them. The bare form leaves them unquoted for use as plain prose.
 
 ### `{:compound, clauses}`
 
 Several sentence-shaped clauses as one compound sentence. Empty clauses drop; one clause
 stays a plain sentence; several join with `"; and "` and close with a single period.
-Continuation clauses downcase a leading capitalized word, never a CURIE prefix or acronym.
+Continuation clauses downcase a leading capitalized word, never a CURIE prefix or acronym. The
+terminal mark is idempotent: a clause that already ends in sentence punctuation is not given a
+second one, and an interior clause hands its mark to the join, so a value ending in `.` never
+prints `..`.
 
 ### `{:supporting, key, prefix, suffix, rewordings, fallback}`
 
 Text from a `supporting_text` entry. KGs log how an assertion was read as `"key: value"`
 strings (`"original_frequency_qualifier: daily dosage"`), so this form fetches `key`'s value
-and frames it as `prefix` + value + `suffix`. `rewordings` is a map of replacements applied
-to the value (keys downcased), for repairing fragments that read badly in prose:
+and frames it as `prefix` + value + `suffix`. `prefix` and `suffix` are templates, so the frame
+can name the concept with the KG's own slots.
+`rewordings` is a map of replacements applied to the value (keys downcased), for repairing
+fragments that read badly in prose and for turning a stored code into a sentence:
 
 ```elixir
 {:supporting, "original_frequency_qualifier", ", dosed ", "",
@@ -205,15 +214,16 @@ phrase-only; `%{variants: [:phrase]}` is its exact equivalent.
 
 ## Conditions
 
-| condition                                    | true when                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `{:present, name}`                           | the field exists and is not empty                                                                 |
-| `{:eq, name, value}`                         | the field equals `value`, compared as text                                                        |
-| `{:matches, name, "regex"}`                  | the field matches the regex. Use this for predicate families such as `^biolink:contraindicated`   |
-| `{:lt \| :gt \| :lte \| :gte, name, number}` | the field is a number and compares true. A missing or non-number field is false, never an error   |
-| `{:count_gt, name, n}`                       | the list field has more than `n` elements                                                         |
-| `{:version, ">1.0.0"}`                       | the version being displayed satisfies the requirement. Comparison is numeric, so `1.9.0 < 1.16.0` |
-| `{:all, [...]}`, `{:any, [...]}`             | combinators                                                                                       |
+| condition                                    | true when                                                                                                                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `{:present, name}`                           | the field exists and is not empty                                                                                                       |
+| `{:eq, name, value}`                         | the field equals `value`, compared as text                                                                                              |
+| `{:differs, name, original}`                 | `name`'s text says something `original` does not: case-insensitive against each pipe-delimited original, absent on either side is false |
+| `{:matches, name, "regex"}`                  | the field matches the regex. Use this for predicate families such as `^biolink:contraindicated`                                         |
+| `{:lt \| :gt \| :lte \| :gte, name, number}` | the field is a number and compares true. A missing or non-number field is false, never an error                                         |
+| `{:count_gt, name, n}`                       | the list field has more than `n` elements                                                                                               |
+| `{:version, ">1.0.0"}`                       | the version being displayed satisfies the requirement. Comparison is numeric, so `1.9.0 < 1.16.0`                                       |
+| `{:all, [...]}`, `{:any, [...]}`             | combinators                                                                                                                             |
 
 ## Safety
 

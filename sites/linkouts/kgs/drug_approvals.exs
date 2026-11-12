@@ -49,6 +49,24 @@
     "subject" => {:link, "subject_name", "subject"},
     "object" => {:link, "object_name", "object"},
 
+    # What this KP calls its two nodes. Most DrugApprovals assertions pair a drug against a
+    # disease, so "subject" and "object" are pure storage vocabulary in front of a curator;
+    # treatment/condition says what the edge claims (issue #63). Composition edges pair a
+    # product with one of its ingredients, so the same slots name those roles instead, and the
+    # name-resolution provenance claims below stay truthful on both shapes of edge.
+    "subject_role" =>
+      {:pick, "predicate",
+       %{
+         "biolink:has_active_ingredient" => "product",
+         :default => "treatment"
+       }},
+    "object_role" =>
+      {:pick, "predicate",
+       %{
+         "biolink:has_active_ingredient" => "active ingredient",
+         :default => "condition"
+       }},
+
     # The legacy code picked "preventing" vs "treating" off object_modifier, then the verb phrase
     # off the predicate. Same two decisions, expressed as data.
     "verb" =>
@@ -67,7 +85,7 @@
          # applied_to_treat is an observed usage rather than an approval, so the claim
          # takes the predicate's own wording ("has been applied to treat") instead of the
          # generic "used for" fallback. When the source stored the usage as off-label, the
-         # headline says so and the evidence paragraph drops its status sentence — one
+         # headline says so and the provenance list drops its status sentence - one
          # statement of the fact, in the loudest place.
          "biolink:applied_to_treat" =>
            {:if, [{:eq, "clinical_approval_status", "off_label_use"}],
@@ -304,23 +322,26 @@
        :default => "{provenance} {generated_by}"
      }},
 
-  # The evidence block, as prose. The legacy page ran these same facts as optional lines —
-  # "Number of FAERS cases reporting this usage: 12", "Relevant approvals: NDA202155" — and the
-  # instinct stands: a sentence carries its own meaning, where a table row labelled
-  # "Assertion method (agent_type)" asked the reader to decode a storage key. Each entry is one
-  # sentence; the :if conditions drop the ones the document cannot support; the renderer joins
-  # what survives into one paragraph.
+  # The provenance list, one claim per bullet. The legacy page ran these same facts as optional
+  # labelled lines ("Number of FAERS cases reporting this usage: 12", "Relevant approvals:
+  # NDA202155") and that instinct stands: a sentence carries its own meaning, where a table row
+  # labelled "Assertion method (agent_type)" asked the reader to decode a storage key. The :if
+  # conditions drop the claims the document cannot support, and an entry that renders no text
+  # drops instead of printing an empty bullet. Composition edges carry the same list: their
+  # name resolutions render, while the treatment-only claims (approval status, case counts)
+  # drop because a composition document carries none of those fields.
   evidence: [
     %{
+      # What the headline already says is not provenance: "has been approved for treating"
+      # and "is contraindicated for patients with" carry the approved and contraindicated
+      # claims, so the list does not restate them in quieter type. A status the headline
+      # cannot say - that the source named no status at all, or an unlisted one - stays here.
       value:
         {:pick, "clinical_approval_status",
          %{
-           "approved_for_condition" =>
-             "DrugApprovals KP claims this association is approved for the indicated condition.",
-           # Stated in the headline ("was applied off label to treat"); an empty render
-           # drops the sentence here rather than repeating it in quieter type.
+           "approved_for_condition" => "",
+           "contraindicated" => "",
            "off_label_use" => "",
-           "contraindicated" => "DrugApprovals KP claims this association is contraindicated.",
            "not_provided" =>
              "DrugApprovals KP does not specify the approval status of this association.",
            :default => "DrugApprovals KP characterizes this association as {status}."
@@ -328,19 +349,18 @@
       if: [{:present, "clinical_approval_status"}]
     },
     %{
-      value:
-        {:pick, "predicate",
-         %{
-           # The product and ingredient are already named in the claim. Their source aliases
-           # remain in KGX without burying composition evidence under another long list.
-           "biolink:has_active_ingredient" => "",
-           :default => "{node_mappings}"
-         }}
+      value: "{subject_mapping}"
     },
+    %{
+      value: "{object_mapping}"
+    },
+    # Species context states what population the claim is about - claim context, not
+    # provenance - so it stays out of this list; the edge sentence names the species where
+    # it belongs ("in Homo sapiens (humans)").
     %{value: "{qualifier_mappings}"},
     # The legacy page always printed the approvals line, falling back to an explicit
     # "none" sentence. Here the line simply drops when the source has no numbers: a
-    # shorter paragraph beats one that spends a sentence saying nothing is there.
+    # shorter list beats one that spends a line saying nothing is there.
     %{
       value:
         {:if, [{:present, "regulatory_approvals"}],
@@ -377,7 +397,7 @@
 
   # Helper text the reader acts on, not a fact about the edge: the DailyMed searches the
   # legacy page ended with ("Search labels for $subject, labels for $subject and $object").
-  # It renders as its own paragraph beneath the evidence paragraph, so an action item does
+  # It renders as its own paragraph beneath the provenance list, so an action item does
   # not dilute the evidence argument.
   footnote:
     {:pick, "predicate",
