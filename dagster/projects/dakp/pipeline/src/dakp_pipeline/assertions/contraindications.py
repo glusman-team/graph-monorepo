@@ -275,11 +275,6 @@ def _sentence_spans(text: str) -> list[SentenceSpan]:
     return spans
 
 
-def _split_sentences(text: str) -> list[str]:
-    """Compatibility wrapper returning sentence text without losing the old API."""
-    return [span.text for span in _sentence_spans(text)]
-
-
 def _work_item_parts(item: ContraWorkItem | tuple[str, str, str]) -> tuple[str, str, str]:
     """Read a new evidence-aware work item or a legacy tuple used by focused tests."""
     if isinstance(item, ContraWorkItem):
@@ -474,17 +469,6 @@ def _filtered_evidence(
         )
         cursor += len(span.text)
     return "".join(pieces), tuple(mappings)
-
-
-def _contraindication_sentences(text: str, keywords: re.Pattern[str]) -> str:
-    """Return only the contraindication-context sentences from ``text``, space-joined.
-
-    Splits ``text`` into sentences and keeps only those matching ``keywords``. The result is
-    suitable for direct NER extraction — GLiNER sees only contraindication-relevant text so
-    indication-context diseases are never mined. Returns ``""`` when no sentence matches.
-    """
-    filtered, _mappings = _filtered_evidence(text, keywords)
-    return filtered
 
 
 def _split_semicolons(cell: str) -> list[str]:

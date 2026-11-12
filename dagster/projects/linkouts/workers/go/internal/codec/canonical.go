@@ -5,7 +5,6 @@
 package codec
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -230,15 +229,6 @@ func Clone(v any) any {
 	default:
 		return v // string, bool, json.Number are immutable
 	}
-}
-
-// NumberText renders a numeric value as the text it will serialize to. It exists so callers
-// can log or compare magnitudes without re-marshalling.
-func NumberText(v any) (string, bool) {
-	if n, ok := v.(json.Number); ok {
-		return n.String(), true
-	}
-	return "", false
 }
 
 // asDocAny accepts both Doc and the plain map a JSON decoder produces. sonic decodes into

@@ -138,13 +138,6 @@ class EdgeFamily:
     required_upstream: frozenset[str]
     alternative_upstream: tuple[frozenset[str], ...] = ()
 
-    @property
-    def emitted_upstream(self) -> frozenset[str]:
-        """The full upstream chain the Tablassert override stamps on every edge of the family."""
-        return self.required_upstream | frozenset().union(
-            *self.alternative_upstream or (frozenset(),)
-        )
-
 
 # Insertion order is the canonical family order (treats, applied_to_treat, contraindicated_in).
 EDGE_FAMILIES: dict[str, EdgeFamily] = {

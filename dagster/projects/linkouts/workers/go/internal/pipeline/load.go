@@ -264,34 +264,7 @@ type Snapshot struct {
 	Offered   int64
 }
 
-// Ratio is the compressed-to-raw size ratio, which is the number that says whether the trained
-// dictionary is doing its job.
-func (s Snapshot) Ratio() float64 {
-	if s.RawBytes == 0 {
-		return 0
-	}
-	return float64(s.BlobBytes) / float64(s.RawBytes)
-}
-
-// Rate is edges per second so far.
-func (s Snapshot) Rate() float64 {
-	if secs := s.Elapsed.Seconds(); secs > 0 {
-		return float64(s.Edges) / secs
-	}
-	return 0
-}
-
-// Ratio reports the compressed-to-raw size ratio on the live counters.
-func (s *Stats) Ratio() float64 { return s.Snapshot().Ratio() }
-
-// Duration is the wall time of the run.
-func (s *Stats) Duration() time.Duration {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.elapsedLocked()
-}
-
-// elapsedLocked is Duration for callers already holding the lock.
+// elapsedLocked returns the wall time for callers already holding the lock.
 func (s *Stats) elapsedLocked() time.Duration {
 	if s.End.IsZero() {
 		return time.Since(s.Start)

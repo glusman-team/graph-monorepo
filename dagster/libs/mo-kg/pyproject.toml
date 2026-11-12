@@ -1,7 +1,7 @@
 [project]
 name = "mo-kg"
 version = "0.1.0"
-description = "Knowledge graph output: KGX ndjson writer (the only planned sink) + KG QC. Imports no dagster."
+description = "Knowledge graph output: KGX ndjson QC. Imports no dagster."
 requires-python = ">=3.10,<3.15"
 dependencies = []
 

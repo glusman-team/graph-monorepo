@@ -39,6 +39,7 @@ scripts/run-nx-affected.sh
 make lint
 make test
 make go-test-race
+make dead-code-check
 make docs-test
 make locks
 prek run --all-files --hook-stage pre-commit
@@ -72,7 +73,9 @@ An intentional format change must update both languages, review the byte diff, a
 
 ## Quality gates
 
-Pre-commit runs whitespace/metadata checks, secret scanning, Ruff, module-aware Go formatting, project-aware Mix formatting, Prettier, and Nix formatting. Pre-push adds recursive locks, both Go race suites, affected Nx tests/lint, Dialyzer, Actionlint, ShellCheck, deployment checks, and flake evaluation.
+Pre-commit runs whitespace/metadata checks, secret scanning, Ruff, module-aware Go formatting, project-aware Mix formatting, Prettier, and Nix formatting. Pre-push adds recursive locks, both Go race suites, Python/Go dead-code analysis, affected Nx tests/lint, Dialyzer, Actionlint, ShellCheck, deployment checks, and flake evaluation.
+
+`make dead-code-check` runs Vulture over production Python and `deadcode` over both Go modules. Exceptions in `scripts/check_dead_code.py` are limited to name-dispatched Dagster acquisition handlers and documented cross-language or streaming test oracles. Prefer deleting unused code or moving a test helper into a test file over adding an exception.
 
 CI uses tested path detection and shared-contract fan-out. Writer changes exercise the reader and integration; reader changes exercise the writer goldens. `CI Required` is the aggregate branch-protection status. Go, Hex, and npm vulnerability scans are blocking; do not add permanent `continue-on-error`.
 

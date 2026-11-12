@@ -220,7 +220,6 @@ class ReleaseSettings:
     dagster_url: str = "http://localhost:3000"
     hf_token: str | None = field(default=None, repr=False)
     github_token: str | None = field(default=None, repr=False)
-    nercache_external: bool = False
     nercache_required: bool = False
 
 
@@ -239,7 +238,6 @@ def release_settings() -> ReleaseSettings:
         dagster_url=os.environ.get("DAKP_DAGSTER_URL", "http://localhost:3000").rstrip("/"),
         hf_token=os.environ.get("HF_TOKEN") or None,
         github_token=os.environ.get("GITHUB_TOKEN") or None,
-        nercache_external=_env_bool("DAKP_NERCACHE_EXTERNAL"),
         nercache_required=_env_bool("DAKP_NERCACHE_REQUIRED"),
     )
 

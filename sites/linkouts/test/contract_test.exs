@@ -57,7 +57,9 @@ defmodule EdgeLinkouts.ContractTest do
 
   # A fixture file holds two kinds of document: edge blobs and the reserved pool documents
   # behind /random. The same rule the worker uses (`cosmos.IsReservedID`) splits them.
-  defp edge_docs(docs), do: Enum.reject(docs, &Cosmos.reserved_id?(&1["id"]))
+  defp edge_docs(docs) do
+    Enum.reject(docs, &String.starts_with?(&1["id"], "__random_pool__"))
+  end
 
   defp reserved_doc(docs, id), do: Enum.find(docs, &(&1["id"] == id))
 
@@ -93,7 +95,7 @@ defmodule EdgeLinkouts.ContractTest do
         assert doc["k"] == @slug, "#{doc["id"]} carries k=#{inspect(doc["k"])}"
       end
 
-      for doc <- docs, Cosmos.reserved_id?(doc["id"]) do
+      for doc <- docs, String.starts_with?(doc["id"], "__random_pool__") do
         refute Map.has_key?(doc, "k"), "#{doc["id"]} should not carry a k field"
       end
     end

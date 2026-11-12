@@ -81,13 +81,6 @@ defmodule EdgeLinkouts.Display.Config do
               sentence itself reads as the claim alone.
               """
             ],
-            relationship: [
-              type: :any,
-              doc: """
-              Legacy relationship-rendering API. Retained for callers of Display.relationship/3;
-              the edge page renders the claim once and does not display this spec.
-              """
-            ],
             known_errors: [
               type: {:list, :map},
               default: [],
@@ -140,7 +133,6 @@ defmodule EdgeLinkouts.Display.Config do
     :title,
     :edge,
     :asserts,
-    :relationship,
     :known_errors,
     :methods,
     :evidence,
@@ -170,7 +162,6 @@ defmodule EdgeLinkouts.Display.Config do
          :ok <- validate_optional_spec(validated[:title], "title", file),
          :ok <- validate_optional_spec(validated[:asserts], "asserts", file),
          :ok <- validate_optional_spec(validated[:methods], "methods", file),
-         :ok <- validate_optional_spec(validated[:relationship], "relationship", file),
          :ok <- validate_known_errors(validated[:known_errors] || [], file),
          :ok <- validate_evidence(validated[:evidence], file),
          :ok <- validate_optional_spec(validated[:footnote], "footnote", file) do
@@ -629,23 +620,6 @@ defmodule EdgeLinkouts.Display.Config do
     do: Version.satisfies?(version_key, requirement)
 
   @doc """
-  Every `{name}` a config references, from templates and slot definitions alike.
-
-  `{name}` resolves to a defined slot or falls back to a document field, so this list is not by
-  itself a set of mistakes — `mix linkouts.check` cross-checks it against the field names that
-  actually appear in the committed contract fixtures to tell a typo from a legitimate field.
-  """
-  @spec referenced_names(t()) :: [String.t()]
-  def referenced_names(%__MODULE__{} = config) do
-    ([config.edge, config.title, config.footnote] ++
-       Enum.flat_map(config.evidence, &[Map.get(&1, :label), Map.get(&1, :value)]) ++
-       Map.values(config.slots))
-    |> Enum.flat_map(&collect_spec_slots/1)
-    |> Enum.uniq()
-    |> Enum.sort()
-  end
-
-  @doc """
   Slot names a template references but the config does not define.
 
   Not an error on its own, because `{name}` legitimately falls back to a document field. Kept
@@ -660,7 +634,6 @@ defmodule EdgeLinkouts.Display.Config do
         referenced_slots(config.title) ++
         referenced_slots(config.asserts) ++
         referenced_slots(config.methods) ++
-        referenced_slots(config.relationship) ++
         referenced_slots(config.footnote)
 
     referenced =

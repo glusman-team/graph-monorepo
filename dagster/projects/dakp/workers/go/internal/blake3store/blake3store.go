@@ -206,42 +206,7 @@ func streamFile(path string, w io.Writer, buf []byte) error {
 	return err
 }
 
-// HashFiles hashes many files concurrently with bounded parallelism, returning a map from
-// input path to b3:<hex> file id. It uses errgroup with SetLimit so callers can respect
-// Airflow task concurrency / memory budgets, and it cancels remaining work on the first
-// error (cooperatively, at file granularity). limit <= 0 means unbounded.
-func HashFiles(ctx context.Context, paths []string, limit int) (map[string]string, error) {
-	var (
-		mu  sync.Mutex
-		out = make(map[string]string, len(paths))
-	)
-	g, gctx := errgroup.WithContext(ctx)
-	if limit > 0 {
-		g.SetLimit(limit)
-	}
-	for _, p := range paths {
-		p := p
-		g.Go(func() error {
-			if err := gctx.Err(); err != nil {
-				return err // ctx cancelled or another goroutine already failed
-			}
-			id, err := HashFile(p)
-			if err != nil {
-				return fmt.Errorf("hash %s: %w", p, err)
-			}
-			mu.Lock()
-			out[p] = id
-			mu.Unlock()
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// HashFilesWithSRI hashes many files concurrently with bounded parallelism like HashFiles,
+// HashFilesWithSRI hashes many files concurrently with bounded parallelism,
 // but reads each file ONCE, feeding both the BLAKE3 and SHA-256 hashers (the
 // HashFileWithSRI single pass). It returns a map from input path to the
 // [b3:<hex>, sha256-<base64>] pair — the same formats as HashFile and SHA256SRI. limit <= 0

@@ -222,20 +222,6 @@ defmodule EdgeLinkouts.Display do
     Value.render(config.asserts, context(config, doc, version))
   end
 
-  @doc """
-  Renders the text relationship line, when the config declares one.
-
-  The line carries subject, relation, object and every qualifier with the identifiers
-  inline, which is why it replaces the three-box diagram for configs that declare it: a
-  diagram card has exactly three slots and a real relationship has more.
-  """
-  @spec relationship(t(), map(), String.t()) :: [Segment.t()] | nil
-  def relationship(%Config{relationship: nil}, _doc, _version), do: nil
-
-  def relationship(%Config{} = config, doc, version) do
-    Value.render(config.relationship, context(config, doc, version))
-  end
-
   @doc "Renders how the association was generated, separately from supporting evidence."
   @spec methods(t() | nil, map(), String.t()) :: [Segment.t()]
   def methods(nil, _doc, _version), do: []

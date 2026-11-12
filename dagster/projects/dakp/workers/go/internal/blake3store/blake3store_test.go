@@ -154,48 +154,6 @@ func TestHashTreeMissingRoot(t *testing.T) {
 	}
 }
 
-func TestHashFilesBounded(t *testing.T) {
-	dir := t.TempDir()
-	var paths []string
-	want := map[string]string{}
-	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
-		p := filepath.Join(dir, name)
-		content := []byte("content of " + name)
-		if err := os.WriteFile(p, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		paths = append(paths, p)
-		want[p] = HashBytes(content)
-	}
-
-	for _, limit := range []int{0, 1, 2} {
-		got, err := HashFiles(context.Background(), paths, limit)
-		if err != nil {
-			t.Fatalf("HashFiles(limit=%d): %v", limit, err)
-		}
-		if len(got) != len(want) {
-			t.Fatalf("limit=%d: got %d results, want %d", limit, len(got), len(want))
-		}
-		for p, w := range want {
-			if got[p] != w {
-				t.Errorf("limit=%d: %s = %q, want %q", limit, p, got[p], w)
-			}
-		}
-	}
-}
-
-func TestHashFilesError(t *testing.T) {
-	dir := t.TempDir()
-	good := filepath.Join(dir, "ok.txt")
-	if err := os.WriteFile(good, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := HashFiles(context.Background(), []string{good, filepath.Join(dir, "missing.txt")}, 2)
-	if err == nil {
-		t.Fatal("expected error when one path is missing")
-	}
-}
-
 func TestSHA256SRI(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "empty.bin")

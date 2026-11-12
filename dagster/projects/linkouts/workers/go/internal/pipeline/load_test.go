@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -895,31 +894,6 @@ func TestProgressSnapshotsCarryLiveRU(t *testing.T) {
 	}
 }
 
-func TestTextProgressFormats(t *testing.T) {
-	var buf safeBuffer
-	p := NewTextProgress(&buf, 100)
-	p.Every = 0
-	p.Report(Snapshot{Key: keyV1, Elapsed: 2 * time.Second, Edges: 50, Created: 40, Merged: 10, RawBytes: 1000, BlobBytes: 100}, false)
-	p.Report(Snapshot{Key: keyV1, Elapsed: 4 * time.Second, Edges: 100, Created: 100, RawBytes: 1000, BlobBytes: 100}, true)
-	out := buf.String()
-	if !contains(out, "50 edges") || !contains(out, "100 edges") {
-		t.Errorf("progress output missing counts:\n%s", out)
-	}
-	if !contains(out, "eta") {
-		t.Errorf("no ETA while the total is known:\n%s", out)
-	}
-	if !contains(out, "ratio=0.100") {
-		t.Errorf("no compression ratio:\n%s", out)
-	}
-	if !contains(out, "(done)") {
-		t.Errorf("final line not marked:\n%s", out)
-	}
-	// A zero total must not divide by zero.
-	p2 := NewTextProgress(&buf, 0)
-	p2.Every = 0
-	p2.Report(Snapshot{Edges: 5}, false)
-}
-
 // --- helpers ---
 
 type recordingProgress struct {
@@ -994,24 +968,6 @@ func engineEach(nodes, edges string, fn func(codec.Doc) error) error {
 func idFor(i int) string { return fmt.Sprintf("id-%05d", i) }
 
 func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }
-
-// safeBuffer collects progress output from concurrent Report calls.
-type safeBuffer struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
-
-func (b *safeBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *safeBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
 
 // Regenerating the committed contract fixtures must give identical bytes, or CI's diff of them is
 // noise. A fixed seed and clock are the only things the pool needs for that.

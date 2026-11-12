@@ -40,7 +40,7 @@ Monorepo for ISB multiomics knowledge-graph pipelines and their reader:
 | `dagster/projects/<name>/pipeline/` | that DAG's dagster-free python package (own venv, own nx project) | imports no dagster; assets call it in process |
 | `dagster/projects/<name>/workers/<lang>/` | non-python workers, one dir per language (`go/` today, `scala/` later), own go.mod | no repo-wide go.work; never mix languages in one dir; worker commands live under `cmd/`, operations under `internal/` |
 | `dagster/libs/mo-core` | pydantic domain models, canonical for Go codegen | imports no dagster |
-| `dagster/libs/mo-kg` | KGX ndjson writer + QC (only KG sink) | imports no dagster |
+| `dagster/libs/mo-kg` | KGX ndjson QC | imports no dagster |
 | `dagster/libs/mo-dagster` | pipes helpers (`PipesSubprocessClient`) | the only lib importing dagster |
 | `sites/linkouts/` | Phoenix LiveView reader, display configs (`kgs/*.exs`), dictionaries, Fly packaging | dynamic app; never static |
 | `sites/docs/` | Starlight content, search, Pages output | every user-facing doc lives here, not in scattered READMEs |
@@ -87,7 +87,7 @@ Monorepo for ISB multiomics knowledge-graph pipelines and their reader:
 ```sh
 make dev            # dg dev, UI http://localhost:3000
 make up             # process-compose: dagster-daemon + webserver (fixed ports)
-make test / lint / fmt / hooks / locks / check
+make test / lint / fmt / hooks / locks / dead-code-check / check
 make help           # component commands (dakp-*, linkouts-*, docs-*)
 npx nx affected -t test          # fast loop: only what changed
 go build -o bin/dakp-extract ./cmd/dakp-extract   # inside projects/dakp/workers/go
@@ -146,13 +146,10 @@ operations are explicit later deployment steps, never part of verification.
 
 - Cut a release with the `release-dakp` skill: explicit `DAKP_PUBLICATION_VERSION`, verify
   validate-kgx + qc.json + the poison/water screens, then the HF upload/card/prune/tag flow.
-- The ICD-10-CM poison screen is DERIVED IN-DAG by the `derive_icd10cm_screen` and
-  `derive_icd10cm_curies` assets (`pipeline/src/dakp_pipeline/icd10cm_screen.py` holds the
-  logic): the wording denylist always derives from the acquired release; the identifier
-  screen resolves through the fullmap and defers without one. The checked-in
-  `icd10cm_{denylist,curies}.py` snapshots are the OFFLINE DEFAULT (CI, defs checks) and the
-  regression baseline; `pipeline/tests/eval/icd10cm_{denylist,curies}.py` remain their only
-  writers, sharing the screen module's functions. Never hand-edit the snapshots.
+- The ICD-10-CM poison screen uses the checked-in `icd10cm_{denylist,curies}.py` snapshots
+  as the OFFLINE DEFAULT (CI, defs checks) and the regression baseline;
+  `pipeline/tests/eval/icd10cm_{denylist,curies}.py` remain their only writers. Never
+  hand-edit the snapshots.
 - Linkouts stored-document fixtures have exactly one canonical home:
   `dagster/projects/linkouts/contracts/docs.ndjson` (writer-side Go test
   regenerates; `sites/linkouts` reads those exact bytes). Never fork them.

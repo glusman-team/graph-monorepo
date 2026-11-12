@@ -113,19 +113,3 @@ func DictID(dict []byte) uint32 {
 	}
 	return binary.LittleEndian.Uint32(dict[4:8])
 }
-
-// SampleDocs picks up to limit documents, spaced evenly through docs, so the dictionary is
-// trained on the whole shape of the KG rather than its first few edges. Spacing matters:
-// KGX files are usually grouped by predicate, and the first N edges would teach the
-// dictionary one predicate's slots.
-func SampleDocs(docs [][]byte, limit int) [][]byte {
-	if limit <= 0 || len(docs) <= limit {
-		return docs
-	}
-	out := make([][]byte, 0, limit)
-	step := float64(len(docs)) / float64(limit)
-	for i := 0; i < limit; i++ {
-		out = append(out, docs[int(float64(i)*step)])
-	}
-	return out
-}

@@ -35,7 +35,7 @@ Version 1.25.1 adds the ICD-10-CM screen, so its counts are lower than 1.25.0. T
 
 The ICD-10-CM table marks substances with poisoning and adverse-effect codes. A substance whose Adverse-effect column is empty has no use under proper administration under Official Guideline I.C.19.e, so it must not carry an applied-to-treat claim. Every `biolink:applied_to_treat` edge cites `infores:icd10cm` as a supporting data source.
 
-The pipeline derives two screens on every build through `derive_icd10cm_screen` and `derive_icd10cm_curies`:
+The pipeline applies two checked-in screens derived from the ICD-10-CM release and the production fullmap:
 
 - **Wording:** observed-use rows whose subject text names a screened substance in the T36-T65 ranges are dropped at load by one Tablassert anti-join filter.
 - **Identifier:** subject resolution excludes identifiers whose own name is a screened substance. A reporter spelling that resolves to a poison, such as FAERS `LEVOXINE` resolving to hydrazine, or a label ingredient such as turpentine cannot surface as a node on any predicate.

@@ -192,7 +192,6 @@ class Gazetteer:
             if key:
                 by_normalized[key] = canonical_type(etype)
         self._by_normalized = by_normalized
-        self._terms = tuple(sorted(by_normalized))
 
     # -- builders --------------------------------------------------------------
     @classmethod
@@ -220,14 +219,6 @@ class Gazetteer:
         return cls.from_frame(pl.read_csv(path, separator="\t"), **kwargs)  # type: ignore[arg-type]
 
     # -- queries ---------------------------------------------------------------
-    def type_for(self, normalized: str) -> str | None:
-        """Entity type for a normalized phrase (``None`` if not in the gazetteer)."""
-        return self._by_normalized.get(normalized)
-
-    def normalized_terms(self) -> tuple[str, ...]:
-        """All indexed normalized phrases, sorted (deterministic iteration)."""
-        return self._terms
-
     def items(self) -> Iterator[tuple[str, str]]:
         """Yield ``(normalized, type)`` pairs in deterministic (sorted-key) order."""
         yield from sorted(self._by_normalized.items())

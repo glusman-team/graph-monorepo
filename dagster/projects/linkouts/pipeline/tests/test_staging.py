@@ -15,7 +15,6 @@ def test_manifest_round_trip_is_content_addressed(
     stage_manifest.write(path)
     loaded = StageManifest.read(path)
     assert loaded == stage_manifest
-    assert loaded.content_id() == stage_manifest.content_id()
     assert loaded.validate_for_publication() == stage_manifest
 
 

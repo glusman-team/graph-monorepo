@@ -65,7 +65,7 @@ source-by-source special case:
   Zero or ambiguous candidates fail loudly; there is no silent fallback to an older FY.
   `DAKP_ICD10CM_URL` remains an explicit pin for tests/reproducibility. The selected FY,
   URL, retrieval date and BLAKE3 are persisted with the acquisition and consumed by
-  `extract_icd10cm`, `icd10cm_screen.py`, `tablassert.py` (RIG), the delta message and the
+  `extract_icd10cm`, the checked-in ICD-10-CM snapshots, `tablassert.py` (RIG), the delta message and the
   card, replacing the hardcoded FY2027 constants in the build path. Checked-in offline
   snapshots are not auto-edited.
 
@@ -205,7 +205,7 @@ New env knobs (all optional except the secrets and `DAKP_FULLMAP`, which already
 - `dagster/projects/dakp/src/dakp_dag/assets.py` - `finally` NER release in `_run_shape`; reuse by the release jobs.
 - `dagster/projects/dakp/pipeline/src/dakp_pipeline/release/` (new, dagster-free): `delta.py`, `versions.py`, `card.py` + `card_template.md`, `hf_publish.py`, `github_issues.py`, `gpu.py`, `state.py`.
 - `dagster/projects/dakp/pipeline/src/dakp_pipeline/sources/policy.py` (new) + `sources/{dailymed,drugsfda,ema,ema_documents,ema_smpc,faers,canada_vigilance,icd10cm}.py` - shared `auto`/`cached`/`force` behavior, per-source gates, FAERS cached discovery, ICD-10-CM latest-release discovery.
-- `dagster/projects/dakp/pipeline/src/dakp_pipeline/{extract/icd10cm.py,icd10cm_screen.py,tablassert.py}` - propagate discovered ICD-10-CM release metadata into extraction, the screen and the RIG.
+- `dagster/projects/dakp/pipeline/src/dakp_pipeline/{extract/icd10cm.py,icd10cm_denylist.py,icd10cm_curies.py,tablassert.py}` - propagate discovered ICD-10-CM release metadata into extraction, the checked-in screens and the RIG.
 - `dagster/projects/dakp/pipeline/src/dakp_pipeline/ner/ner.py` - `DiseaseNER.close()`.
 - `dagster/projects/dakp/pipeline/src/dakp_pipeline/ner/mention_cache.py` - managed/external client mode and health wait; `workers/go/cmd/dakp-nercache` and `internal/nercache` are reused, with Go changes only if service hardening exposes a need.
 - `nix/modules/dagster.nix` - `dakp-nercache` Go package plus three generated systemd units.

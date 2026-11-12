@@ -8,7 +8,7 @@ defmodule EdgeLinkouts.DisplayTest do
   """
   use ExUnit.Case, async: true
 
-  alias EdgeLinkouts.{Codec, Cosmos}
+  alias EdgeLinkouts.Codec
   alias EdgeLinkouts.Display
   alias EdgeLinkouts.Display.{Config, Segment, Value}
 
@@ -26,7 +26,7 @@ defmodule EdgeLinkouts.DisplayTest do
       |> Enum.map(&JSON.decode!/1)
       # The fixture file also holds the reserved pool documents behind /random; they are not
       # edge blobs and must not be decoded as ones.
-      |> Enum.reject(&Cosmos.reserved_id?(&1["id"]))
+      |> Enum.reject(&String.starts_with?(&1["id"], "__random_pool__"))
 
     resolved = resolve_all(@fixtures)
 
@@ -904,49 +904,6 @@ defmodule EdgeLinkouts.DisplayTest do
       assert Display.default().name == "default"
       # The default is infrastructure: it is not a KG name a curator could configure.
       refute "default" in Display.known()
-    end
-
-    test "the default config renders a bare KGX document" do
-      config = Display.default()
-
-      plain =
-        config
-        |> Display.relationship(
-          %{"subject" => "X:1", "predicate" => "biolink:treats", "object" => "Y:2"},
-          "infores:some-other-kp-1.0.0"
-        )
-        |> Segment.to_text()
-
-      # No names, no categories, no provenance: every absent field drops its clause.
-      assert plain =~ "X:1 treats Y:2."
-      refute plain =~ "a "
-
-      named =
-        config
-        |> Display.relationship(
-          %{
-            "subject" => "CHEBI:1",
-            "subject_name" => "aspirin",
-            "subject_category" => ["biolink:SmallMolecule"],
-            "predicate" => "biolink:treats",
-            "object" => "MONDO:1",
-            "object_name" => "fever",
-            "object_category" => ["biolink:Disease"],
-            "knowledge_level" => "knowledge_assertion",
-            "agent_type" => "automated_agent",
-            "sources" => [
-              %{
-                "resource_id" => "infores:some-other-kp",
-                "resource_role" => "primary_knowledge_source"
-              }
-            ]
-          },
-          "infores:some-other-kp-1.0.0"
-        )
-        |> Segment.to_text()
-
-      assert named =~
-               "aspirin, a SmallMolecule, treats fever, a Disease. This assertion is machine-generated."
     end
 
     test "the default config renders the sources sentence for a standard KGX provenance shape" do

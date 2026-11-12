@@ -148,7 +148,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); prek run --all-files --hook-stage pre-commit; python3 scripts/test_ci_changes.py; scripts/check-locks.sh; prek run shellcheck --all-files --hook-stage pre-push; actionlint; hadolint sites/linkouts/Dockerfile; python3 sites/linkouts/scripts/check_deploy.py; nix flake check --no-build --no-warn-dirty'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; (cd sites/linkouts && mix local.hex --force && mix local.rebar --force && mix deps.get --check-locked); prek run --all-files --hook-stage pre-commit; python3 scripts/test_ci_changes.py; python3 scripts/test_check_dead_code.py; python3 scripts/check_dead_code.py; scripts/check-locks.sh; prek run shellcheck --all-files --hook-stage pre-push; actionlint; hadolint sites/linkouts/Dockerfile; python3 sites/linkouts/scripts/check_deploy.py; nix flake check --no-build --no-warn-dirty'
 
   security:
     needs: changes

@@ -68,8 +68,7 @@ envelope as an edge, with `b` holding JSON rather than a blob.
   (`sample_size`), not the encoding of one id.
 
 A reserved id can never collide with an edge id: an edge id is a UUID, and every reserved id
-starts with `__random_pool__` (`cosmos.IsReservedID` in Go, `Cosmos.reserved_id?/1` in
-Elixir apply the same rule).
+starts with `__random_pool__` (`cosmos.IsReservedID` in Go applies the rule).
 
 Superseded: a single flat `{"ids":[...]}` list at `__random_pool__` backed `/random` before
 per-release pools existed. A document in that old shape is refused by schema, not

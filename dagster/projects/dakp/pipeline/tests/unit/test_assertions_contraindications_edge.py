@@ -10,7 +10,7 @@ missing fields / duplicates in the shared evidence cache; a second observation o
 ``build_contraindication_rows``). Inputs are tiny parquet tables built in tmp so no heavy NER deps
 are needed.
 
-**Pass 2 tests** cover: the sentence keyword filter (``_split_sentences`` / ``_contraindication_sentences``);
+**Pass 2 tests** cover: the sentence keyword filter (``_sentence_spans`` / ``_filtered_evidence``);
 embedded contraindication provenance from indication sections (``SETID#34067-9``); indication-only
 diseases are NOT mined; no-regression on contraindication-only sets;
 a fake monkeypatched GLiNER mock for the production path; and the flattened dispatch
@@ -41,7 +41,7 @@ from dakp_pipeline.assertions.contraindications import (
     _accumulate,
     _classify_mention,
     _classify_mentions,
-    _contraindication_sentences,
+    _filtered_evidence,
     _finalize_row,
     _max_score,
     _mention_local_span,
@@ -52,7 +52,6 @@ from dakp_pipeline.assertions.contraindications import (
     _sentence_spans,
     _shard_by_text_length,
     _spawn_safe_main,
-    _split_sentences,
     _work_item_evidence,
     _work_item_parts,
     _worker_backend,
@@ -753,13 +752,13 @@ def test_shaper_logs_and_dispatches_when_multi_gpu(
 # --- Pass 2: sentence keyword filter helpers -----------------------------------
 
 
-def test_split_sentences_basic() -> None:
+def test_sentence_spans_basic() -> None:
     """Sentence splitter handles periods and semicolons + whitespace."""
-    assert _split_sentences("Hello. World.") == ["Hello.", "World."]
-    assert _split_sentences("A; B; C") == ["A;", "B;", "C"]
-    assert _split_sentences("No boundaries here") == ["No boundaries here"]
-    assert _split_sentences("") == []
-    assert _split_sentences("Trailing.") == ["Trailing."]
+    assert [span.text for span in _sentence_spans("Hello. World.")] == ["Hello.", "World."]
+    assert [span.text for span in _sentence_spans("A; B; C")] == ["A;", "B;", "C"]
+    assert [span.text for span in _sentence_spans("No boundaries here")] == ["No boundaries here"]
+    assert [span.text for span in _sentence_spans("")] == []
+    assert [span.text for span in _sentence_spans("Trailing.")] == ["Trailing."]
 
 
 def test_sentence_spans_never_emit_an_empty_chunk() -> None:
@@ -788,23 +787,23 @@ def test_sentence_spans_never_emit_an_empty_chunk() -> None:
         assert all(text[span.start : span.end] == span.text for span in spans)
 
 
-def test_contraindication_sentences_keeps_only_keyword_sentences() -> None:
+def test_filtered_evidence_keeps_only_keyword_sentences() -> None:
     """Only sentences matching contraindication keywords survive the filter."""
     text = "DrugX is indicated for hypertension. It is contraindicated in patients with asthma. DrugX is also indicated for diabetes."
-    result = _contraindication_sentences(text, DEFAULT_CONTRA_KEYWORDS)
+    result = _filtered_evidence(text, DEFAULT_CONTRA_KEYWORDS)[0]
     assert "contraindicated" in result.lower()
     assert "asthma" in result.lower()
     assert "hypertension" not in result.lower()
     assert "diabetes" not in result.lower()
 
 
-def test_contraindication_sentences_empty_when_no_keywords() -> None:
+def test_filtered_evidence_empty_when_no_keywords() -> None:
     """Indication-only text yields empty filtered text (no Pass 2 work)."""
     text = "DrugX is indicated for hypertension and type 2 diabetes mellitus."
-    assert _contraindication_sentences(text, DEFAULT_CONTRA_KEYWORDS) == ""
+    assert _filtered_evidence(text, DEFAULT_CONTRA_KEYWORDS)[0] == ""
 
 
-def test_contraindication_sentences_catches_various_phrasings() -> None:
+def test_filtered_evidence_catches_various_phrasings() -> None:
     """Multiple contraindication phrasings trigger the filter."""
     for phrase in [
         "Should not be used in patients with heart failure.",
@@ -813,9 +812,7 @@ def test_contraindication_sentences_catches_various_phrasings() -> None:
         "Do not use in active bleeding.",
         "Use is contraindicated in hepatic impairment.",
     ]:
-        assert _contraindication_sentences(phrase, DEFAULT_CONTRA_KEYWORDS) != "", (
-            f"Failed for: {phrase}"
-        )
+        assert _filtered_evidence(phrase, DEFAULT_CONTRA_KEYWORDS)[0] != "", f"Failed for: {phrase}"
 
 
 # --- Pass 2: contraindication mined from indication section --------------------

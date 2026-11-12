@@ -35,4 +35,4 @@ description: Scaffold a new Dagster code location (KG DAG) in this monorepo, wir
    code location in the UI.
 
 Rules: never import across `projects/*`; shared code goes to `libs/*`;
-KGX ndjson (mo-kg) is the only KG sink.
+KGX ndjson is the only KG output format; mo-kg provides QC.

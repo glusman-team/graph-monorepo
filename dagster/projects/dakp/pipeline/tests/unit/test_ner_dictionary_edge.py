@@ -111,16 +111,14 @@ def test_canonical_type_every_alias_and_fallbacks() -> None:
 def test_gazetteer_skips_surfaces_that_normalize_to_empty() -> None:
     gaz = Gazetteer({"!!!": "disease", "asthma": "disease"})
     assert len(gaz) == 1
-    assert gaz.type_for("asthma") == TYPE_DISEASE
+    assert dict(gaz.items()) == {"asthma": TYPE_DISEASE}
     assert "" not in gaz
 
 
 def test_empty_gazetteer_iteration_and_queries() -> None:
     gaz = Gazetteer({})
-    assert gaz.normalized_terms() == ()
     assert list(gaz.items()) == []
     assert len(gaz) == 0
-    assert gaz.type_for("anything") is None
     assert "anything" not in gaz
 
 
@@ -136,15 +134,13 @@ def test_from_frame_skips_blank_and_null_surface_and_type_rows() -> None:
     )
     gaz = Gazetteer.from_frame(frame)
     # Only the row with a non-blank surface AND a non-blank type survives.
-    assert gaz.normalized_terms() == ("asthma",)
-    assert gaz.type_for("asthma") == TYPE_DISEASE
+    assert list(gaz.items()) == [("asthma", TYPE_DISEASE)]
 
 
 def test_from_frame_accepts_biolink_categories() -> None:
     frame = pl.DataFrame({"text": ["asthma", "headache"], "type": ["Disease", "PhenotypicFeature"]})
     gaz = Gazetteer.from_frame(frame)
-    assert gaz.type_for("asthma") == TYPE_DISEASE
-    assert gaz.type_for("headache") == TYPE_PHENOTYPE
+    assert dict(gaz.items()) == {"asthma": TYPE_DISEASE, "headache": TYPE_PHENOTYPE}
 
 
 def test_from_frame_handles_empty_frame() -> None:
@@ -159,4 +155,4 @@ def test_from_tsv_accepts_builder_kwargs(tmp_path: Path) -> None:
     path = tmp_path / "custom.tsv"
     path.write_text("term\tkind\nasthma\tDisease\n")
     gaz = Gazetteer.from_tsv(path, text_col="term", type_col="kind")
-    assert gaz.type_for("asthma") == TYPE_DISEASE
+    assert dict(gaz.items()) == {"asthma": TYPE_DISEASE}

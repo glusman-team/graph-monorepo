@@ -54,6 +54,7 @@ make up                # daemon + webserver
 make check             # offline aggregate verification
 make locks             # recursive uv/npm/Go/Mix lock checks
 make go-test-race      # both independent Go modules
+make dead-code-check   # Python and Go unused-code gates
 make docs-test
 make linkouts-test
 make linkouts-contract-test
@@ -106,4 +107,4 @@ Real Cosmos and Fly operations are explicit later deployment steps, not test tar
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and `AGENTS.md`. CI includes scoped fan-out, contract regeneration/readback, race tests, strict Phoenix checks, Dialyzer, Docker smoke, Actionlint, ShellCheck, Hadolint, secret scanning, and blocking Go/Hex/npm vulnerability audits. No vulnerability gate is permanently informational.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and `AGENTS.md`. CI includes scoped fan-out, contract regeneration/readback, race tests, Python/Go dead-code analysis, strict Phoenix checks, Dialyzer, Docker smoke, Actionlint, ShellCheck, Hadolint, secret scanning, and blocking Go/Hex/npm vulnerability audits. No vulnerability gate is permanently informational.

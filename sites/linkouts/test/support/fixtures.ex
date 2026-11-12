@@ -32,7 +32,9 @@ defmodule EdgeLinkoutsWeb.Fixtures do
   def docs, do: read(@docs_path)
 
   @doc "The edge documents in docs.ndjson: everything that is not a reserved pool document."
-  def edge_docs, do: Enum.reject(docs(), &Cosmos.reserved_id?(&1["id"]))
+  def edge_docs do
+    Enum.reject(docs(), &String.starts_with?(&1["id"], "__random_pool__"))
+  end
 
   def first_edge_id, do: hd(edge_docs())["id"]
 

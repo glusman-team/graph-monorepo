@@ -24,6 +24,7 @@ from typing import Any, ClassVar
 
 import pytest
 from loguru import logger
+from test_ner_edge import _extract_via_span_path
 
 from dakp_pipeline.ner import ner as ner_module
 from dakp_pipeline.ner.model_cache import ModelRef
@@ -588,23 +589,25 @@ def test_acquire_gpu_lock_timeout_raises_when_the_reap_does_not_free_the_lock(
         holder.wait()
 
 
-# --- extract_batch: poisoned-window isolation -----------------------------------
+# --- span batch: poisoned-window isolation --------------------------------------
 
 
-def test_extract_batch_isolates_poisoned_windows(
+def test_span_batch_isolates_poisoned_windows(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """One poisoned window must not fail the shard: fallback isolates it to an empty result.
 
     Regression guard for the run-8 IndexError: a batched gliner2 call raising mid-shard used to
-    propagate out of ``extract_batch`` and fail a multi-hour mining task.
+    propagate out of the batched span pass and fail a multi-hour mining task.
     """
     _install_fake_gliner2(monkeypatch, tmp_path)
     backend = DiseaseNER(offline=False, device="cpu", workdir=tmp_path)
     model = _FlakyBatchModel()
     _FlakyBatchModel.calls = []
     monkeypatch.setattr(backend, "_load_model", lambda: model)
-    out = backend.extract_batch(["asthma in adults", "POISON \x00 garbage", "chronic hives"])
+    out = _extract_via_span_path(
+        backend, (["asthma in adults", "POISON \x00 garbage", "chronic hives"])
+    )
     assert len(out) == 3
     assert out[1] == []  # poisoned window: loud log + no spans, never an exception
     assert len(_FlakyBatchModel.calls) > 1  # batch failed, then per-window fallback ran
@@ -641,7 +644,7 @@ def test_infer_windows_skips_poisoned_summary_log_when_every_fallback_window_rec
     assert error_calls == []  # no window was dropped, hence no poisoned summary
 
 
-def test_extract_batch_healthy_shard_stays_on_one_batched_call(
+def test_span_batch_healthy_shard_stays_on_one_batched_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _install_fake_gliner2(monkeypatch, tmp_path)
@@ -649,7 +652,7 @@ def test_extract_batch_healthy_shard_stays_on_one_batched_call(
     model = _FlakyBatchModel()
     _FlakyBatchModel.calls = []
     monkeypatch.setattr(backend, "_load_model", lambda: model)
-    out = backend.extract_batch(["asthma in adults", "chronic hives"])
+    out = _extract_via_span_path(backend, (["asthma in adults", "chronic hives"]))
     assert len(out) == 2
     assert (
         len(_FlakyBatchModel.calls) == 1
@@ -672,7 +675,7 @@ def test_infer_windows_bisects_a_non_memory_batch_failure_and_drops_nothing(
     lines: list[str] = []
     sink_id = logger.add(lambda message: lines.append(message.record["message"]), level="DEBUG")
     try:
-        out = backend.extract_batch(["asthma", "chronic hives"])
+        out = _extract_via_span_path(backend, (["asthma", "chronic hives"]))
     finally:
         logger.remove(sink_id)
     assert [[mention.text for mention in row] for row in out] == [
@@ -700,7 +703,7 @@ def test_infer_windows_halves_the_batch_on_a_cuda_oom(
     lines: list[str] = []
     sink_id = logger.add(lambda message: lines.append(message.record["message"]), level="DEBUG")
     try:
-        out = backend.extract_batch([f"condition {i}" for i in range(20)])
+        out = _extract_via_span_path(backend, ([f"condition {i}" for i in range(20)]))
     finally:
         logger.remove(sink_id)
     assert len(out) == 20
@@ -722,7 +725,7 @@ def test_infer_windows_submits_in_bounded_chunks(
     _RecordingBatchModel.sizes = []
     monkeypatch.setattr(backend, "_load_model", lambda: _RecordingBatchModel)
     monkeypatch.setattr(ner_module, "_INFERENCE_CHUNK_WINDOWS", 2)
-    assert len(backend.extract_batch(["asthma", "chronic hives", "diabetes"])) == 3
+    assert len(_extract_via_span_path(backend, (["asthma", "chronic hives", "diabetes"]))) == 3
     assert _RecordingBatchModel.sizes == [2, 1]
 
 
@@ -762,7 +765,7 @@ def test_a_window_that_ooms_alone_is_dropped_after_bisecting(
     lines: list[str] = []
     sink_id = logger.add(lambda message: lines.append(message.record["message"]), level="DEBUG")
     try:
-        out = backend.extract_batch(["asthma", "HUGE window", "chronic hives"])
+        out = _extract_via_span_path(backend, (["asthma", "HUGE window", "chronic hives"]))
     finally:
         logger.remove(sink_id)
     assert len(out) == 3  # the healthy texts keep their results
