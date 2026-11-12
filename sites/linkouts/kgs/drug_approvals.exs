@@ -339,19 +339,20 @@
   # labelled "Assertion method (agent_type)" asked the reader to decode a storage key. The :if
   # conditions drop the claims the document cannot support, and an entry that renders no text
   # drops instead of printing an empty bullet. Composition edges carry the same list: their
-  # name resolutions and match tiers render, while the treatment-only claims (approval status,
-  # species, case counts) drop because a composition document carries none of those fields.
+  # name resolutions render, while the treatment-only claims (approval status, case counts)
+  # drop because a composition document carries none of those fields.
   evidence: [
     %{
+      # What the headline already says is not provenance: "has been approved for treating"
+      # and "is contraindicated for patients with" carry the approved and contraindicated
+      # claims, so the list does not restate them in quieter type. A status the headline
+      # cannot say - that the source named no status at all, or an unlisted one - stays here.
       value:
         {:pick, "clinical_approval_status",
          %{
-           "approved_for_condition" =>
-             "DrugApprovals KP claims this association is approved for the indicated condition.",
-           # Stated in the headline ("was applied off label to treat"); an empty render
-           # drops the sentence here rather than repeating it in quieter type.
+           "approved_for_condition" => "",
+           "contraindicated" => "",
            "off_label_use" => "",
-           "contraindicated" => "DrugApprovals KP claims this association is contraindicated.",
            "not_provided" =>
              "DrugApprovals KP does not specify the approval status of this association.",
            :default => "DrugApprovals KP characterizes this association as {status}."
@@ -359,18 +360,17 @@
       if: [{:present, "clinical_approval_status"}]
     },
     %{
-      value: "{subject_mapping}"
+      # Name resolution and match tier are one claim about one concept: how the source's
+      # string became this identifier, and how sure the match was. One bullet per concept,
+      # not a resolution bullet followed by a tier bullet repeating it.
+      value: {:compound, ["{subject_mapping}", "{subject_name_match}"]}
     },
     %{
-      value: "{object_mapping}"
+      value: {:compound, ["{object_mapping}", "{object_name_match}"]}
     },
-    %{
-      value: "{subject_name_match}"
-    },
-    %{
-      value: "{object_name_match}"
-    },
-    %{value: "{mapping_species_context_qualifier}"},
+    # Species context states what population the claim is about - claim context, not
+    # provenance - so it stays out of this list; the edge sentence names the species where
+    # it belongs ("in Homo sapiens (humans)").
     %{value: "{qualifier_mappings}"},
     # The legacy page always printed the approvals line, falling back to an explicit
     # "none" sentence. Here the line simply drops when the source has no numbers: a

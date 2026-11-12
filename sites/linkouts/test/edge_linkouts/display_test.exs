@@ -64,7 +64,9 @@ defmodule EdgeLinkouts.DisplayTest do
   # The provenance block renders as one item per claim, so a test that reads it as prose has to
   # say how the items join. A space is what the page's line breaks do visually; asserting on the
   # joined text keeps sentence-level expectations honest without hiding the item boundaries.
-  defp items_text(items), do: Enum.map_join(items, " ", &Segment.to_text/1)
+  defp item_texts(items), do: Enum.map(items, &Segment.to_text/1)
+
+  defp items_text(items), do: Enum.join(item_texts(items), " ")
 
   # The DailyMed label links inside a provenance list, told apart from the identifier links the
   # mapping claims add by their href.
@@ -102,9 +104,11 @@ defmodule EdgeLinkouts.DisplayTest do
 
       items = Display.evidence(config, doc, @v1)
       # The fixture is fully specified, so the count is pinned: a claim that stopped rendering
-      # has to fail here rather than quietly shorten the list. Subject and object mappings are
-      # separate claims, so a fully loaded document carries four.
-      assert length(items) == 4
+      # has to fail here rather than quietly shorten the list. Name resolution and match tier
+      # are one claim per concept, the species context and the approval restatement are gone,
+      # and this document carries no match log, so three bullets remain: two resolutions and
+      # the case count.
+      assert length(items) == 3
 
       for item <- items do
         text = Segment.to_text(item)
@@ -114,19 +118,14 @@ defmodule EdgeLinkouts.DisplayTest do
         refute text =~ ~r/\.\./, "item doubles its period: #{text}"
       end
 
-      # One claim per item: the species sentence is not glued onto the case count by a joiner.
-      # The refute only means something once both bullets are known to exist, so they are
-      # asserted before the glued form is ruled out.
-      species =
-        Enum.find(items, &(Segment.to_text(&1) |> String.starts_with?("This assertion is about")))
-
-      assert species, "no species bullet rendered: #{items_text(items)}"
+      # The list states provenance, not the claim or its context: the approval restatement and
+      # the species sentence are out, the case count stays.
+      refute items_text(items) =~ "claims this association is approved"
+      refute items_text(items) =~ "This assertion is about"
 
       faers = Enum.find(items, &(Segment.to_text(&1) |> String.starts_with?("FAERS and Canada")))
 
       assert faers, "no case-count bullet rendered: #{items_text(items)}"
-
-      refute species |> Segment.to_text() |> String.contains?("FAERS")
 
       refute Enum.any?(items, fn item ->
                text = Segment.to_text(item)
@@ -134,9 +133,10 @@ defmodule EdgeLinkouts.DisplayTest do
              end)
     end
 
-    test "an entry whose clause drops leaves no empty item", %{config: config} do
-      # The species clause falls back to an empty render when the dump names no species phrase.
-      # That must remove the bullet, not print a bare "." one.
+    test "a document with nothing to state renders no bullets", %{config: config} do
+      # The status the headline already carries drops, an approved document names no original
+      # strings to resolve, and a species CURIE without a readable phrase gains no bullet:
+      # the list must come out empty, not print a bare "." one.
       doc = %{
         "subject" => "CHEBI:5118",
         "subject_name" => "fluoxetine",
@@ -147,17 +147,7 @@ defmodule EdgeLinkouts.DisplayTest do
         "species_context_qualifier" => "NCBITaxon:9606"
       }
 
-      items = Display.evidence(config, doc, @v1)
-
-      refute Enum.any?(
-               items,
-               &(&1 |> Segment.to_text() |> String.starts_with?("This assertion is about"))
-             )
-
-      refute Enum.any?(items, fn item ->
-               text = item |> Segment.to_text() |> String.trim()
-               text == "." or text == ""
-             end)
+      assert Display.evidence(config, doc, @v1) == []
     end
 
     test "the page emits one <li> per claim", %{config: config} do
@@ -566,11 +556,11 @@ defmodule EdgeLinkouts.DisplayTest do
 
       items = Display.evidence(config, doc, version)
 
-      assert Enum.map(items, &Segment.to_text/1) == [
-               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115.),
-               ~s(The original active ingredient "CHLORIDE ION" mapped to CHEBI:17996.),
-               "The product name matched on its written spelling.",
-               "The active ingredient name matched on its written spelling."
+      # Resolution and match tier are one claim per concept: "how this string became this
+      # identifier" and "how sure the match was" render as a single sentence each.
+      assert item_texts(items) == [
+               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115; and the product name matched on its written spelling.),
+               ~s(The original active ingredient "CHLORIDE ION" mapped to CHEBI:17996; and the active ingredient name matched on its written spelling.)
              ]
 
       refute items_text(items) =~ "treatment"
@@ -589,15 +579,16 @@ defmodule EdgeLinkouts.DisplayTest do
 
       items = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
 
-      assert "The product name matched on its written spelling." in Enum.map(
-               items,
-               &Segment.to_text/1
-             )
+      # Each tier merges into its own resolution sentence after the "; and" joiner: the
+      # level-1 product claim states a written-spelling match, the level-2 ingredient claim
+      # says the name only resolved after normalization.
+      assert items_text(items) =~
+               ~s(mapped to UMLS:C0445115; and the product name matched on its written spelling.)
 
-      assert "The active ingredient name matched only after normalizing the spelling." in Enum.map(
-               items,
-               &Segment.to_text/1
-             )
+      assert items_text(items) =~
+               "; and the active ingredient name matched only after normalizing the spelling."
+
+      refute items_text(items) =~ "The product name matched on its written spelling."
     end
 
     test "a document with no match log states no match tier", %{config: config} do
@@ -870,11 +861,12 @@ defmodule EdgeLinkouts.DisplayTest do
       refute text =~ "original object"
     end
 
-    test "the species sentence closes with exactly one period", %{config: config} do
-      # Issue #58, on the page a reviewer actually read: the species clause carries its own "."
-      # suffix and the compound closer appended a second one unconditionally, so Provenance
-      # printed "This assertion is about Homo sapiens (human).. FAERS and Canada Vigilance
-      # record 61 cases of this usage."
+    test "merged bullets close with exactly one period", %{config: config} do
+      # Issue #58, on the page a reviewer actually read: a clause carrying its own "." suffix
+      # met a closer that appended a second one unconditionally, so Provenance printed
+      # "...(human).. FAERS and Canada Vigilance record 61 cases of this usage." The same risk
+      # lives in the merged bullets now: a match tier ends in "." inside its resolution
+      # sentence, and neither may double.
       doc = %{
         "subject" => "CHEBI:5118",
         "subject_name" => "fluoxetine",
@@ -893,21 +885,29 @@ defmodule EdgeLinkouts.DisplayTest do
 
       text = evidence_text(config, doc, @v1)
 
-      assert text =~ "This assertion is about Homo sapiens (human). FAERS"
+      assert text =~ "FAERS and Canada Vigilance record 61 cases of this usage."
       refute text =~ "(human).."
       refute text =~ ~r/\.\./
 
-      # The species sentence stands on its own line even beside another qualifier, and adding
-      # that qualifier must not reintroduce a doubled mark anywhere in the block.
+      # A match tier rides inside its resolution sentence as one merged bullet, and adding a
+      # qualifier bullet must not reintroduce a doubled mark anywhere in the block.
       with_qualifier =
         doc
         |> Map.put("sex_qualifier", "PATO:0000384")
-        |> Map.update!("supporting_text", &["original_sex_qualifier: male" | &1])
+        |> Map.update!("supporting_text", fn lines ->
+          ["original_sex_qualifier: male", "subject_nlp_level: 1", "object_nlp_level: 1" | lines]
+        end)
 
       items = Display.evidence(config, with_qualifier, @v1)
 
       assert Enum.any?(items, fn item ->
-               Segment.to_text(item) == "This assertion is about Homo sapiens (human)."
+               text = Segment.to_text(item)
+
+               String.starts_with?(text, "The original treatment") and
+                 String.contains?(
+                   text,
+                   "; and the treatment name matched on its written spelling."
+                 )
              end)
 
       refute Enum.any?(items, &(&1 |> Segment.to_text() |> String.contains?("..")))
