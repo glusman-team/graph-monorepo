@@ -550,17 +550,15 @@ defmodule EdgeLinkouts.DisplayTest do
     test "a composition page states its name resolution even with no labels", %{config: config} do
       # DAKP 1.27.0's real composition edges carry no publications at all, so the labels
       # sentence drops. What remains is the provenance a curator actually needs on this page:
-      # how each source string resolved to an identifier, and how sure the match was.
+      # how each source string resolved to an identifier.
       doc = Map.delete(composition_doc(), "publications")
       version = "infores:drugapprovals-kp-1.27.0"
 
       items = Display.evidence(config, doc, version)
 
-      # Resolution and match tier are one claim per concept: "how this string became this
-      # identifier" and "how sure the match was" render as a single sentence each.
       assert item_texts(items) == [
-               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115; and the product name matched on its written spelling.),
-               ~s(The original active ingredient "CHLORIDE ION" mapped to CHEBI:17996; and the active ingredient name matched on its written spelling.)
+               ~s(The original product "0.9% SODIUM CHLORIDE", "ISOTONIC SODIUM CHLORIDE", and "SODIUM CHLORIDE 0.9%" mapped to UMLS:C0445115.),
+               ~s(The original active ingredient "CHLORIDE ION" mapped to CHEBI:17996.)
              ]
 
       refute items_text(items) =~ "treatment"
@@ -568,41 +566,20 @@ defmodule EdgeLinkouts.DisplayTest do
       assert Display.footnote(config, doc, version) != []
     end
 
-    test "a level-two match says the name only resolved after normalization", %{config: config} do
-      # Tablassert's tiers are not decoration: a level-2 name is one that appeared only after
-      # stemming and stripping, and 124 of DAKP 1.27.0's 6,817 composition products are level 2.
-      # The page has to say so rather than claim a written-spelling match.
-      doc = %{
-        composition_doc()
-        | "supporting_text" => ["object_nlp_level: 2", "subject_nlp_level: 1"]
-      }
+    test "the normalization tier stays in the log, not on the page", %{config: config} do
+      # Tablassert logs which normalization tier resolved each name (level 1: the written
+      # spelling, level 2: only after stemming and stripping). That is resolver bookkeeping,
+      # not provenance: the page renders neither tier, and the bullets are the plain
+      # resolution sentences whether the log line is there or not.
+      for supporting <- [["object_nlp_level: 2", "subject_nlp_level: 1"], []] do
+        doc = %{composition_doc() | "supporting_text" => supporting}
+        items = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
+        text = items_text(items)
 
-      items = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
-
-      # Each tier merges into its own resolution sentence after the "; and" joiner: the
-      # level-1 product claim states a written-spelling match, the level-2 ingredient claim
-      # says the name only resolved after normalization.
-      assert items_text(items) =~
-               ~s(mapped to UMLS:C0445115; and the product name matched on its written spelling.)
-
-      assert items_text(items) =~
-               "; and the active ingredient name matched only after normalizing the spelling."
-
-      refute items_text(items) =~ "The product name matched on its written spelling."
-    end
-
-    test "a document with no match log states no match tier", %{config: config} do
-      # The claims are self-dropping: an older dump without the log lines gains no provenance
-      # it cannot back with data.
-      doc =
-        composition_doc()
-        |> Map.delete("supporting_text")
-        |> Map.delete("publications")
-
-      items = Display.evidence(config, doc, "infores:drugapprovals-kp-1.27.0")
-
-      refute items_text(items) =~ "name matched"
-      assert length(items) == 2
+        refute text =~ "matched"
+        assert text =~ ~s(mapped to UMLS:C0445115.)
+        assert text =~ ~s(mapped to CHEBI:17996.)
+      end
     end
   end
 
@@ -889,25 +866,17 @@ defmodule EdgeLinkouts.DisplayTest do
       refute text =~ "(human).."
       refute text =~ ~r/\.\./
 
-      # A match tier rides inside its resolution sentence as one merged bullet, and adding a
-      # qualifier bullet must not reintroduce a doubled mark anywhere in the block.
+      # Adding a qualifier bullet must not reintroduce a doubled mark anywhere in the block,
+      # and the qualifier originals still share one compound sentence of their own.
       with_qualifier =
         doc
         |> Map.put("sex_qualifier", "PATO:0000384")
-        |> Map.update!("supporting_text", fn lines ->
-          ["original_sex_qualifier: male", "subject_nlp_level: 1", "object_nlp_level: 1" | lines]
-        end)
+        |> Map.update!("supporting_text", &["original_sex_qualifier: male" | &1])
 
       items = Display.evidence(config, with_qualifier, @v1)
 
       assert Enum.any?(items, fn item ->
-               text = Segment.to_text(item)
-
-               String.starts_with?(text, "The original treatment") and
-                 String.contains?(
-                   text,
-                   "; and the treatment name matched on its written spelling."
-                 )
+               Segment.to_text(item) |> String.starts_with?("The original sex qualifier")
              end)
 
       refute Enum.any?(items, &(&1 |> Segment.to_text() |> String.contains?("..")))

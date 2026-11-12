@@ -154,13 +154,10 @@ Provenance each distinct claim gets its own line: the original subject and objec
 graph uses (`subject_role`, `object_role`: "subject" and "object" in the default, "treatment"
 and "condition" for a DrugApprovals treatment edge). Roles can follow the predicate, so the
 same sentence stays true on a different edge shape: a DrugApprovals composition edge calls
-them "product" and "active ingredient". DrugApprovals also states how sure each name match
-was (`subject_name_match`, `object_name_match`), read from Tablassert's normalization tier in
-`supporting_text`, merged into its resolution sentence ("...; and the product name matched on
-its written spelling.") and dropped when a dump carries no such line. The species sentence
-stands alone (`mapping_species_context_qualifier`), and the remaining qualifier originals share
-one compound sentence (`qualifier_mappings`). Every original string prints in double quotes, so
-a reader can tell the source's words from the sentence around them. Pipe-delimited names use an
+them "product" and "active ingredient". The species sentence stands
+alone (`mapping_species_context_qualifier`), and the remaining qualifier originals share one
+compound sentence (`qualifier_mappings`). Every original string prints in double quotes, so a
+reader can tell the source's words from the sentence around them. Pipe-delimited names use an
 Oxford-comma list; absent originals omit the mapping, and absent categories omit only the class
 clause. Configured helper links appear under Tips. All section headings use the same style as
 About.

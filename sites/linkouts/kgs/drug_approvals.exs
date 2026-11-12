@@ -67,17 +67,6 @@
          :default => "condition"
        }},
 
-    # Tablassert records which normalization tier resolved each name: level 1 is the spelling
-    # as the source table wrote it, level 2 only matched after stemming and stripping. A
-    # curator auditing a mapping wants that tier on the page, not buried in the KGX log line,
-    # so each tier renders as its own claim and drops when the log carries no such line.
-    "subject_name_match" =>
-      {:supporting, "subject_nlp_level", "The {subject_role} name matched ", ".",
-       %{"1" => "on its written spelling", "2" => "only after normalizing the spelling"}, ""},
-    "object_name_match" =>
-      {:supporting, "object_nlp_level", "The {object_role} name matched ", ".",
-       %{"1" => "on its written spelling", "2" => "only after normalizing the spelling"}, ""},
-
     # The legacy code picked "preventing" vs "treating" off object_modifier, then the verb phrase
     # off the predicate. Same two decisions, expressed as data.
     "verb" =>
@@ -360,13 +349,10 @@
       if: [{:present, "clinical_approval_status"}]
     },
     %{
-      # Name resolution and match tier are one claim about one concept: how the source's
-      # string became this identifier, and how sure the match was. One bullet per concept,
-      # not a resolution bullet followed by a tier bullet repeating it.
-      value: {:compound, ["{subject_mapping}", "{subject_name_match}"]}
+      value: "{subject_mapping}"
     },
     %{
-      value: {:compound, ["{object_mapping}", "{object_name_match}"]}
+      value: "{object_mapping}"
     },
     # Species context states what population the claim is about - claim context, not
     # provenance - so it stays out of this list; the edge sentence names the species where
