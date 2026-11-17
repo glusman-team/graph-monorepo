@@ -41,10 +41,11 @@ import json
 import re
 import tempfile
 import time
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
@@ -89,9 +90,10 @@ _OPTIONAL_KEYS = (
 )
 
 
-@dataclass(frozen=True)
-class EparDocument:
+class EparDocument(BaseModel):
     """One row of the EPAR documents report: a single published document for one medicine."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str
     type: str
@@ -198,7 +200,7 @@ class EmaDocumentsFetcher:
 
     def fetch(self, ctx: TaskContext) -> list[ArtifactRef]:
         with step(logger, _EVENT):
-            store = ArtifactStore(Workdir(ctx.workdir))
+            store = ArtifactStore(Workdir(root=ctx.workdir))
             url = str(ctx.params.get("ema_documents_url", self.url))
             policy = source_policy(ctx, _max_age_days(ctx))
             stats(logger, _EVENT, url=url, source_refresh=policy.mode)

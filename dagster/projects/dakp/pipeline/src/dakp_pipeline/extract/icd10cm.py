@@ -41,10 +41,10 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
@@ -74,9 +74,10 @@ _TOXIC_EFFECT_PREFIXES = tuple(f"T{code}" for code in range(51, 66))
 _DRUG_RANGE_PREFIXES = tuple(f"T{code}" for code in (*range(36, 51), 50))
 
 
-@dataclass(frozen=True)
-class SubjectTier:
+class SubjectTier(BaseModel):
     """One classified Table entry: the substance name, its tier, and the code that decided it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str
     icd10cm_code: str
@@ -165,7 +166,7 @@ class ICD10CMExtractor:
     """Extract the substance-tier table from the acquired ICD-10-CM release ZIP."""
 
     def extract(self, inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         log = bind(task_id=_EVENT)
 

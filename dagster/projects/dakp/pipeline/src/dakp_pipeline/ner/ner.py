@@ -67,9 +67,10 @@ import sys
 import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.logging_setup import logger, stats
 from dakp_pipeline.ner._gliner25_compat import apply_boundary_attribute_device_fix
@@ -640,9 +641,10 @@ def _contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
     return outer[0] <= inner[0] and inner[1] <= outer[1]
 
 
-@dataclass(frozen=True)
-class _ModelSpan:
+class _ModelSpan(BaseModel):
     """A GLiNER span candidate (full-text offsets) awaiting the gazetteer merge."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     start: int
     end: int
@@ -678,8 +680,7 @@ class _ModelSpan:
         )
 
 
-@dataclass(frozen=True)
-class RawTextSpans:
+class RawTextSpans(BaseModel):
     """One text's raw model output, BEFORE the deterministic post-processing merge.
 
     This is the unit the Tier B span cache stores: everything model-side (windows, per-window
@@ -693,6 +694,8 @@ class RawTextSpans:
     CACHE omits the window texts (recomputable from ``text + budget``) and stores the starts
     only, validated on read.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     windows: list[tuple[int, str]]
     objects: list[list[_ModelSpan]]  # per-window, aligned with ``windows``
@@ -760,14 +763,15 @@ def _token_budget_offline(model_dir: Path | None, override: int | None) -> int:
     return _DEFAULT_WORD_BUDGET
 
 
-@dataclass(frozen=True)
-class _Candidate:
+class _Candidate(BaseModel):
     """A trimmed model span that survived the gazetteer contest, plus what it supersedes.
 
     ``anchor`` is the index of the single gazetteer mention this span strictly contains — the
     more-specific-boundary case (``pulmonary hypertension`` ⊃ ``hypertension``) — or ``-1`` when
     the span stands alone with no gazetteer interaction.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     span: _ModelSpan
     anchor: int

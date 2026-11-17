@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.release.card import file_stat
 from dakp_pipeline.release.versions import next_patch_version
@@ -17,8 +18,8 @@ class PublishError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class PublishResult:
+class PublishResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     version: str
     dry_run: bool
     actions: tuple[str, ...]
@@ -99,7 +100,13 @@ def publish_release(
         f"create tag {tag} and verify its tree",
     ]
     if dry_run:
-        return PublishResult(version, True, tuple(actions), tuple(old_versions), False)
+        return PublishResult(
+            version=version,
+            dry_run=True,
+            actions=tuple(actions),
+            superseded=tuple(old_versions),
+            verified=False,
+        )
 
     add_type, delete_type = operation_types or _operations()
     api.upload_folder(
@@ -143,7 +150,13 @@ def publish_release(
     missing = {f"{version}/{file.name}" for file in files} - tagged_files
     if missing:
         raise PublishError(f"new tag {tag} is missing release files: {sorted(missing)}")
-    return PublishResult(version, False, tuple(actions), tuple(old_versions), True)
+    return PublishResult(
+        version=version,
+        dry_run=False,
+        actions=tuple(actions),
+        superseded=tuple(old_versions),
+        verified=True,
+    )
 
 
 __all__ = ["PublishError", "PublishResult", "publish_release"]

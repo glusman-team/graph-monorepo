@@ -7,24 +7,21 @@ layout mirrors the directory tree the pipeline writes under that root.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict
 
-@dataclass(frozen=True)
-class Workdir:
+
+class Workdir(BaseModel):
     """Immutable handle to the pipeline workdir tree.
 
     Constructing an instance does not create directories; call :meth:`create` to
     materialize the full tree (idempotent).
     """
 
-    root: Path
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
-    def __post_init__(self) -> None:
-        # Normalize without resolving symlinks: we never want to quietly rewrite a
-        # user-supplied path that contains intentional symlink components.
-        object.__setattr__(self, "root", Path(self.root))
+    root: Path
 
     # -- raw acquisition layer -------------------------------------------------
     @property

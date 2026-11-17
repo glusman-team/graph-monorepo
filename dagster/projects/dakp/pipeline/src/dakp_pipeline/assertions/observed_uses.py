@@ -100,10 +100,10 @@ from __future__ import annotations
 import functools
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
 from types import MappingProxyType
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dakp_pipeline.assertions import (
     AT_MANUAL,
@@ -252,12 +252,11 @@ def _split_pipe(value: object) -> list[str]:
 
 
 def _no_objects() -> Mapping[str, frozenset[str]]:
-    """The empty read-only application index (the dataclass default)."""
+    """The empty read-only application index."""
     return MappingProxyType({})
 
 
-@dataclass(frozen=True)
-class ApprovedTreatsIndex:
+class ApprovedTreatsIndex(BaseModel):
     """Cross-reference index over ``approved_treats_assertions.tsv`` for the status rule.
 
     Two independent keys answer "is this observed (drug, condition) use label-approved?", and a
@@ -299,11 +298,19 @@ class ApprovedTreatsIndex:
     application number can still miss and read as ``off_label_use``.
     """
 
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     #: Normalized ``(subject_key, object_key)`` text pairs of the approved-treats table.
     pairs: frozenset[tuple[str, str]] = frozenset()
     #: FDA application display form -> the normalized object keys that application approves.
     #: A read-only view: the index is built once and shared by every row of a 1.6M-row table.
-    objects_by_approval: Mapping[str, frozenset[str]] = field(default_factory=_no_objects)
+    objects_by_approval: Mapping[str, frozenset[str]] = Field(default_factory=_no_objects)
+
+    @field_validator("objects_by_approval")
+    @classmethod
+    def freeze_objects(cls, value: Mapping[str, frozenset[str]]) -> Mapping[str, frozenset[str]]:
+        """Keep the shared lookup read-only after Pydantic validates its values."""
+        return MappingProxyType(dict(value))
 
     @classmethod
     def from_frame(cls, approved: pl.DataFrame) -> ApprovedTreatsIndex:

@@ -8,22 +8,24 @@ tasks are restartable, cacheable by hash, and easy to monkeypatch in tests.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.content_hash import hash_file
 from dakp_pipeline.io.downloads import infer_media_type
 
 
-@dataclass(frozen=True)
-class ArtifactRef:
+class ArtifactRef(BaseModel):
     """Immutable handle to one pipeline artifact (raw, interim, or tabular).
 
     ``uri`` is the concrete path to read from; ``blake3`` is its canonical
     ``b3:<hex>`` content id; ``manifest`` points at the JSON manifest describing
     provenance/inputs (written by :class:`~dakp_pipeline.io.artifact_store.ArtifactStore`).
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     uri: Path
     blake3: str
@@ -33,8 +35,7 @@ class ArtifactRef:
     manifest: Path | None = None
 
 
-@dataclass(frozen=True)
-class TaskContext:
+class TaskContext(BaseModel):
     """Per-task execution context passed to every fetcher/extractor/transformer.
 
     Fetchers/extractors build their own :class:`~dakp_pipeline.io.artifact_store.ArtifactStore`
@@ -43,6 +44,8 @@ class TaskContext:
     ``params``; there is no machine sizing or execution tier — one pipeline always runs real
     acquisition.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     workdir: Path
     fixture_root: Path | None

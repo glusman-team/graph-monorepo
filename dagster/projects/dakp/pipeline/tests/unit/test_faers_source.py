@@ -87,7 +87,7 @@ def _build_fake_zip(dest: Path) -> None:
 
 
 def _ingest_fake_zip(workdir: Path, source: faers_source.QuarterSource):
-    wd = Workdir(workdir)
+    wd = Workdir(root=workdir)
     dest = wd.raw / "downloads" / f"faers_ascii_{source.quarter}.zip"
     _build_fake_zip(dest)
     ref, _ = ArtifactStore(wd).ingest(dest, alias=f"faers/faers_ascii_{source.quarter}.zip")
@@ -216,7 +216,7 @@ def test_download_quarter_cache_miss_downloads_and_cleans_staging(
     assert ref.uri.exists()
     assert ref.uri.name == "faers_ascii_24Q3.zip"
     # The staged download copy is removed once the zip is content-addressed.
-    assert not (Workdir(tmp_path).raw / "downloads" / "faers_ascii_24Q3.zip").exists()
+    assert not (Workdir(root=tmp_path).raw / "downloads" / "faers_ascii_24Q3.zip").exists()
     # A second call is now a cache hit (no network).
     monkeypatch.setattr(
         faers_source, "_http_download", lambda *a, **k: pytest.fail("network called")

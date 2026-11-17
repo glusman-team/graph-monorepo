@@ -19,10 +19,11 @@ import re
 import tempfile
 import time
 import urllib.request
-from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urljoin, urlsplit
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
@@ -45,8 +46,8 @@ _EVENT = "acquire_icd10cm"
 _HREF_RE = re.compile(r"href=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
 
-@dataclass(frozen=True)
-class ReleaseSelection:
+class ReleaseSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     release: str
     url: str
     directory_url: str
@@ -161,7 +162,7 @@ def _write_selection(store: ArtifactStore, selection: ReleaseSelection) -> None:
     dest = store.workdir.raw / "downloads" / "icd10cm-release.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(
-        json.dumps(asdict(selection), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(selection.model_dump(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     store.ingest(
         dest,
@@ -174,7 +175,7 @@ def _write_selection(store: ArtifactStore, selection: ReleaseSelection) -> None:
 
 def selected_release(workdir: Path | str) -> ReleaseSelection:
     """The acquired selection, or the FY2027 offline fallback before acquisition."""
-    store = ArtifactStore(Workdir(Path(workdir)))
+    store = ArtifactStore(Workdir(root=Path(workdir)))
     return _read_selection(store) or default_release_selection()
 
 
@@ -213,7 +214,7 @@ class ICD10CMFetcher:
 
     def fetch(self, ctx: TaskContext) -> list[ArtifactRef]:
         with step(logger, _EVENT):
-            store = ArtifactStore(Workdir(ctx.workdir))
+            store = ArtifactStore(Workdir(root=ctx.workdir))
             policy = source_policy(ctx, _max_age_days(ctx))
             explicit_url = ctx.params.get("icd10cm_url")
             prior = None if policy.force else _read_selection(store)
@@ -286,7 +287,7 @@ class ICD10CMFetcher:
                         )
                     finally:
                         dest.unlink(missing_ok=True)
-            _write_selection(store, replace(selection, artifact_id=ref.blake3))
+            _write_selection(store, selection.model_copy(update={"artifact_id": ref.blake3}))
             stats(logger, _EVENT, blake3=ref.blake3, cache_hit=cache_hit)
             return [ref]
 

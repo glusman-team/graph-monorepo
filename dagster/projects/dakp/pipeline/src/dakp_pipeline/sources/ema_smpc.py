@@ -38,9 +38,10 @@ from __future__ import annotations
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.content_hash import hash_bytes
@@ -70,9 +71,10 @@ _RETRY_BACKOFF_S = 1.0
 _EVENT = "acquire_ema_smpc"
 
 
-@dataclass(frozen=True)
-class _CrawlFailure:
+class _CrawlFailure(BaseModel):
     """One document that could not be fetched (structured, so failures are attributable)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     document: EparDocument
     error: str
@@ -103,7 +105,7 @@ class EmaSmpcFetcher:
 
     def fetch(self, ctx: TaskContext) -> list[ArtifactRef]:
         with step(logger, _EVENT):
-            store = ArtifactStore(Workdir(ctx.workdir))
+            store = ArtifactStore(Workdir(root=ctx.workdir))
             policy = source_policy(ctx, _max_age_days(ctx))
             force = policy.force
             concurrency = _concurrency(ctx)
@@ -154,7 +156,7 @@ class EmaSmpcFetcher:
                 )
                 raise FileNotFoundError(msg)
 
-            staging = Workdir(ctx.workdir).root / ".staging" / "ema_smpc"
+            staging = Workdir(root=ctx.workdir).root / ".staging" / "ema_smpc"
             staging.mkdir(parents=True, exist_ok=True)
             downloaded = _download_all(missing, staging, concurrency)
 

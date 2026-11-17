@@ -10,9 +10,8 @@ ignore filtering.
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
-
 import pytest
+from pydantic import ValidationError
 
 from dakp_pipeline.ner.dictionary import Gazetteer
 from dakp_pipeline.ner.lexical import (
@@ -83,7 +82,7 @@ def test_mention_sort_key_is_start_end_type_text() -> None:
     assert _mention_sort_key(mention) == (3, 9, "Disease", "asthma")
 
 
-# --- Mention dataclass ----------------------------------------------------------
+# --- Mention model --------------------------------------------------------------
 
 
 def test_mention_default_optional_fields_are_empty() -> None:
@@ -93,7 +92,7 @@ def test_mention_default_optional_fields_are_empty() -> None:
 
 def test_mention_is_frozen() -> None:
     mention = Mention(text="asthma", start=0, end=6, type="Disease", score=DIRECT_SCORE)
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(ValidationError):
         mention.text = "changed"  # type: ignore[misc]
 
 

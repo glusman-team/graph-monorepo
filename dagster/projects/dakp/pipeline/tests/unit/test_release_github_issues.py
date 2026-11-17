@@ -22,14 +22,18 @@ def _event() -> FailureEvent:
         gpu_summary="GPU 0: 0 MiB",
         steps=(
             StepStat(
-                "extract_faers", "SUCCESS", "2026-11-06T17:00:00Z", "2026-11-06T17:10:00Z", 600.0
+                name="extract_faers",
+                status="SUCCESS",
+                started_at="2026-11-06T17:00:00Z",
+                ended_at="2026-11-06T17:10:00Z",
+                duration_seconds=600.0,
             ),
             StepStat(
-                "shape_contraindications",
-                "FAILURE",
-                "2026-11-06T17:10:00Z",
-                "2026-11-06T18:00:00Z",
-                3000.0,
+                name="shape_contraindications",
+                status="FAILURE",
+                started_at="2026-11-06T17:10:00Z",
+                ended_at="2026-11-06T18:00:00Z",
+                duration_seconds=3000.0,
                 error="RuntimeError: HF_TOKEN=hf_abcdefghijklmnopqr failed",
                 log_tail=("line with ghp_abcdefghijklmnopqr\n" * 1000),
             ),

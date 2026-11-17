@@ -130,7 +130,7 @@ _MOCK_NO_SETID_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 def _ctx(tmp_path: Path) -> TaskContext:
     wd = tmp_path / "work"
-    Workdir(wd).create()
+    Workdir(root=wd).create()
     return TaskContext(workdir=wd, fixture_root=_FIXTURE_ROOT, params={})
 
 

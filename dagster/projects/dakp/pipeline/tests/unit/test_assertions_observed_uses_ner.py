@@ -7,7 +7,6 @@ Tablassert's downstream intervention/object mapping.
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
 import polars as pl
@@ -73,8 +72,8 @@ def test_shaper_ignores_injected_ner_for_faers(
         raise AssertionError("FAERS indication was sent to NER")
 
     monkeypatch.setattr(DiseaseNER, "extract", fail_extract)
-    injected_ctx = dataclasses.replace(
-        ctx, params={**ctx.params, "ner": DiseaseNER(gazetteer={"migraine": "disease"})}
+    injected_ctx = ctx.model_copy(
+        update={"params": {**ctx.params, "ner": DiseaseNER(gazetteer={"migraine": "disease"})}}
     )
     refs = ObservedUsesShaper().transform(faers_refs, injected_ctx)
     assert len(refs) == 1

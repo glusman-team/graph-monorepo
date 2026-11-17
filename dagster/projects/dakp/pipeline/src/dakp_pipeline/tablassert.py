@@ -168,11 +168,12 @@ import subprocess
 import sys
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline import icd10cm_curies, icd10cm_denylist
 from dakp_pipeline.io import schemas
@@ -2242,7 +2243,7 @@ def generate(assertion_refs: list[ArtifactRef], ctx: TaskContext) -> list[Artifa
     placeholder (deferred runs never invoke ``build-kg``). Returns ``[graph_ref, *table_refs]`` in
     the canonical table order; assertion refs are linked as input provenance by table stem.
     """
-    workdir = Workdir(ctx.workdir)
+    workdir = Workdir(root=ctx.workdir)
     store = ArtifactStore(workdir)
     icd10cm_selection = icd10cm_source.selected_release(workdir.root)
     tables_dir = workdir.root / "tables"
@@ -2504,7 +2505,7 @@ def _base_report(
 def _write_report(
     report: dict[str, Any], assertion_refs: list[ArtifactRef], ctx: TaskContext
 ) -> ArtifactRef:
-    workdir = Workdir(ctx.workdir)
+    workdir = Workdir(root=ctx.workdir)
     path = workdir.reports / REPORT_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -2522,7 +2523,7 @@ def _find_graph(config_refs: list[ArtifactRef], ctx: TaskContext) -> Path:
     for ref in config_refs:
         if ref.uri.name == "graph.yaml":
             return ref.uri
-    return Workdir(ctx.workdir).root / "tables" / "graph.yaml"
+    return Workdir(root=ctx.workdir).root / "tables" / "graph.yaml"
 
 
 def _composition_assertions_path(assertion_refs: list[ArtifactRef]) -> Path:
@@ -2588,7 +2589,7 @@ def validate_kgx_contract(ctx: TaskContext, graph_yaml: Path) -> list[str]:
         validate_kgx,
     )
 
-    kgx_dir = Workdir(ctx.workdir).kgx
+    kgx_dir = Workdir(root=ctx.workdir).kgx
     stem = _graph_stem(graph_yaml)
 
     def _emitted(kind: str) -> Path:
@@ -2610,8 +2611,7 @@ def validate_kgx_contract(ctx: TaskContext, graph_yaml: Path) -> list[str]:
     return problems
 
 
-@dataclass(frozen=True)
-class TablassertRunner:
+class TablassertRunner(BaseModel):
     """Run the INSTALLED ``tablassert`` CLI (a core DAKP dependency) as a subprocess.
 
     Builds ``tablassert build-kg <graph.yaml> [--qc] [--release]`` (the graph config carries the
@@ -2628,6 +2628,8 @@ class TablassertRunner:
     Raises ``RuntimeError`` when ``tablassert`` is unavailable and no editable-checkout
     override is configured (reinstall with ``uv sync``).
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     tablassert_dir: str | None = None
 
@@ -2695,7 +2697,7 @@ class TablassertRunner:
             qc=qc and not study_separately,
             release=release,
         )
-        cwd = Workdir(ctx.workdir).root
+        cwd = Workdir(root=ctx.workdir).root
 
         with step(logger, event):
             stats(
@@ -2735,7 +2737,7 @@ class TablassertRunner:
             try:
                 from dakp_pipeline.approval_reconciliation import reconcile_approval_status
 
-                kgx_dir = Workdir(ctx.workdir).kgx
+                kgx_dir = Workdir(root=ctx.workdir).kgx
                 stem = _graph_stem(graph_yaml)
                 report["kgx_stem"] = stem  # kg_build locates the KGX pair via this
                 edges_path = kgx_dir / f"{stem}.edges.ndjson"
@@ -2843,9 +2845,10 @@ class TablassertRunner:
         return refs
 
 
-@dataclass(frozen=True)
-class DeferredTablassertRunner:
+class DeferredTablassertRunner(BaseModel):
     """Write a deferred-handoff report; never touch Tablassert (no fullmap trigger + tests)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     def run(
         self, assertion_refs: list[ArtifactRef], config_refs: list[ArtifactRef], ctx: TaskContext

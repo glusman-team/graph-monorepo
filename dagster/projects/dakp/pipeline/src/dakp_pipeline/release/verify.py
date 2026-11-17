@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.selfloops import SCREENED_NODE_CURIES
 from dakp_pipeline.tablassert import _command_prefix, stream_subprocess
@@ -16,8 +17,8 @@ class ReleaseVerificationError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class ReleaseVerification:
+class ReleaseVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     version: str
     nodes: str
     edges: str
@@ -27,7 +28,7 @@ class ReleaseVerification:
     ok: bool
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return self.model_dump()
 
 
 def _iter_ndjson(path: Path):

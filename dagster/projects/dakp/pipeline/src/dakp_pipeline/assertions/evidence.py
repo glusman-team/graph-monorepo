@@ -34,11 +34,11 @@ import pickle
 import re
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.assertions.species import animal_row_species, label_species
 from dakp_pipeline.assertions.species import row_species as species_row_species
@@ -209,8 +209,7 @@ def canonical_application_number(prefix: str, digits: str) -> str:
     return f"{prefix}{digits}"
 
 
-@dataclass(frozen=True)
-class FDAApprovalIndex:
+class FDAApprovalIndex(BaseModel):
     """Normalized application number -> the display forms ``<type><number>`` it is known by.
 
     The truncated-approval fix. FAERS records application numbers with the type prefix AND the
@@ -221,12 +220,14 @@ class FDAApprovalIndex:
     and Drugs@FDA (padded) all hit the same entry.
     """
 
-    displays: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    displays: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     #: norm -> the authoritative Drugs@FDA display form for the number, when the human register
     #: knows it. Kept separately from :attr:`displays` (which accumulates every label spelling)
     #: so an edge can cite the prefix its own context supports: a non-animal edge takes the
     #: register form, an animal edge takes the NADA/ANADA/CNADA form its label asserts.
-    register: dict[str, str] = field(default_factory=dict)
+    authoritative_displays: dict[str, str] = Field(default_factory=dict)
 
     def expand(self, value: Any) -> list[str]:
         """Return the FDA display form for one raw application number on a NON-ANIMAL edge.
@@ -277,14 +278,22 @@ class FDAApprovalIndex:
                 )
                 if animal:
                     return [animal[0]]
-                return [self.register[norm]] if norm in self.register else [sorted(known)[0]]
+                return (
+                    [self.authoritative_displays[norm]]
+                    if norm in self.authoritative_displays
+                    else [sorted(known)[0]]
+                )
             human = sorted(
                 form
                 for form in known
                 if split_application_number(form)[0] not in ANIMAL_APPLICATION_PREFIXES
             )
             if human:
-                return [self.register[norm]] if norm in self.register else [human[0]]
+                return (
+                    [self.authoritative_displays[norm]]
+                    if norm in self.authoritative_displays
+                    else [human[0]]
+                )
             return []
         prefix, digits = split_application_number(value)
         form = canonical_application_number(prefix, digits)
@@ -350,7 +359,7 @@ def build_fda_approval_index(inputs: Iterable[ArtifactRef]) -> FDAApprovalIndex:
       FDA application register: ``appl_type`` + ``appl_no`` are separate, curated columns, and
       in a full production build it covers ~94% of the distinct application numbers FAERS
       reports with no number carrying two types. Its form is recorded separately in
-      :attr:`FDAApprovalIndex.register` and wins on non-animal edges.
+      :attr:`FDAApprovalIndex.authoritative_displays` and wins on non-animal edges.
     * **DailyMed SPL** (``spl_approvals.parquet``) -- the label's own ``approval/id/@extension``,
       which already embeds the prefix (``ANDA089160``). Covers ~26% of FAERS numbers, and 25 of
       them carry conflicting prefixes (label typos: ``BN``, ``KGX``, ``NAD``), so it fills gaps
@@ -392,7 +401,8 @@ def build_fda_approval_index(inputs: Iterable[ArtifactRef]) -> FDAApprovalIndex:
                 )
             ] += 1
     index = FDAApprovalIndex(
-        {norm: tuple(sorted(set(forms))) for norm, forms in displays.items()}, register=register
+        displays={norm: tuple(sorted(set(forms))) for norm, forms in displays.items()},
+        authoritative_displays=register,
     )
     # The refusal counts are the observability half of the drop: a missing or truncated Drugs@FDA
     # feed shows up here as a collapse of ``application_numbers`` rather than as silently
@@ -404,7 +414,7 @@ def build_fda_approval_index(inputs: Iterable[ArtifactRef]) -> FDAApprovalIndex:
         logger,
         "fda_approval_index",
         application_numbers=len(index.displays),
-        register_numbers=len(index.register),
+        register_numbers=len(index.authoritative_displays),
         refused_no_number=refusals["no_number"],
         refused_untyped=refusals["untyped"],
         refused_not_a_drug_application=refusals["not_a_drug_application"],
@@ -687,53 +697,54 @@ def _schema_columns(path: Path) -> set[str]:
 # --- DailyMed SPL support index -------------------------------------------------
 
 
-@dataclass(frozen=True)
-class DailyMedEvidence:
+class DailyMedEvidence(BaseModel):
     """Indexed DailyMed SPL evidence for assertion joining.
 
     All keys are normalized: ``approval_sets``/``approval_display`` are keyed by
     :func:`normalize_nda`; section maps are keyed by ``spl_set_id``.
     """
 
-    approval_sets: dict[str, set[str]] = field(default_factory=dict)  # norm_nda -> {spl_set_id}
-    approval_display: dict[str, str] = field(
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    approval_sets: dict[str, set[str]] = Field(default_factory=dict)  # norm_nda -> {spl_set_id}
+    approval_display: dict[str, str] = Field(
         default_factory=dict
     )  # norm_nda -> display approval id (``<type><number>``, e.g. ``BLA103795``)
-    approval_ids_by_set: dict[str, set[str]] = field(
+    approval_ids_by_set: dict[str, set[str]] = Field(
         default_factory=dict
     )  # spl_set_id -> display approval ids
-    set_ingredient: dict[str, tuple[str, str]] = field(
+    set_ingredient: dict[str, tuple[str, str]] = Field(
         default_factory=dict
     )  # spl_set_id -> first active (name, unii)
-    active_ingredients_by_set: dict[str, list[tuple[str, str]]] = field(
+    active_ingredients_by_set: dict[str, list[tuple[str, str]]] = Field(
         default_factory=dict
     )  # set -> all active (name, unii)
-    indication_docs: dict[str, list[tuple[str, str]]] = field(
+    indication_docs: dict[str, list[tuple[str, str]]] = Field(
         default_factory=dict
     )  # set -> [(doc_id, text)]
-    contraindication_docs: dict[str, list[tuple[str, str]]] = field(
+    contraindication_docs: dict[str, list[tuple[str, str]]] = Field(
         default_factory=dict
     )  # set -> [(doc_id, text)]
-    boxed_warning_docs: dict[str, list[tuple[str, str]]] = field(
+    boxed_warning_docs: dict[str, list[tuple[str, str]]] = Field(
         default_factory=dict
     )  # set -> [(doc_id, text)]
-    warning_docs: dict[str, list[tuple[str, str]]] = field(
+    warning_docs: dict[str, list[tuple[str, str]]] = Field(
         default_factory=dict
     )  # set -> [(doc_id, text)] (warnings + precautions)
     #: spl_set_id -> document-level LOINC label type code (``50578-4``/``50577-6`` mark animal
     #: labels; human labels carry their own codes or none).
-    label_types: dict[str, str] = field(default_factory=dict)
+    label_types: dict[str, str] = Field(default_factory=dict)
     #: animal spl_set_id -> label-wide NCBITaxon CURIEs named anywhere in the set's MINED sections
     #: (indication/contraindication/boxed-warning/warnings): the fallback when a row's own sentence
     #: names no species. Human sets never gain an entry -- their rows are human by construction.
-    species_by_set: dict[str, frozenset[str]] = field(default_factory=dict)
+    species_by_set: dict[str, frozenset[str]] = Field(default_factory=dict)
     #: spl_set_id -> the set bears an animal drug application approval (NADA/ANADA/CNADA, from
     #: the resolved approval prefix: the id's own prefix, else the approval_type column). Such
     #: a set is animal REGARDLESS of its document-level type code, which production
     #: spl_documents leaves empty for every animal-approval set (2026-10-22 probe: 1,245 of
     #: 1,245), and 21 U.S.C. 360b(a) leaves no human NADA/ANADA/CNADA application to loosen
     #: for.
-    animal_application_sets: set[str] = field(default_factory=set)
+    animal_application_sets: set[str] = Field(default_factory=set)
 
     def indication_support(self, norm_nda: str) -> tuple[list[str], list[str]]:
         """Sorted ``(spl_set_ids, spl_document_ids)`` supporting an approval via indication sections.
@@ -944,7 +955,7 @@ def load_or_build_dailymed_evidence(
     if ctx is None or not consumed:
         return build_dailymed_evidence(refs)
     key_inputs = [*consumed, _EVIDENCE_VERSION_INPUT]
-    store = ArtifactStore(Workdir(ctx.workdir))
+    store = ArtifactStore(Workdir(root=ctx.workdir))
     cached = store.find_by_operation(EVIDENCE_OPERATION, key_inputs)
     if cached is not None:
         with cached[0].uri.open("rb") as handle:
@@ -953,7 +964,7 @@ def load_or_build_dailymed_evidence(
         return evidence
 
     evidence = build_dailymed_evidence(refs)
-    out = Workdir(ctx.workdir).store / "dailymed_evidence.pickle"
+    out = Workdir(root=ctx.workdir).store / "dailymed_evidence.pickle"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(pickle.dumps(evidence))
     store.register(
@@ -1029,7 +1040,7 @@ def cached_shape_outputs(
     """
     if ctx.params.get("force"):
         return None
-    return ArtifactStore(Workdir(ctx.workdir)).find_by_operation(
+    return ArtifactStore(Workdir(root=ctx.workdir)).find_by_operation(
         operation, shape_operation_inputs(list(refs), ctx)
     )
 
@@ -1082,10 +1093,10 @@ def write_assertion_table(
     with step(logger, "assertion_table.write", table=table):
         frame = pl.DataFrame(rows, schema=columns) if rows else pl.DataFrame(schema=columns)
         frame = schemas.coerce_count_column(frame)
-        out = Workdir(ctx.workdir).tabular / f"{table}.tsv"
+        out = Workdir(root=ctx.workdir).tabular / f"{table}.tsv"
         rows_written = schemas.write_tsv(frame, out)
         fingerprint = schemas.schema_fingerprint(columns)
-        store = ArtifactStore(Workdir(ctx.workdir))
+        store = ArtifactStore(Workdir(root=ctx.workdir))
         # The manifest inputs carry the shape-stage config fingerprint as a synthetic final id so
         # the operation-index entry (maintained by ``register``) matches the shape task's skip
         # lookup (see ``shape_operation_inputs`` / ``cached_shape_outputs``).

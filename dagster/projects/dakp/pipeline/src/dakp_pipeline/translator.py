@@ -59,11 +59,11 @@ from __future__ import annotations
 import gzip
 import json
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.assertions.evidence import is_fda_application_number
 from dakp_pipeline.io import schemas
@@ -122,8 +122,7 @@ PREDICATE_CONTRAINDICATED_IN = "biolink:contraindicated_in"
 PREDICATE_HAS_ACTIVE_INGREDIENT = "biolink:has_active_ingredient"
 
 
-@dataclass(frozen=True)
-class EdgeFamily:
+class EdgeFamily(BaseModel):
     """One DAKP edge family: its predicate and the upstream infores it must carry.
 
     ``alternative_upstream`` lists acceptable UPSTREAM chains beyond canonical
@@ -134,6 +133,8 @@ class EdgeFamily:
     stamps the union of all upstreams on emitted KGX edges.
     """
 
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     predicate: str
     required_upstream: frozenset[str]
     alternative_upstream: tuple[frozenset[str], ...] = ()
@@ -142,20 +143,20 @@ class EdgeFamily:
 # Insertion order is the canonical family order (treats, applied_to_treat, contraindicated_in).
 EDGE_FAMILIES: dict[str, EdgeFamily] = {
     PREDICATE_TREATS: EdgeFamily(
-        PREDICATE_TREATS,
-        frozenset({INFORES_DAILYMED, INFORES_FAERS}),
+        predicate=PREDICATE_TREATS,
+        required_upstream=frozenset({INFORES_DAILYMED, INFORES_FAERS}),
         alternative_upstream=(frozenset({INFORES_EMA}), frozenset({INFORES_EPAR})),
     ),
     PREDICATE_APPLIED_TO_TREAT: EdgeFamily(
-        PREDICATE_APPLIED_TO_TREAT,
-        frozenset({INFORES_FAERS, INFORES_DAILYMED}),
+        predicate=PREDICATE_APPLIED_TO_TREAT,
+        required_upstream=frozenset({INFORES_FAERS, INFORES_DAILYMED}),
         # Canada Vigilance observed-use rows carry the Health Canada + DailyMed chain (the
         # corroboration-derived clinical_approval_status is DailyMed-backed, exactly like FAERS).
         alternative_upstream=(frozenset({INFORES_CANADA_VIGILANCE, INFORES_DAILYMED}),),
     ),
     PREDICATE_CONTRAINDICATED_IN: EdgeFamily(
-        PREDICATE_CONTRAINDICATED_IN,
-        frozenset({INFORES_DAILYMED}),
+        predicate=PREDICATE_CONTRAINDICATED_IN,
+        required_upstream=frozenset({INFORES_DAILYMED}),
         alternative_upstream=(frozenset({INFORES_EPAR}),),
     ),
     # Product composition: every edge cites at least one FDA source -- exactly the sources
@@ -163,8 +164,8 @@ EDGE_FAMILIES: dict[str, EdgeFamily] = {
     # template; see dakp_pipeline.composition_provenance). A Drugs@FDA-only pair (issue #59)
     # carries the drugs-at-fda chain alone and must not fail the gate for missing DailyMed.
     PREDICATE_HAS_ACTIVE_INGREDIENT: EdgeFamily(
-        PREDICATE_HAS_ACTIVE_INGREDIENT,
-        frozenset({INFORES_DAILYMED}),
+        predicate=PREDICATE_HAS_ACTIVE_INGREDIENT,
+        required_upstream=frozenset({INFORES_DAILYMED}),
         alternative_upstream=(
             frozenset({INFORES_DRUGS_AT_FDA}),
             frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
@@ -203,9 +204,10 @@ INVALID_APPROVAL_STATUS = "invalid_approval_status"
 INVALID_OBSERVED_APPROVALS = "invalid_observed_approvals"
 
 
-@dataclass(frozen=True)
-class ContractProblem:
+class ContractProblem(BaseModel):
     """One structured KGX contract violation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     code: str
     entity_kind: str  # "node" | "edge"
@@ -218,12 +220,12 @@ class ContractProblem:
         return f"[{self.code}] {self.message}"
 
 
-@dataclass
-class ContractReport:
+class ContractReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     ok: bool
-    tables: dict[str, dict[str, object]] = field(default_factory=dict)
-    problems: list[str] = field(default_factory=list)
-    kgx_problems: list[ContractProblem] = field(default_factory=list)
+    tables: dict[str, dict[str, object]] = Field(default_factory=dict)
+    problems: list[str] = Field(default_factory=list)
+    kgx_problems: list[ContractProblem] = Field(default_factory=list)
 
 
 def validate(assertion_refs: list[ArtifactRef]) -> ContractReport:
@@ -322,17 +324,21 @@ def _check_node(
     if not node_id:
         problems.append(
             ContractProblem(
-                MISSING_NODE_FIELD,
-                "node",
-                entity_id,
-                "id",
-                f"node {entity_id} missing required field: id",
+                code=MISSING_NODE_FIELD,
+                entity_kind="node",
+                entity_id=entity_id,
+                field="id",
+                message=f"node {entity_id} missing required field: id",
             )
         )
     elif node_id in seen_ids:
         problems.append(
             ContractProblem(
-                DUPLICATE_NODE_ID, "node", entity_id, "id", f"duplicate node id: {node_id}"
+                code=DUPLICATE_NODE_ID,
+                entity_kind="node",
+                entity_id=entity_id,
+                field="id",
+                message=f"duplicate node id: {node_id}",
             )
         )
     else:
@@ -341,11 +347,11 @@ def _check_node(
     if not _as_str(node.get("name")):
         problems.append(
             ContractProblem(
-                MISSING_NODE_FIELD,
-                "node",
-                entity_id,
-                "name",
-                f"node {entity_id} missing required field: name",
+                code=MISSING_NODE_FIELD,
+                entity_kind="node",
+                entity_id=entity_id,
+                field="name",
+                message=f"node {entity_id} missing required field: name",
             )
         )
 
@@ -353,11 +359,11 @@ def _check_node(
     if not isinstance(category, list) or not category:
         problems.append(
             ContractProblem(
-                INVALID_NODE_CATEGORY,
-                "node",
-                entity_id,
-                "category",
-                f"node {entity_id} category must be a non-empty list",
+                code=INVALID_NODE_CATEGORY,
+                entity_kind="node",
+                entity_id=entity_id,
+                field="category",
+                message=f"node {entity_id} category must be a non-empty list",
             )
         )
         return
@@ -369,11 +375,11 @@ def _check_node(
     if bad:
         problems.append(
             ContractProblem(
-                INVALID_NODE_CATEGORY,
-                "node",
-                entity_id,
-                "category",
-                f"node {entity_id} category entries must use the biolink: prefix: {bad}",
+                code=INVALID_NODE_CATEGORY,
+                entity_kind="node",
+                entity_id=entity_id,
+                field="category",
+                message=f"node {entity_id} category entries must use the biolink: prefix: {bad}",
             )
         )
 
@@ -390,17 +396,21 @@ def _check_edge(
     if not edge_id:
         problems.append(
             ContractProblem(
-                MISSING_EDGE_FIELD,
-                "edge",
-                entity_id,
-                "id",
-                f"edge {entity_id} missing required field: id",
+                code=MISSING_EDGE_FIELD,
+                entity_kind="edge",
+                entity_id=entity_id,
+                field="id",
+                message=f"edge {entity_id} missing required field: id",
             )
         )
     elif edge_id in seen_ids:
         problems.append(
             ContractProblem(
-                DUPLICATE_EDGE_ID, "edge", entity_id, "id", f"duplicate edge id: {edge_id}"
+                code=DUPLICATE_EDGE_ID,
+                entity_kind="edge",
+                entity_id=entity_id,
+                field="id",
+                message=f"duplicate edge id: {edge_id}",
             )
         )
     else:
@@ -411,21 +421,21 @@ def _check_edge(
         if not _as_str(edge.get(field_name)):
             problems.append(
                 ContractProblem(
-                    MISSING_EDGE_FIELD,
-                    "edge",
-                    entity_id,
-                    field_name,
-                    f"edge {entity_id} missing required field: {field_name}",
+                    code=MISSING_EDGE_FIELD,
+                    entity_kind="edge",
+                    entity_id=entity_id,
+                    field=field_name,
+                    message=f"edge {entity_id} missing required field: {field_name}",
                 )
             )
     if not _category_set(edge):
         problems.append(
             ContractProblem(
-                MISSING_EDGE_FIELD,
-                "edge",
-                entity_id,
-                "category",
-                f"edge {entity_id} category must be a non-empty list",
+                code=MISSING_EDGE_FIELD,
+                entity_kind="edge",
+                entity_id=entity_id,
+                field="category",
+                message=f"edge {entity_id} category must be a non-empty list",
             )
         )
 
@@ -434,11 +444,11 @@ def _check_edge(
     if predicate and family is None:
         problems.append(
             ContractProblem(
-                INVALID_PREDICATE,
-                "edge",
-                entity_id,
-                "predicate",
-                f"edge {entity_id} predicate {predicate!r} is not a DAKP edge family",
+                code=INVALID_PREDICATE,
+                entity_kind="edge",
+                entity_id=entity_id,
+                field="predicate",
+                message=f"edge {entity_id} predicate {predicate!r} is not a DAKP edge family",
             )
         )
 
@@ -450,32 +460,32 @@ def _check_edge(
     if subject and subject_node is None:
         problems.append(
             ContractProblem(
-                MISSING_NODE_REFERENCE,
-                "edge",
-                entity_id,
-                "subject",
-                f"edge {entity_id} subject {subject!r} not found in nodes",
+                code=MISSING_NODE_REFERENCE,
+                entity_kind="edge",
+                entity_id=entity_id,
+                field="subject",
+                message=f"edge {entity_id} subject {subject!r} not found in nodes",
             )
         )
     if obj and object_node is None:
         problems.append(
             ContractProblem(
-                MISSING_NODE_REFERENCE,
-                "edge",
-                entity_id,
-                "object",
-                f"edge {entity_id} object {obj!r} not found in nodes",
+                code=MISSING_NODE_REFERENCE,
+                entity_kind="edge",
+                entity_id=entity_id,
+                field="object",
+                message=f"edge {entity_id} object {obj!r} not found in nodes",
             )
         )
     if family is not None:
         if not (_category_set(edge) & _PINNED_SET):
             problems.append(
                 ContractProblem(
-                    INCOMPATIBLE_EDGE_CATEGORY,
-                    "edge",
-                    entity_id,
-                    "category",
-                    f"edge {entity_id} category must be one of the pinned association classes {PINNED_EDGE_CATEGORIES} for {predicate}, "
+                    code=INCOMPATIBLE_EDGE_CATEGORY,
+                    entity_kind="edge",
+                    entity_id=entity_id,
+                    field="category",
+                    message=f"edge {entity_id} category must be one of the pinned association classes {PINNED_EDGE_CATEGORIES} for {predicate}, "
                     f"not {sorted(_category_set(edge))} (bare biolink:Association means the row escaped the category pin and its evidence slots were pruned into has_supporting_studies)",
                 )
             )
@@ -497,22 +507,22 @@ def _check_edge(
             if relocated:
                 problems.append(
                     ContractProblem(
-                        INVALID_SUPPORTING_STUDIES,
-                        "edge",
-                        entity_id,
-                        "has_supporting_studies",
-                        f"edge {entity_id} relocated {relocated} value(s) into has_supporting_studies descriptions — "
+                        code=INVALID_SUPPORTING_STUDIES,
+                        entity_kind="edge",
+                        entity_id=entity_id,
+                        field="has_supporting_studies",
+                        message=f"edge {entity_id} relocated {relocated} value(s) into has_supporting_studies descriptions — "
                         "evidence slots pruned off the edge into the study junk drawer",
                     )
                 )
         if subject_node is not None and not (_category_set(subject_node) & _CHEMICAL_SET):
             problems.append(
                 ContractProblem(
-                    INCOMPATIBLE_SUBJECT_CATEGORY,
-                    "edge",
-                    entity_id,
-                    "subject",
-                    f"edge {entity_id} subject {subject!r} categories are not chemical/drug for {predicate}",
+                    code=INCOMPATIBLE_SUBJECT_CATEGORY,
+                    entity_kind="edge",
+                    entity_id=entity_id,
+                    field="subject",
+                    message=f"edge {entity_id} subject {subject!r} categories are not chemical/drug for {predicate}",
                 )
             )
         # Composition is the one family whose object is a CHEMICAL, not a disease.
@@ -527,11 +537,11 @@ def _check_edge(
         if object_node is not None and not (_category_set(object_node) & expected_object):
             problems.append(
                 ContractProblem(
-                    INCOMPATIBLE_OBJECT_CATEGORY,
-                    "edge",
-                    entity_id,
-                    "object",
-                    f"edge {entity_id} object {obj!r} categories are not {object_label} for {predicate}",
+                    code=INCOMPATIBLE_OBJECT_CATEGORY,
+                    entity_kind="edge",
+                    entity_id=entity_id,
+                    field="object",
+                    message=f"edge {entity_id} object {obj!r} categories are not {object_label} for {predicate}",
                 )
             )
 
@@ -542,11 +552,11 @@ def _check_edge(
     if not has_primary and not has_sources:
         problems.append(
             ContractProblem(
-                MISSING_PROVENANCE,
-                "edge",
-                entity_id,
-                "primary_knowledge_source/sources",
-                f"edge {entity_id} has neither primary_knowledge_source nor sources",
+                code=MISSING_PROVENANCE,
+                entity_kind="edge",
+                entity_id=entity_id,
+                field="primary_knowledge_source/sources",
+                message=f"edge {entity_id} has neither primary_knowledge_source nor sources",
             )
         )
     else:
@@ -567,21 +577,21 @@ def _check_edge(
                 )
                 problems.append(
                     ContractProblem(
-                        MISSING_PROVENANCE,
-                        "edge",
-                        entity_id,
-                        "sources",
-                        f"edge {entity_id} missing provenance infores for {predicate}: {missing}",
+                        code=MISSING_PROVENANCE,
+                        entity_kind="edge",
+                        entity_id=entity_id,
+                        field="sources",
+                        message=f"edge {entity_id} missing provenance infores for {predicate}: {missing}",
                     )
                 )
         elif INFORES_DAKP not in infores:
             problems.append(
                 ContractProblem(
-                    MISSING_PROVENANCE,
-                    "edge",
-                    entity_id,
-                    "primary_knowledge_source",
-                    f"edge {entity_id} missing DAKP infores {INFORES_DAKP}",
+                    code=MISSING_PROVENANCE,
+                    entity_kind="edge",
+                    entity_id=entity_id,
+                    field="primary_knowledge_source",
+                    message=f"edge {entity_id} missing DAKP infores {INFORES_DAKP}",
                 )
             )
 
@@ -628,11 +638,11 @@ def validate_kgx(
                     entity_id = _as_str(edge.get("id")) or f"<edge#{index}>"
                     problems.append(
                         ContractProblem(
-                            INVALID_OBSERVED_APPROVALS,
-                            "edge",
-                            entity_id,
-                            field,
-                            f"edge {entity_id} carries {field} on an observed-use edge",
+                            code=INVALID_OBSERVED_APPROVALS,
+                            entity_kind="edge",
+                            entity_id=entity_id,
+                            field=field,
+                            message=f"edge {entity_id} carries {field} on an observed-use edge",
                         )
                     )
         if (
@@ -643,11 +653,11 @@ def validate_kgx(
             entity_id = _as_str(edge.get("id")) or f"<edge#{index}>"
             problems.append(
                 ContractProblem(
-                    INVALID_APPROVAL_STATUS,
-                    "edge",
-                    entity_id,
-                    "clinical_approval_status",
-                    f"edge {entity_id} has a resolved treats counterpart but is not {APPROVED}",
+                    code=INVALID_APPROVAL_STATUS,
+                    entity_kind="edge",
+                    entity_id=entity_id,
+                    field="clinical_approval_status",
+                    message=f"edge {entity_id} has a resolved treats counterpart but is not {APPROVED}",
                 )
             )
 
@@ -669,8 +679,7 @@ def validate_kgx(
 # --- legacy-informed regression guardrails -----------------------------------------
 
 
-@dataclass(frozen=True)
-class FamilyInvariant:
+class FamilyInvariant(BaseModel):
     """The legacy provenance/label contract one edge family must preserve.
 
     ``alternative_upstream`` lists acceptable per-row upstream chains BEYOND the canonical
@@ -679,6 +688,8 @@ class FamilyInvariant:
     the FDA ``dailymed|faers`` chain; the contraindicated-in family unions EU SmPC rows, which
     carry ``infores:epar`` (SmPC section-mined rows) instead of the DailyMed chain.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     predicate: str
     required_upstream: frozenset[str]
@@ -690,26 +701,28 @@ class FamilyInvariant:
 # Insertion order is the canonical family order.
 FAMILY_INVARIANTS: dict[str, FamilyInvariant] = {
     PREDICATE_TREATS: FamilyInvariant(
-        PREDICATE_TREATS,
-        frozenset({INFORES_DAILYMED, INFORES_FAERS}),
-        frozenset({"approved_for_condition"}),
-        "knowledge_assertion",
+        predicate=PREDICATE_TREATS,
+        required_upstream=frozenset({INFORES_DAILYMED, INFORES_FAERS}),
+        clinical_approval_status=frozenset({"approved_for_condition"}),
+        knowledge_level="knowledge_assertion",
         alternative_upstream=(frozenset({INFORES_EMA}), frozenset({INFORES_EPAR})),
     ),
     # applied_to_treat: approved_for_condition (treats counterpart) / off_label_use (none) /
     # not_provided (no approved-treats table to check against — degraded mode).
     PREDICATE_APPLIED_TO_TREAT: FamilyInvariant(
-        PREDICATE_APPLIED_TO_TREAT,
-        frozenset({INFORES_FAERS}),
-        frozenset({"approved_for_condition", "off_label_use", "not_provided"}),
-        "statistical_association",
+        predicate=PREDICATE_APPLIED_TO_TREAT,
+        required_upstream=frozenset({INFORES_FAERS}),
+        clinical_approval_status=frozenset(
+            {"approved_for_condition", "off_label_use", "not_provided"}
+        ),
+        knowledge_level="statistical_association",
         alternative_upstream=(frozenset({INFORES_CANADA_VIGILANCE, INFORES_DAILYMED}),),
     ),
     PREDICATE_CONTRAINDICATED_IN: FamilyInvariant(
-        PREDICATE_CONTRAINDICATED_IN,
-        frozenset({INFORES_DAILYMED}),
-        None,
-        "knowledge_assertion",
+        predicate=PREDICATE_CONTRAINDICATED_IN,
+        required_upstream=frozenset({INFORES_DAILYMED}),
+        clinical_approval_status=None,
+        knowledge_level="knowledge_assertion",
         # EU SmPC rows carry the infores:epar chain (approved_treats' EMA conventions).
         alternative_upstream=(frozenset({INFORES_EPAR}),),
     ),
@@ -717,10 +730,10 @@ FAMILY_INVARIANTS: dict[str, FamilyInvariant] = {
     # Rows name exactly their contributing FDA source(s) since the shaper tracks contributors,
     # so any non-empty subset is valid; an edge with no FDA source at all still fails.
     PREDICATE_HAS_ACTIVE_INGREDIENT: FamilyInvariant(
-        PREDICATE_HAS_ACTIVE_INGREDIENT,
-        frozenset({INFORES_DAILYMED}),
-        None,
-        "knowledge_assertion",
+        predicate=PREDICATE_HAS_ACTIVE_INGREDIENT,
+        required_upstream=frozenset({INFORES_DAILYMED}),
+        clinical_approval_status=None,
+        knowledge_level="knowledge_assertion",
         alternative_upstream=(
             frozenset({INFORES_DRUGS_AT_FDA}),
             frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
@@ -731,26 +744,28 @@ FAMILY_INVARIANTS: dict[str, FamilyInvariant] = {
 EXPECTED_FAMILIES: tuple[str, ...] = tuple(FAMILY_INVARIANTS)
 
 
-@dataclass(frozen=True)
-class RegressionViolation:
+class RegressionViolation(BaseModel):
     """One invariant broken by one or more rows of a family."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     family: str
     invariant: str
     message: str
 
 
-@dataclass
-class RegressionReport:
+class RegressionReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     ok: bool
-    families_seen: list[str] = field(default_factory=list)
+    families_seen: list[str] = Field(default_factory=list)
     row_count: int = 0
-    violations: list[RegressionViolation] = field(default_factory=list)
+    violations: list[RegressionViolation] = Field(default_factory=list)
 
 
-@dataclass
-class _Offender:
+class _Offender(BaseModel):
     """Mutable per-(family, invariant) aggregation bucket."""
+
+    model_config = ConfigDict(extra="forbid")
 
     count: int
     example: str
@@ -847,7 +862,9 @@ def check_rows(rows: Iterable[Mapping[str, object]]) -> RegressionReport:
                 )
 
     violations = [
-        RegressionViolation(family, invariant, f"{bucket.count} row(s): {bucket.example}")
+        RegressionViolation(
+            family=family, invariant=invariant, message=f"{bucket.count} row(s): {bucket.example}"
+        )
         for (family, invariant), bucket in sorted(offenders.items())
     ]
     return RegressionReport(

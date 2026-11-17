@@ -43,7 +43,7 @@ def _ctx(
     tmp_path: Path, *, fixture_root: Path | None = _FIXTURE_ROOT, **params: Any
 ) -> TaskContext:
     wd = tmp_path / "work"
-    Workdir(wd).create()
+    Workdir(root=wd).create()
     return TaskContext(workdir=wd, fixture_root=fixture_root, params=params)
 
 
@@ -237,13 +237,13 @@ def test_faers_download_quarter_ingests_via_monkeypatched_http(
     monkeypatch.setattr(faers, "_http_download", fake_http_download)
     ctx = _ctx(tmp_path)
     ref = faers.FAERSFetcher().download_quarter(
-        ctx, faers.QuarterSource("24Q3", "https://x/faers_ascii_2024q3.zip")
+        ctx, faers.QuarterSource(quarter="24Q3", url="https://x/faers_ascii_2024q3.zip")
     )
     assert ref.uri.exists()
     assert ref.blake3.startswith("b3:")
     # Idempotent: re-download identical bytes is a cache hit (same id).
     ref2 = faers.FAERSFetcher().download_quarter(
-        ctx, faers.QuarterSource("24Q3", "https://x/faers_ascii_2024q3.zip")
+        ctx, faers.QuarterSource(quarter="24Q3", url="https://x/faers_ascii_2024q3.zip")
     )
     assert ref2.blake3 == ref.blake3
 
@@ -564,7 +564,7 @@ def test_dailymed_release_304_without_cache_returns_empty(tmp_path: Path) -> Non
     # No alias recorded for this release -> cached_ref None -> ([], missing=True) on a 304:
     # the release is absent from this run and MUST reach the coverage floor (bugfix: it
     # used to report not-missing and silently hollow out the corpus).
-    staging = Workdir(store.workdir.root).root / ".staging" / "dailymed"
+    staging = Workdir(root=store.workdir.root).root / ".staging" / "dailymed"
     staging.mkdir(parents=True, exist_ok=True)
 
     def fake_conditional(url: str, dest: Path, source: Any) -> tuple[None, None]:
@@ -582,7 +582,7 @@ def test_dailymed_release_304_without_cache_returns_empty(tmp_path: Path) -> Non
 
 
 def _store_for(tmp_path: Path) -> ArtifactStore:
-    wd = Workdir(tmp_path / "work")
+    wd = Workdir(root=tmp_path / "work")
     wd.create()
     return ArtifactStore(wd)
 
@@ -643,7 +643,9 @@ def test_dailymed_missing_completion_record_reexpands_without_download(
     ctx = _ctx(tmp_path)
     first = dailymed.fetch(ctx)
     marker = (
-        Workdir(ctx.workdir).aliases / "dailymed" / "dm_spl_release_human_rx_part1.zip.members.json"
+        Workdir(root=ctx.workdir).aliases
+        / "dailymed"
+        / "dm_spl_release_human_rx_part1.zip.members.json"
     )
     marker.unlink()
     requests.clear()
@@ -732,7 +734,7 @@ def test_dailymed_fresh_gate_falls_through_when_cache_vanishes(
     # If the cached ZIP disappears between the age check and the reuse, the gate falls through to
     # the download flow (here simulated as a 304 with no cache -> missing, coverage floor applies).
     store = _store_for(tmp_path)
-    staging = Workdir(store.workdir.root).root / ".staging" / "dailymed"
+    staging = Workdir(root=store.workdir.root).root / ".staging" / "dailymed"
     staging.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(dailymed, "_release_age_days", lambda *args, **kwargs: 0.0)
 
@@ -804,7 +806,7 @@ def test_cached_ref_missing_alias_and_path(tmp_path: Path) -> None:
     store = _store_for(tmp_path)
     assert store.cached_ref("dailymed/absent.zip") is None  # no alias
     # Alias present but sibling .path pointer missing -> None.
-    wd = Workdir(store.workdir.root)
+    wd = Workdir(root=store.workdir.root)
     alias_file = wd.aliases / "dailymed" / "half.zip"
     alias_file.parent.mkdir(parents=True, exist_ok=True)
     alias_file.write_text("b3:deadbeef", encoding="utf-8")
@@ -813,7 +815,7 @@ def test_cached_ref_missing_alias_and_path(tmp_path: Path) -> None:
 
 def test_dailymed_prior_source_none_when_manifest_absent(tmp_path: Path) -> None:
     store = _store_for(tmp_path)
-    wd = Workdir(store.workdir.root)
+    wd = Workdir(root=store.workdir.root)
     alias_file = wd.aliases / "dailymed" / "ghost.zip"
     alias_file.parent.mkdir(parents=True, exist_ok=True)
     alias_file.write_text("b3:" + "f" * 64, encoding="utf-8")  # alias points at an unknown artifact

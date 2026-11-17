@@ -278,8 +278,8 @@ class _FakeNER:
     def extract(self, text: str) -> list[Mention]:
         start = text.index("asthma")
         return [
-            Mention("asthma", start, start + 6, TYPE_DISEASE, 1.0),
-            Mention("asthma", start, start + 6, "BiologicalSex", 1.0),
+            Mention(text="asthma", start=start, end=start + 6, type=TYPE_DISEASE, score=1.0),
+            Mention(text="asthma", start=start, end=start + 6, type="BiologicalSex", score=1.0),
         ]
 
 

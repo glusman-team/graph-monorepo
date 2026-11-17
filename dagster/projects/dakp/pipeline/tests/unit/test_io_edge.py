@@ -6,7 +6,7 @@ Targets the error/defensive branches the happy-path suite never reaches:
   ``is_tree=True`` registration path (tree hash, no file hash / no SRI), cache hit vs
   miss, alias + ``.path`` pointer writes, tree-hash determinism + empty dir.
 * ``contracts`` — ``TaskContext.fixture`` with a ``None`` fixture_root (ValueError) and a
-  missing fixture (FileNotFoundError); frozen-dataclass reprs/equality.
+  missing fixture (FileNotFoundError); frozen-model reprs/equality.
 * ``downloads`` — ``infer_media_type`` compound/unknown/uppercase suffixes.
 * ``schemas`` — ``columns_for`` unknown-table KeyError + registry-copy isolation,
   ``read_table`` parquet-vs-TSV dispatch, fingerprint order-sensitivity, count-column
@@ -17,11 +17,11 @@ Targets the error/defensive branches the happy-path suite never reaches:
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 import polars as pl
 import pytest
+from pydantic import ValidationError
 
 from dakp_pipeline.io import contracts, downloads, manifests, schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
@@ -46,7 +46,7 @@ from dakp_pipeline.paths import Workdir
 
 
 def _store(tmp_path: Path) -> ArtifactStore:
-    wd = Workdir(tmp_path / "work")
+    wd = Workdir(root=tmp_path / "work")
     wd.create()
     return ArtifactStore(wd)
 
@@ -87,7 +87,7 @@ def test_ingest_writes_alias_id_and_path_pointer(tmp_path: Path) -> None:
     src = tmp_path / "f.txt"
     src.write_text("hello", encoding="utf-8")
     ref, _ = store.ingest(src, alias="ns/dir/f.txt")
-    wd = Workdir(store.workdir.root)
+    wd = Workdir(root=store.workdir.root)
     assert (wd.aliases / "ns/dir/f.txt").read_text(encoding="utf-8") == ref.blake3
     assert Path((wd.aliases / "ns/dir/f.txt.path").read_text(encoding="utf-8")) == ref.uri
 
@@ -105,7 +105,7 @@ def test_ingest_infers_media_type_when_unspecified(tmp_path: Path) -> None:
 
 def test_register_in_place_records_file_hash_and_sri(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    out = Workdir(store.workdir.root).interim / "t.parquet"
+    out = Workdir(root=store.workdir.root).interim / "t.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
     pl.DataFrame({"a": ["1"]}).write_parquet(out)
     ref = store.register(
@@ -127,7 +127,7 @@ def test_register_in_place_records_file_hash_and_sri(tmp_path: Path) -> None:
 
 def test_register_is_tree_uses_tree_hash_and_no_sri(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    tree_dir = Workdir(store.workdir.root).store / "tree"
+    tree_dir = Workdir(root=store.workdir.root).store / "tree"
     (tree_dir / "sub").mkdir(parents=True)
     (tree_dir / "sub" / "one.txt").write_text("1", encoding="utf-8")
     (tree_dir / "two.txt").write_text("22", encoding="utf-8")
@@ -191,7 +191,7 @@ def test_hash_tree_does_not_recurse_into_symlinked_dirs(tmp_path: Path) -> None:
     assert hash_tree(root) == hash_tree(bare)
 
 
-# --- contracts: TaskContext.fixture error paths + dataclass semantics ----------
+# --- contracts: TaskContext.fixture error paths + model semantics --------------
 
 
 def _ctx(tmp_path: Path, fixture_root: Path | None) -> TaskContext:
@@ -226,7 +226,7 @@ def test_artifactref_is_frozen_and_hashable(tmp_path: Path) -> None:
     assert ref.rows is None
     assert ref.schema_fingerprint is None
     assert ref.manifest is None
-    with pytest.raises(dataclasses.FrozenInstanceError):  # frozen dataclass rejects assignment
+    with pytest.raises(ValidationError):  # frozen model rejects assignment
         ref.rows = 5  # type: ignore[misc]
     # Hashable (usable in sets / dict keys) and repr-able.
     assert {ref} == {ref}

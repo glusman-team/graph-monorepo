@@ -32,7 +32,7 @@ def _ctx(workdir: Path) -> TaskContext:
 
 
 def _ingest(workdir: Path, names: tuple[str, ...]) -> list[ArtifactRef]:
-    store = ArtifactStore(Workdir(workdir))
+    store = ArtifactStore(Workdir(root=workdir))
     refs: list[ArtifactRef] = []
     for name in names:
         ref, _ = store.ingest(_DRUGSFDA_FIXTURE_DIR / name, alias=f"drugsfda/{name}")
@@ -43,7 +43,7 @@ def _ingest(workdir: Path, names: tuple[str, ...]) -> list[ArtifactRef]:
 def _extract(
     tmp_path: Path, names: tuple[str, ...] = _ALL_FIXTURES
 ) -> tuple[list[ArtifactRef], Workdir]:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     ctx = _ctx(workdir.root)
     refs = ext.extract(_ingest(workdir.root, names), ctx)
@@ -102,7 +102,7 @@ def test_parses_combined_applicationnumber_column(tmp_path: Path) -> None:
     )
     src = tmp_path / "ndc_products.tsv"
     src.write_text(tsv, encoding="utf-8")
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     store = ArtifactStore(workdir)
     ref, _ = store.ingest(src, alias="drugsfda/ndc_products.tsv")
@@ -270,7 +270,7 @@ def test_parses_zip_member_inputs(tmp_path: Path) -> None:
         for name in _ALL_FIXTURES:
             arcname = name.replace("drugsfda_", "").capitalize()  # Products.tsv etc.
             archive.write(_DRUGSFDA_FIXTURE_DIR / name, arcname=arcname)
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     store = ArtifactStore(workdir)
     ref, _ = store.ingest(zip_path, alias="drugsfda/drugsfda_data_files.zip")
@@ -287,7 +287,7 @@ def test_parses_zip_member_inputs(tmp_path: Path) -> None:
 
 
 def test_empty_input_emits_only_warnings(tmp_path: Path) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     refs = ext.extract([], _ctx(workdir.root))
     assert len(refs) == 1
@@ -339,7 +339,7 @@ def test_dirty_cp1252_submissions_extract_to_valid_utf8(tmp_path: Path) -> None:
     )
     src = tmp_path / "Submissions.txt"
     src.write_bytes(dirty)
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     store = ArtifactStore(workdir)
     ref, _ = store.ingest(src, alias="drugsfda/Submissions.txt")

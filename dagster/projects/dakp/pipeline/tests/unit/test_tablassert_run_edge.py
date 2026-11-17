@@ -45,7 +45,10 @@ def test_find_graph_falls_back_to_conventional_path(tmp_path: Path) -> None:
         blake3="b3:" + "0" * 64,
         media_type="application/yaml",
     )
-    assert _find_graph([other], _ctx(tmp_path)) == Workdir(tmp_path).root / "tables" / "graph.yaml"
+    assert (
+        _find_graph([other], _ctx(tmp_path))
+        == Workdir(root=tmp_path).root / "tables" / "graph.yaml"
+    )
 
 
 def test_find_graph_prefers_the_graph_ref(tmp_path: Path) -> None:

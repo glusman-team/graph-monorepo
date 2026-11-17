@@ -165,7 +165,7 @@ def test_multi_nda_for_same_subject_object_aggregates_approvals(
     assert row["FDA_regulatory_approvals"] == ""
 
     # With the Drugs@FDA register, each number resolves to its FDA form.
-    index = FDAApprovalIndex({"12345": ("NDA012345",), "99998": ("BLA099998",)})
+    index = FDAApprovalIndex(displays={"12345": ("NDA012345",), "99998": ("BLA099998",)})
     expanded = build_approved_treats_rows(cases, ev, mapping, disease_map, approvals=index)
     assert expanded[0]["FDA_regulatory_approvals"] == "BLA099998|NDA012345"
     assert (

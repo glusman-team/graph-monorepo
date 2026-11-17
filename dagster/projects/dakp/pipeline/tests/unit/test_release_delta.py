@@ -25,7 +25,7 @@ from dakp_pipeline.release.state import (
 
 
 def _refs(workdir: Path, source: str, contents: list[bytes], date: str) -> list:
-    store = ArtifactStore(Workdir(workdir))
+    store = ArtifactStore(Workdir(root=workdir))
     refs = []
     for index, content in enumerate(contents):
         path = workdir / "downloads" / f"{source}-{index}.bin"
@@ -61,7 +61,9 @@ def test_delta_only_reports_changed_sources_and_pregenerates_message(tmp_path: P
     old_faers = SourceFingerprint.from_refs(_refs(tmp_path, "faers", [b"old"], "2026-07-30"))
     new_faers = SourceFingerprint.from_refs(_refs(tmp_path, "faers-new", [b"new"], "2026-10-28"))
     previous = ReleaseState(
-        "1.27.0", "2026-11-01T00:00:00+00:00", {"DailyMed": daily, "FAERS": old_faers}
+        version="1.27.0",
+        published_at="2026-11-01T00:00:00+00:00",
+        sources={"DailyMed": daily, "FAERS": old_faers},
     )
     delta = compute_delta({"DailyMed": daily, "FAERS": new_faers}, previous, check_run_id="run-1")
     assert delta.changed
@@ -73,7 +75,9 @@ def test_no_delta_message_never_implies_a_release(tmp_path: Path) -> None:
     current = {
         "DailyMed": SourceFingerprint.from_refs(_refs(tmp_path, "daily", [b"same"], "2026-11-04"))
     }
-    previous = ReleaseState("1.27.0", "2026-11-01T00:00:00+00:00", current)
+    previous = ReleaseState(
+        version="1.27.0", published_at="2026-11-01T00:00:00+00:00", sources=current
+    )
     delta = compute_delta(current, previous)
     assert not delta.changed
     assert delta.message.startswith("New data for 0 sources")
@@ -101,7 +105,12 @@ def test_state_and_pending_delta_round_trip(tmp_path: Path) -> None:
     assert loaded_delta.current == current
     assert loaded_delta.message == delta.message
 
-    state = ReleaseState("1.27.1", "2026-11-07T00:00:00+00:00", current, {"nodes": 10, "edges": 20})
+    state = ReleaseState(
+        version="1.27.1",
+        published_at="2026-11-07T00:00:00+00:00",
+        sources=current,
+        kg={"nodes": 10, "edges": 20},
+    )
     write_state(state_path(tmp_path), state)
     assert load_state(state_path(tmp_path)) == state
     assert load_state(tmp_path / "missing.json") is None
@@ -120,7 +129,9 @@ def test_empty_or_vanished_sources_fail_instead_of_publishing(tmp_path: Path) ->
     with pytest.raises(ValueError, match="zero artifacts"):
         compute_delta({"DailyMed": SourceFingerprint.from_refs([])}, None)
     previous = ReleaseState(
-        "1.27.0", "2026-11-01T00:00:00+00:00", {"DailyMed": daily, "FAERS": daily}
+        version="1.27.0",
+        published_at="2026-11-01T00:00:00+00:00",
+        sources={"DailyMed": daily, "FAERS": daily},
     )
     with pytest.raises(ValueError, match="absent"):
         compute_delta({"DailyMed": daily}, previous)

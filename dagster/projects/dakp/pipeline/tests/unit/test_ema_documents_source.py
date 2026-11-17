@@ -31,7 +31,7 @@ _ALIAS = ema_documents.DOCUMENTS_ALIAS
 
 
 def _ctx(workdir: Path, **params: object) -> TaskContext:
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     return TaskContext(workdir=workdir, fixture_root=_FIXTURE_ROOT, params=dict(params))
 
 
@@ -45,7 +45,7 @@ def _fake_download(calls: list[str]):
 
 
 def _store_for(workdir: Path) -> ArtifactStore:
-    return ArtifactStore(Workdir(workdir))
+    return ArtifactStore(Workdir(root=workdir))
 
 
 def _age_cached(store: ArtifactStore, *, days: float) -> None:

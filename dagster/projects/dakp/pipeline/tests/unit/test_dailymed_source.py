@@ -97,7 +97,7 @@ def test_write_refs_manifest_round_trip(tmp_path: Path) -> None:
     the Go ReadRefsFile mirror) resolve it back to the identical refs.
     """
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     refs = [
         ArtifactRef(uri=tmp_path / "a.xml.gz", blake3="b3:aaa", media_type="application/gzip"),
         ArtifactRef(uri=tmp_path / "b.xml", blake3="b3:bbb", media_type="application/xml"),
@@ -169,8 +169,8 @@ def test_download_one_404_without_cache_is_a_missing_skip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A listed-but-absent release with no cached copy yields ([], missing=True), no raise."""
-    Workdir(tmp_path / "work").create()
-    store = ArtifactStore(Workdir(tmp_path / "work"))
+    Workdir(root=tmp_path / "work").create()
+    store = ArtifactStore(Workdir(root=tmp_path / "work"))
 
     def boom(url: str, dest: Path, source: SourceBlock | None) -> tuple[str | None, str | None]:
         raise _http_error(404)
@@ -190,8 +190,8 @@ def test_download_one_404_reuses_stale_cached_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A 404 release with a stale cached copy is served from cache, not skipped."""
-    Workdir(tmp_path / "work").create()
-    store = ArtifactStore(Workdir(tmp_path / "work"))
+    Workdir(root=tmp_path / "work").create()
+    store = ArtifactStore(Workdir(root=tmp_path / "work"))
     stale = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     name = "dm_spl_release_human_otc_part12.zip"
     _seed_release(store, tmp_path, name, retrieved_at=stale)
@@ -225,8 +225,8 @@ def test_download_one_non_404_http_error_still_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only 404 is tolerated; a 500 still fails the release loudly."""
-    Workdir(tmp_path / "work").create()
-    store = ArtifactStore(Workdir(tmp_path / "work"))
+    Workdir(root=tmp_path / "work").create()
+    store = ArtifactStore(Workdir(root=tmp_path / "work"))
 
     def boom(url: str, dest: Path, source: SourceBlock | None) -> tuple[str | None, str | None]:
         raise _http_error(500)
@@ -298,7 +298,7 @@ def test_download_full_release_tolerates_a_broken_tail_shard(
 ) -> None:
     """End to end: one small declared release 404s, the rest of the corpus still acquires."""
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     html = (
         "<html><h2>Full Releases</h2>"
         '<a href="https://x/a.zip">a</a><ul><li><strong>Number of files:</strong> 9,000</li></ul>'
@@ -330,7 +330,7 @@ def test_download_full_release_fails_when_a_big_part_goes_missing(
 ) -> None:
     """End to end: a 404 release carrying most of the declared corpus fails the acquisition."""
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     html = (
         "<html><h2>Full Releases</h2>"
         '<a href="https://x/a.zip">a</a><ul><li><strong>Number of files:</strong> 9,000</li></ul>'
@@ -372,7 +372,7 @@ def test_download_one_304_without_cached_copy_counts_as_missing(
         return None, None
 
     monkeypatch.setattr(dailymed, "_conditional_download", _not_modified)
-    wd = Workdir(tmp_path / "work")
+    wd = Workdir(root=tmp_path / "work")
     wd.create()
     store = ArtifactStore(wd)
     staging = wd.root / ".staging" / "dailymed"

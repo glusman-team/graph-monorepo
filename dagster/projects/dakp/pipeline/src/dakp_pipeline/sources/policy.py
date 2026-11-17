@@ -9,8 +9,9 @@ source acquisition.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
 
@@ -18,8 +19,8 @@ SourceRefresh = Literal["auto", "cached", "force"]
 _VALID_MODES = frozenset({"auto", "cached", "force"})
 
 
-@dataclass(frozen=True)
-class SourcePolicy:
+class SourcePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     mode: SourceRefresh
     max_age_days: float | None
 

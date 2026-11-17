@@ -68,14 +68,24 @@ def _ingredients(tmp_path: Path, rows: list[tuple[str, str, str, str]]) -> Artif
 
 
 def test_first_overlapping_span_wins_for_overlapping_spans() -> None:
-    mention = Mention("asthma", 10, 16, "Disease", 1.0)
+    mention = Mention(text="asthma", start=10, end=16, type="Disease", score=1.0)
     # Both spans overlap the mention; the FIRST one (source offset 100) must win, exactly as
     # the original linear scan did.
     spans = (
-        EvidenceSpan(8, 21, 100, 113, "severe asthma"),
-        EvidenceSpan(12, 24, 200, 212, "asthma attack"),
+        EvidenceSpan(
+            mined_start=8, mined_end=21, source_start=100, source_end=113, text="severe asthma"
+        ),
+        EvidenceSpan(
+            mined_start=12, mined_end=24, source_start=200, source_end=212, text="asthma attack"
+        ),
     )
-    item = ContraWorkItem("SET", "DOC", "mined text", "source text", spans)
+    item = ContraWorkItem(
+        set_id="SET",
+        doc_id="DOC",
+        text="mined text",
+        source_text="source text",
+        evidence_spans=spans,
+    )
     assert _mention_local_span(item, mention) == ("severe asthma", 2, 8, 100)
     assert _work_item_evidence(item, mention) == "severe asthma"
     memo: dict[Mention, EvidenceSpan | None] = {}
@@ -88,14 +98,20 @@ def test_first_overlapping_span_wins_for_overlapping_spans() -> None:
 
 def test_equal_mention_values_share_one_span_answer() -> None:
     item = ContraWorkItem(
-        "SET",
-        "DOC",
-        "asthma risk noted",
-        "asthma risk noted",
-        (EvidenceSpan(0, 17, 0, 17, "asthma risk noted"),),
+        set_id="SET",
+        doc_id="DOC",
+        text="asthma risk noted",
+        source_text="asthma risk noted",
+        evidence_spans=(
+            EvidenceSpan(
+                mined_start=0, mined_end=17, source_start=0, source_end=17, text="asthma risk noted"
+            ),
+        ),
     )
-    first = Mention("asthma", 0, 6, "Disease", 1.0)
-    duplicate = Mention("asthma", 0, 6, "Disease", 1.0)  # equal value, distinct instance
+    first = Mention(text="asthma", start=0, end=6, type="Disease", score=1.0)
+    duplicate = Mention(
+        text="asthma", start=0, end=6, type="Disease", score=1.0
+    )  # equal value, distinct instance
     memo: dict[Mention, EvidenceSpan | None] = {}
     assert _mention_local_span(item, first, memo) == _mention_local_span(item, duplicate, memo)
     assert _mention_local_span(item, duplicate, memo) == _mention_local_span(item, duplicate)
@@ -104,9 +120,17 @@ def test_equal_mention_values_share_one_span_answer() -> None:
 
 def test_mention_outside_all_spans_falls_back_and_memoizes_the_miss() -> None:
     item = ContraWorkItem(
-        "SET", "DOC", "joined text", "  source text  ", (EvidenceSpan(0, 11, 5, 16, "joined text"),)
+        set_id="SET",
+        doc_id="DOC",
+        text="joined text",
+        source_text="  source text  ",
+        evidence_spans=(
+            EvidenceSpan(
+                mined_start=0, mined_end=11, source_start=5, source_end=16, text="joined text"
+            ),
+        ),
     )
-    stray = Mention("rash", 40, 44, "Disease", 0.7)
+    stray = Mention(text="rash", start=40, end=44, type="Disease", score=0.7)
     assert _mention_local_span(item, stray) is None
     assert _work_item_evidence(item, stray) == "source text"
     memo: dict[Mention, EvidenceSpan | None] = {}
@@ -124,18 +148,30 @@ def test_adjacent_split_spans_map_into_their_own_sentence() -> None:
     second_text = "Avoid in hypotension."
     second_start = text.index(second_text)
     spans = (
-        EvidenceSpan(0, len(first_text), 0, len(first_text), first_text),
         EvidenceSpan(
-            second_start,
-            second_start + len(second_text),
-            second_start,
-            second_start + len(second_text),
-            second_text,
+            mined_start=0,
+            mined_end=len(first_text),
+            source_start=0,
+            source_end=len(first_text),
+            text=first_text,
+        ),
+        EvidenceSpan(
+            mined_start=second_start,
+            mined_end=second_start + len(second_text),
+            source_start=second_start,
+            source_end=second_start + len(second_text),
+            text=second_text,
         ),
     )
-    item = ContraWorkItem("SET", "DOC", text, text, spans)
+    item = ContraWorkItem(
+        set_id="SET", doc_id="DOC", text=text, source_text=text, evidence_spans=spans
+    )
     second_mention = Mention(
-        "hypotension", text.index("hypotension"), text.index("hypotension") + 11, "Disease", 1.0
+        text="hypotension",
+        start=text.index("hypotension"),
+        end=text.index("hypotension") + 11,
+        type="Disease",
+        score=1.0,
     )
     mapped = _mention_local_span(item, second_mention)
     assert mapped is not None
@@ -145,7 +181,11 @@ def test_adjacent_split_spans_map_into_their_own_sentence() -> None:
     assert _work_item_evidence(item, second_mention) == second_text
     # The first sentence's mention still maps to the first span.
     first_mention = Mention(
-        "asthma", text.index("asthma"), text.index("asthma") + 6, "Disease", 1.0
+        text="asthma",
+        start=text.index("asthma"),
+        end=text.index("asthma") + 6,
+        type="Disease",
+        score=1.0,
     )
     assert _work_item_evidence(item, first_mention) == first_text
 
@@ -169,10 +209,10 @@ def test_duplicate_mentions_and_per_sentence_qualifiers_end_to_end(
     # The duplicate asthma mention is value-equal to the first (distinct instance), so the
     # object membership short-circuit must drop exactly one of the two.
     mentions = [
-        Mention("asthma", asthma[0], asthma[1], "Disease", 0.9),
-        Mention("asthma", asthma[0], asthma[1], "Disease", 0.9),
-        Mention("women", women[0], women[1], "BiologicalSex", 0.8),
-        Mention("hypotension", hypo[0], hypo[1], "Disease", 0.95),
+        Mention(text="asthma", start=asthma[0], end=asthma[1], type="Disease", score=0.9),
+        Mention(text="asthma", start=asthma[0], end=asthma[1], type="Disease", score=0.9),
+        Mention(text="women", start=women[0], end=women[1], type="BiologicalSex", score=0.8),
+        Mention(text="hypotension", start=hypo[0], end=hypo[1], type="Disease", score=0.95),
     ]
     monkeypatch.setattr(
         contra_mod, "extract_contraindication_diseases", lambda _text, _ner: list(mentions)

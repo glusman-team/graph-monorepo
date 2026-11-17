@@ -417,11 +417,11 @@ def test_epar_straddling_mention_is_clipped_to_the_sentence(
     key, doc, text = next(iter(_ema_indication_items(frame)))
     straddle_start = text.index("management. Severe")
     straddle = Mention(
-        "management. Severe pain",
-        straddle_start,
-        text.index("Severe pain") + len("Severe pain"),
-        "Disease",
-        0.9,
+        text="management. Severe pain",
+        start=straddle_start,
+        end=text.index("Severe pain") + len("Severe pain"),
+        type="Disease",
+        score=0.9,
         normalized="severe pain",
         notes="gliner",
     )
@@ -759,11 +759,11 @@ def test_smpc_straddling_mention_is_clipped_to_the_sentence(
     key, doc, text = next(iter(_smpc_indication_items(frame, _ema_frame([_registry_row()]))))
     straddle_start = text.index("management. Severe")
     straddle = Mention(
-        "management. Severe pain",
-        straddle_start,
-        text.index("Severe pain") + len("Severe pain"),
-        "Disease",
-        0.9,
+        text="management. Severe pain",
+        start=straddle_start,
+        end=text.index("Severe pain") + len("Severe pain"),
+        type="Disease",
+        score=0.9,
         normalized="severe pain",
         notes="gliner",
     )

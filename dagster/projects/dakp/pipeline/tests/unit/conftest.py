@@ -53,7 +53,7 @@ def ctx(tmp_path: Path, disease_map: dict[str, dict[str, str]]) -> TaskContext:
     context = TaskContext(
         workdir=tmp_path / "work", fixture_root=FIXTURE_ROOT, params={"disease_map": disease_map}
     )
-    Workdir(context.workdir).create()
+    Workdir(root=context.workdir).create()
     return context
 
 

@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.io.content_hash import hash_bytes
 from dakp_pipeline.io.contracts import ArtifactRef
@@ -36,8 +37,8 @@ def _date(value: str | None) -> str | None:
     return parsed.date().isoformat() if parsed is not None else None
 
 
-@dataclass(frozen=True)
-class SourceFingerprint:
+class SourceFingerprint(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     fingerprint: str
     artifact_count: int
     upstream_dates: tuple[str, ...] = ()
@@ -89,15 +90,15 @@ class SourceFingerprint:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return self.model_dump()
 
 
-@dataclass(frozen=True)
-class ReleaseState:
+class ReleaseState(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     version: str
     published_at: str
     sources: dict[str, SourceFingerprint]
-    kg: dict[str, Any] = field(default_factory=dict)
+    kg: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {

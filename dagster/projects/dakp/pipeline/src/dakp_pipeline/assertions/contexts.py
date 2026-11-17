@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.logging_setup import logger, stats
 from dakp_pipeline.ner.dictionary import OBJECT_TYPES, TYPE_DISEASE, canonical_type, normalize_text
@@ -259,8 +260,7 @@ MEDICATION_CONTEXT = re.compile(
 )
 
 
-@dataclass(frozen=True)
-class PatientClause:
+class PatientClause(BaseModel):
     """Result of the explicit patient-clause scan over one group of object mentions.
 
     ``contexts`` maps an object-mention index to its context disease surface (the explicit
@@ -271,6 +271,8 @@ class PatientClause:
     scalar qualifier cannot preserve the AND/OR requirement and every member of the
     sentence is dropped rather than falsely asserting either alone.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     contexts: dict[int, str]
     context_only: dict[int, tuple[str, str]]

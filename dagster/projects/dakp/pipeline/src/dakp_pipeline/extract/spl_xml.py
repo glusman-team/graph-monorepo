@@ -41,11 +41,11 @@ from __future__ import annotations
 import gzip
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
@@ -132,22 +132,22 @@ SPL_SECTIONS_COLUMNS: list[str] = [
 ]
 
 
-@dataclass
-class ApprovalRecord:
+class ApprovalRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     approval_id: str
     code: str
     type: str
 
 
-@dataclass
-class IngredientRecord:
+class IngredientRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
     unii: str
     role: str  # "active" | "inactive"
 
 
-@dataclass
-class ProductIngredientRecord:
+class ProductIngredientRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     product_code: str
     product_name: str
     generic_name: str
@@ -156,8 +156,8 @@ class ProductIngredientRecord:
     kind: str  # "substance" | "moiety"
 
 
-@dataclass
-class SectionRecord:
+class SectionRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     loinc: str
     name: str
     title: str
@@ -165,16 +165,17 @@ class SectionRecord:
     clean_text: str
 
 
-@dataclass
-class DocumentRecord:
+class DocumentRecord(BaseModel):
     """Fully parsed SPL document, before flattening into normalized tables."""
 
+    model_config = ConfigDict(extra="forbid")
+
     set_id: str
-    approvals: list[ApprovalRecord] = field(default_factory=list)
-    ingredients: list[IngredientRecord] = field(default_factory=list)
-    products: list[ProductIngredientRecord] = field(default_factory=list)
-    sections: list[SectionRecord] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    approvals: list[ApprovalRecord] = Field(default_factory=list)
+    ingredients: list[IngredientRecord] = Field(default_factory=list)
+    products: list[ProductIngredientRecord] = Field(default_factory=list)
+    sections: list[SectionRecord] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     #: Document-level LOINC type code (``34391-4`` human Rx, ``50578-4`` Rx animal, ...);
     #: empty when the document carries no code element.
     label_type: str = ""
@@ -182,7 +183,7 @@ class DocumentRecord:
 
 class SPLXMLExtractor:
     def extract(self, inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         interim_dir = wd.interim / "dailymed"
         interim_dir.mkdir(parents=True, exist_ok=True)

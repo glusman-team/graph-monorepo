@@ -49,7 +49,16 @@ def _write(tmp_path: Path, name: str, data: bytes) -> ArtifactRef:
 def test_parse_empty_content_records_empty_file_warning() -> None:
     warnings = _Warnings()
     assert (
-        _parse_source(_FaersSource("24Q3", "DEMO", b"   \r\n  ", "DEMO24Q3.txt", "b3:ab"), warnings)
+        _parse_source(
+            _FaersSource(
+                quarter="24Q3",
+                family="DEMO",
+                content=b"   \r\n  ",
+                source_name="DEMO24Q3.txt",
+                source_b3="b3:ab",
+            ),
+            warnings,
+        )
         is None
     )
     assert any(w.code == "empty_file" and w.message == "no bytes" for w in warnings.items)
@@ -58,7 +67,13 @@ def test_parse_empty_content_records_empty_file_warning() -> None:
 def test_parse_invalid_utf8_records_parse_error() -> None:
     warnings = _Warnings()
     frame = _parse_source(
-        _FaersSource("24Q3", "DEMO", b"PRIMARYID$\r\n\xff\xfe\xfa$\r\n", "DEMO24Q3.txt", "b3:ab"),
+        _FaersSource(
+            quarter="24Q3",
+            family="DEMO",
+            content=b"PRIMARYID$\r\n\xff\xfe\xfa$\r\n",
+            source_name="DEMO24Q3.txt",
+            source_b3="b3:ab",
+        ),
         warnings,
     )
     assert frame is None
@@ -68,7 +83,14 @@ def test_parse_invalid_utf8_records_parse_error() -> None:
 def test_parse_header_only_records_no_data_rows() -> None:
     warnings = _Warnings()
     frame = _parse_source(
-        _FaersSource("24Q3", "DEMO", b"PRIMARYID$CASEID$\r\n", "DEMO24Q3.txt", "b3:ab"), warnings
+        _FaersSource(
+            quarter="24Q3",
+            family="DEMO",
+            content=b"PRIMARYID$CASEID$\r\n",
+            source_name="DEMO24Q3.txt",
+            source_b3="b3:ab",
+        ),
+        warnings,
     )
     assert frame is None
     assert any(w.code == "empty_file" and w.message == "no data rows" for w in warnings.items)
@@ -77,7 +99,13 @@ def test_parse_header_only_records_no_data_rows() -> None:
 def test_parse_without_trailing_dollar_keeps_all_columns() -> None:
     # No trailing "$" -> no empty column to drop (the empty_cols branch is skipped).
     frame = _parse_source(
-        _FaersSource("24Q3", "DEMO", b"PRIMARYID$CASEID\n1001$5001\n", "DEMO24Q3.txt", "b3:ab"),
+        _FaersSource(
+            quarter="24Q3",
+            family="DEMO",
+            content=b"PRIMARYID$CASEID\n1001$5001\n",
+            source_name="DEMO24Q3.txt",
+            source_b3="b3:ab",
+        ),
         _Warnings(),
     )
     assert frame is not None

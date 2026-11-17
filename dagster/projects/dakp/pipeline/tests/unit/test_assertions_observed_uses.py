@@ -63,7 +63,7 @@ def test_observed_use_retains_faers_report_and_nda_provenance(
         cases,
         disease_map,
         approved_pairs=set(),
-        approvals=FDAApprovalIndex({"17977": ("NDA017977",)}),
+        approvals=FDAApprovalIndex(displays={"17977": ("NDA017977",)}),
         faers_quarter_urls={
             "24Q3": "https://example.test/faers-24q3.zip",
             "24Q2": "https://example.test/faers-24q2.zip",
@@ -101,7 +101,7 @@ def test_observed_use_expands_faers_numbers_to_the_fda_display_form(
             "source_record_id": ["a", "b", "c"],
         }
     )
-    index = FDAApprovalIndex({"125514": ("BLA125514",), "17977": ("NDA017977",)})
+    index = FDAApprovalIndex(displays={"125514": ("BLA125514",), "17977": ("NDA017977",)})
     rows = build_observed_use_rows(cases, disease_map, approved_pairs=set(), approvals=index)
 
     assert len(rows) == 1
@@ -131,7 +131,7 @@ def test_observed_use_drops_faers_application_numbers_no_register_knows(
             "source_record_id": ["a", "b", "c", "d", "e"],
         }
     )
-    index = FDAApprovalIndex({"17977": ("NDA017977",)})
+    index = FDAApprovalIndex(displays={"17977": ("NDA017977",)})
     rows = build_observed_use_rows(
         cases,
         disease_map,
@@ -219,7 +219,7 @@ def test_wordings_resolving_to_one_object_merge_into_a_single_row() -> None:
             "source_record_id": ["24Q3:1:1:Asthma", "24Q2:1:1:ASTHMA", "24Q3:2:1:ASTHMA"],
         }
     )
-    index = FDAApprovalIndex({"17977": ("NDA017977",), "125514": ("BLA125514",)})
+    index = FDAApprovalIndex(displays={"17977": ("NDA017977",), "125514": ("BLA125514",)})
     rows = build_observed_use_rows(
         cases,
         disease_map,
@@ -429,7 +429,7 @@ def test_status_uses_fda_application_identity_when_subject_text_differs() -> Non
             }
         )
     )
-    index = FDAApprovalIndex({"21343": ("NDA021343",)})
+    index = FDAApprovalIndex(displays={"21343": ("NDA021343",)})
     rows = build_observed_use_rows(cases, {}, approved, approvals=index)
     assert len(rows) == 1
     assert rows[0]["subject_text"] == "ELIGARD"  # the subject text is untouched, only the status
@@ -462,7 +462,7 @@ def test_status_stays_off_label_when_no_application_matches() -> None:
             "nda_raw": ["021343", "020708", ""],
         }
     )
-    index = FDAApprovalIndex({"21343": ("NDA021343",), "20708": ("NDA020708",)})
+    index = FDAApprovalIndex(displays={"21343": ("NDA021343",), "20708": ("NDA020708",)})
     rows = build_observed_use_rows(cases, {}, approved, approvals=index)
     statuses = {(r["subject_text"], r["object_text"]): r["clinical_approval_status"] for r in rows}
     assert statuses == {
@@ -516,7 +516,7 @@ def test_reported_eligard_prostate_cancer_stage_iv_edge_is_approved() -> None:
             "nda_raw": ["021343", "021379", "021488", "021731"],
         }
     )
-    index = FDAApprovalIndex({norm: (display,) for norm, display in approvals.items()})
+    index = FDAApprovalIndex(displays={norm: (display,) for norm, display in approvals.items()})
     rows = build_observed_use_rows(cases, {}, _eligard_index(), approvals=index)
     assert len(rows) == 1
     assert rows[0]["FDA_regulatory_approvals"] == "NDA021343|NDA021379|NDA021488|NDA021731"
@@ -531,7 +531,7 @@ def test_status_bridges_object_granularity_within_one_application() -> None:
     FAERS reports stage and laterality wording the label never spells out; the label's general
     term is the approval, so the specific report of the SAME product is on-label.
     """
-    index = FDAApprovalIndex({"21343": ("NDA021343",)})
+    index = FDAApprovalIndex(displays={"21343": ("NDA021343",)})
     cases = pl.DataFrame(
         {
             "drugname": ["ELIGARD", "ELIGARD", "ELIGARD"],
@@ -578,7 +578,7 @@ def test_containment_never_approves_the_reverse_direction() -> None:
             "nda_raw": ["021343"],
         }
     )
-    index = FDAApprovalIndex({"21343": ("NDA021343",)})
+    index = FDAApprovalIndex(displays={"21343": ("NDA021343",)})
     rows = build_observed_use_rows(cases, {}, approved, approvals=index)
     assert rows[0]["clinical_approval_status"] == "off_label_use"
 
@@ -608,7 +608,7 @@ def test_containment_is_whole_word_only() -> None:
             "nda_raw": ["020708"] * 2,
         }
     )
-    index = FDAApprovalIndex({"20708": ("NDA020708",)})
+    index = FDAApprovalIndex(displays={"20708": ("NDA020708",)})
     rows = build_observed_use_rows(cases, {}, approved, approvals=index)
     statuses = {r["object_text"]: r["clinical_approval_status"] for r in rows}
     assert statuses == {
@@ -688,7 +688,7 @@ def test_all_digit_application_keys_are_not_identities() -> None:
             "nda_raw": ["99", "021343"],
         }
     )
-    index = FDAApprovalIndex({"21343": ("NDA021343",)})
+    index = FDAApprovalIndex(displays={"21343": ("NDA021343",)})
     rows = build_observed_use_rows(cases, {}, approved, approvals=index)
     by_approvals = {r["FDA_regulatory_approvals"]: r["clinical_approval_status"] for r in rows}
     # The bare typo is dropped by ``expand`` (PR #52), so the row carries NO approval value and

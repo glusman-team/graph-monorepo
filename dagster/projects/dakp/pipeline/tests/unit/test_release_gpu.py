@@ -65,8 +65,8 @@ def test_post_build_leak_check_matches_only_dakp_processes(tmp_path) -> None:
         (proc / str(pid) / "cmdline").write_bytes(cmdline.encode())
         (proc / str(pid) / "environ").write_bytes(environ.encode())
     status = GPUStatus(
-        (GPUDevice(0, "P100", 13000, 16384),),
-        (
+        devices=(GPUDevice(index=0, name="P100", used_mib=13000, total_mib=16384),),
+        processes=(
             {"pid": 123, "process_name": "python", "used_memory": "12000"},
             {"pid": 456, "process_name": "llama-server", "used_memory": "1000"},
         ),
