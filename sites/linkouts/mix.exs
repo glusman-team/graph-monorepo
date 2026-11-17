@@ -14,7 +14,14 @@ defmodule EdgeLinkouts.MixProject do
       listeners: [Phoenix.CodeReloader],
       dialyzer: [
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
-        plt_add_apps: [:mix]
+        plt_add_apps: [:mix],
+        # dialyxir ships with NO warning flags since 0.4; opt into strictness explicitly.
+        # :unmatched_returns flags calls whose possible error returns are ignored.
+        # :error_handling flags calls that may return errors the caller cannot handle.
+        # :underspecs stays off deliberately: it flags the intentional "encode any term"
+        # specs (Codec.canonical/1, Display.Value.stringify/1) whose uncovered types are
+        # meant to fail loudly with FunctionClauseError, not to be spec-documented away.
+        flags: [:unmatched_returns, :error_handling]
       ]
     ]
   end

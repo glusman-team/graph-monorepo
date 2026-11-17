@@ -9,7 +9,8 @@ defmodule EdgeLinkouts.Application do
   def start(_type, _args) do
     # Dictionaries before anything that reads: the registry is the decode path for every
     # stored document, and a boot that cannot read its dictionaries must fail here.
-    EdgeLinkouts.Dicts.reload!()
+    # The return is the registry map; readers get it through Dicts.registry().
+    _registry = EdgeLinkouts.Dicts.reload!()
 
     # libcluster only starts when CLUSTER_QUERY configured a topology in runtime.exs
     # (fly.toml); with none configured the supervisor is empty and the app is a cluster of
