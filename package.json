@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@naxodev/gonx": "^5.0.0",
+    "knip": "6.45.1",
     "nx": "24.0.6"
   },
   "overrides": {

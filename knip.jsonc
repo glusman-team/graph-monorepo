@@ -1,0 +1,24 @@
+{
+  // knip finds unused JS/TS files, exports, and npm dependencies. Scope is the
+  // npm-managed tree (root + sites/docs workspace + Phoenix assets).
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Mix fetches these into gitignored dirs, but knip does not honor nested
+  // .gitignore files; without this it scans every vendored Phoenix/daisyui JS.
+  "ignore": ["sites/linkouts/deps/**", "sites/linkouts/_build/**"],
+  // Entry points that only non-npm tooling can see: app.js is the esbuild entry
+  // built by `mix assets.deploy`, and heroicons.js is a Tailwind v4 `@plugin`
+  // loaded from sites/linkouts/assets/css/app.css.
+  "entry": [
+    "sites/linkouts/assets/js/app.js",
+    "sites/linkouts/assets/vendor/heroicons.js"
+  ],
+  // Provided by mix deps and the tailwind binary at asset-build time, never by
+  // npm; knip cannot resolve them from any package.json.
+  "ignoreDependencies": [
+    "phoenix",
+    "phoenix_html",
+    "phoenix_live_view",
+    "phoenix-colocated",
+    "tailwindcss"
+  ]
+}

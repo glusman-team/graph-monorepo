@@ -9,10 +9,47 @@ from check_dead_code import (
     ACQUIRE_MODULE,
     DAKP_GO,
     go_findings,
+    js_findings,
     nix_findings,
     python_findings,
     run,
 )
+
+
+class JsFindingTests(unittest.TestCase):
+    """knip exits 1 with issues; the JSON report renders the gate message."""
+
+    def test_empty_issue_list_passes(self) -> None:
+        self.assertEqual(js_findings('{"issues":[]}'), [])
+
+    def test_renders_issue_categories(self) -> None:
+        report = (
+            '{"issues":[{"file":"sites/docs/src/x.ts","exports":[],'
+            '"unlisted":[{"name":"leftpad","line":1,"col":2}],'
+            '"files":[{"name":"sites/docs/src/x.ts"}]}]}'
+        )
+        self.assertEqual(
+            js_findings(report),
+            [
+                "sites/docs/src/x.ts: unused unlisted: leftpad",
+                "sites/docs/src/x.ts: unused files: sites/docs/src/x.ts",
+            ],
+        )
+
+    def test_empty_output_fails_closed(self) -> None:
+        self.assertEqual(js_findings(""), ["knip produced no output"])
+
+    def test_malformed_json_fails_closed(self) -> None:
+        self.assertEqual(
+            js_findings("not json"),
+            ["unrecognized knip output: not json"],
+        )
+
+    def test_issue_without_file_fails_closed(self) -> None:
+        report = '{"issues":[{"exports":[{"name":"x"}]}]}'
+        findings = js_findings(report)
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].startswith("unrecognized knip issue:"))
 
 
 class NixFindingTests(unittest.TestCase):

@@ -1,4 +1,5 @@
-"""Fail on unused Python functions/classes, unreachable Go production code, and dead Nix bindings."""
+"""Fail on unused Python functions/classes, unreachable Go production code, dead Nix bindings,
+and unused JS/TS files, exports, or npm dependencies."""
 
 from __future__ import annotations
 
@@ -129,6 +130,34 @@ def nix_findings(output: str) -> list[str]:
     return findings
 
 
+def js_findings(output: str) -> list[str]:
+    """Return knip findings from its JSON report; missing or malformed output is an error.
+
+    knip exits 1 when it reports issues, but the JSON report drives the message:
+    every entry in a non-empty issue category is a finding, and anything that
+    does not parse fails closed instead of being skipped.
+    """
+    if not output.strip():
+        return ["knip produced no output"]
+    try:
+        issues = json.loads(output)["issues"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return [f"unrecognized knip output: {output.strip()[:500]}"]
+    findings = []
+    for issue in issues:
+        try:
+            path = issue["file"]
+            for category, entries in issue.items():
+                if category == "file" or not entries:
+                    continue
+                for entry in entries:
+                    name = entry["name"] if isinstance(entry, dict) else entry
+                    findings.append(f"{path}: unused {category}: {name}")
+        except (KeyError, TypeError):
+            findings.append(f"unrecognized knip issue: {json.dumps(issue)[:500]}")
+    return findings
+
+
 def run(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -193,11 +222,28 @@ def main() -> int:
             else:
                 failures.extend(nix_findings(nix.stdout))
 
+    js = run(
+        ["npx", "--no-install", "knip", "--no-progress", "--reporter", "json"],
+        ROOT,
+    )
+    if js.returncode not in {0, 1}:
+        detail = "\n".join(
+            part.strip() for part in (js.stdout, js.stderr) if part.strip()
+        )
+        failures.append(f"knip exited {js.returncode}: {detail}")
+    elif js.returncode == 1 and not js.stdout.strip():
+        detail = "\n".join(
+            part.strip() for part in (js.stdout, js.stderr) if part.strip()
+        )
+        failures.append(f"knip exited 1 without a report: {detail}")
+    else:
+        failures.extend(js_findings(js.stdout))
+
     if failures:
         print("Dead-code check failed:", file=sys.stderr)
         print("\n".join(failures), file=sys.stderr)
         return 1
-    print("Dead-code check passed for Python, both Go modules, and Nix.")
+    print("Dead-code check passed for Python, both Go modules, Nix, and JS.")
     return 0
 
 
