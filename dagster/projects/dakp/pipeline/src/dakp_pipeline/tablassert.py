@@ -1325,7 +1325,14 @@ _TABLE_SOURCES: dict[str, tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]
         ("infores:epar", "supporting_data_source", (), ()),
     ),
     COMPOSITION_TABLE: (
-        # Same provenance shape as the other families: DAKP primary, FDA sources upstream.
+        # BUILD-TIME template only: Tablassert stamps this union on every emitted edge
+        # because per-table templates are static (no per-row provenance in Tablassert
+        # 22.2.0). The post-build provenance pass
+        # (:func:`dakp_pipeline.composition_provenance.align_composition_provenance`)
+        # rescopes each edge's upstreams and supporting entries to the FDA source(s) its
+        # assertion row actually recorded (issue #59), so the published graph never cites
+        # DailyMed on a Drugs@FDA-only pair. The supporting entries must exist at build
+        # time for the pass to filter them, hence the union here.
         (
             INFORES_DAKP,
             "primary_knowledge_source",
@@ -1451,11 +1458,20 @@ _TABLE_ANNOTATIONS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
     ),
     COMPOSITION_TABLE: (
         # Only the SPL set CURIEs reach the edge, as ``publications``.
-        # ``FDA_regulatory_approvals`` is deliberately NOT annotated:
-        # ``ChemicalEntityToChemicalEntityAssociation`` has no ``regulatory_approvals`` slot, so
-        # the application numbers stay in the TSV for audit instead of folding into
-        # ``supporting_text``. ``ingredient_kind`` and ``supporting_spl_sets`` are audit columns
-        # for the same reason.
+        # ``FDA_regulatory_approvals`` is deliberately NOT annotated: mapping it to the
+        # canonical ``regulatory_approvals`` slot is IMPOSSIBLE on this family's pinned
+        # association class -- biolink-model 4.4.6 declares ``regulatory_approvals`` only on
+        # EntityToDiseaseAssociation / EntityToPhenotypicFeatureAssociation (and their mixin
+        # parents), and composition edges resolve to
+        # ``ChemicalEntityToChemicalEntityAssociation``. Verified against Tablassert
+        # 22.2.0 AND 22.3.2: ``tablassert.biolink.validate_record`` returns
+        # ``['regulatory_approvals: extra_forbidden']`` for such an edge, and the
+        # ``CLASS_FIELD_OVERRIDES`` grant mechanism that carried qualifier slots ahead of
+        # the model lives in the Tablassert library (DAKP drives Tablassert in a
+        # subprocess), so carrying the slot needs an upstream Tablassert release. The
+        # application numbers stay in this TSV column for audit until that grant lands.
+        # ``ingredient_kind`` and ``supporting_spl_sets`` are audit columns for the same
+        # reason.
         ("edge_evidence", "publications", "|"),
     ),
 }
@@ -2509,6 +2525,20 @@ def _find_graph(config_refs: list[ArtifactRef], ctx: TaskContext) -> Path:
     return Workdir(ctx.workdir).root / "tables" / "graph.yaml"
 
 
+def _composition_assertions_path(assertion_refs: list[ArtifactRef]) -> Path:
+    """Locate the composition assertion TSV among the shaper outputs.
+
+    A build whose configs carry the composition table must also carry its assertion TSV:
+    absence means the DAG wired the table without its shaper output, and the provenance
+    pass would silently have nothing to rescope from.
+    """
+    for ref in assertion_refs:
+        if ref.uri.stem == COMPOSITION_TABLE:
+            return ref.uri
+    msg = f"composition build carries no {_TABLE_SPECS[COMPOSITION_TABLE][0]} assertion TSV"
+    raise RuntimeError(msg)
+
+
 #: Cap on contract problems mirrored into the handoff report / error message — enough to
 #: diagnose the failure mode without bloating the report or the task log.
 _CONTRACT_PROBLEM_LIMIT = 10
@@ -2693,6 +2723,7 @@ class TablassertRunner:
         contract_problems: list[str] = []
         contract_error: str | None = None
         approval_promotions = 0
+        composition_provenance: dict[str, int] = {"edges_checked": 0, "edges_rescoped": 0}
         self_loop_report: dict[str, int] = {"self_loop_edges_dropped": 0, "orphan_nodes_dropped": 0}
         screen_report: dict[str, int] = {
             "screened_edges_dropped": 0,
@@ -2732,6 +2763,18 @@ class TablassertRunner:
                 )
                 approval_promotions = reconcile_approval_status(edges_path)
                 stats(logger, "resolved_approval_status", promoted=approval_promotions)
+                if composition:
+                    # Truthful per-edge provenance (issue #59): Tablassert stamps the static
+                    # union template, so the Drugs@FDA-only pairs would ship naming DailyMed.
+                    # The pass rescopes each edge to its TSV-recorded contributors; it runs
+                    # BEFORE the contract gate so a bad rewrite fails the build here.
+                    from dakp_pipeline.composition_provenance import (
+                        align_composition_provenance,
+                    )
+
+                    composition_provenance = align_composition_provenance(
+                        edges_path, _composition_assertions_path(assertion_refs)
+                    )
                 contract_problems = validate_kgx_contract(ctx, graph_yaml)
             except (OSError, ValueError, RuntimeError) as exc:
                 contract_error = str(exc)
@@ -2748,6 +2791,7 @@ class TablassertRunner:
                 "qc": qc,
                 "release": release,
                 "resolved_approval_promotions": approval_promotions,
+                "composition_provenance": composition_provenance,
             }
         )
         if completed.returncode == 0:
