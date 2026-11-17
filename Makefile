@@ -139,7 +139,7 @@ help:
 	@echo "make check                 offline aggregate verification"
 	@echo "make locks                 recursive uv/npm/Go/Mix lock checks"
 	@echo "make go-test-race          race suites in every independent Go module"
-	@echo "make dead-code-check       Python and Go unused-code gates"
+	@echo "make dead-code-check       Python, Go, Nix, and JS unused-code gates"
 	@echo "make docs-dev / docs-test  Starlight development server or full documentation checks"
 	@echo "make dakp-test             DAKP Python tests"
 	@echo "make linkouts-test         all Linkouts Python, Go, and Phoenix tests"
