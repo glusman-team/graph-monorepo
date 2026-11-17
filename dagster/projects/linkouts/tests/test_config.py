@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from linkouts_dag.config import PROJECT_ROOT, run_config
+import pytest
+from pydantic import ValidationError
+
+from linkouts_dag.config import PROJECT_ROOT, RuntimeConfig, run_config
 
 
 def test_defaults_stay_inside_project(monkeypatch) -> None:
@@ -29,3 +32,13 @@ def test_environment_overrides_paths_not_secrets(monkeypatch, tmp_path: Path) ->
     assert config.run_dir == tmp_path / "work" / "runs"
     assert config.worker_bin == worker
     assert config.destructive_jobs_enabled
+
+
+def test_runtime_config_is_immutable_and_rejects_unknown_keys(tmp_path: Path) -> None:
+    """The resolved runtime config is a value object: no mid-run drift, no silent typos."""
+    config = run_config()
+    assert isinstance(config, RuntimeConfig)
+    with pytest.raises(ValidationError, match="frozen_instance"):
+        config.destructive_jobs_enabled = True
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        RuntimeConfig(**config.model_dump(), destructive_jobs_enbled=True)

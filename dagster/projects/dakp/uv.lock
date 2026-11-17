@@ -492,6 +492,7 @@ dependencies = [
     { name = "mo-core" },
     { name = "mo-dagster" },
     { name = "mo-kg" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -516,6 +517,7 @@ requires-dist = [
     { name = "mo-core", editable = "../../libs/mo-core" },
     { name = "mo-dagster", editable = "../../libs/mo-dagster" },
     { name = "mo-kg", editable = "../../libs/mo-kg" },
+    { name = "pydantic", specifier = ">=2.12.0" },
 ]
 
 [package.metadata.requires-dev]
