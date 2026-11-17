@@ -1325,7 +1325,14 @@ _TABLE_SOURCES: dict[str, tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]
         ("infores:epar", "supporting_data_source", (), ()),
     ),
     COMPOSITION_TABLE: (
-        # Same provenance shape as the other families: DAKP primary, FDA sources upstream.
+        # BUILD-TIME template only: Tablassert stamps this union on every emitted edge
+        # because per-table templates are static (no per-row provenance in Tablassert
+        # 22.2.0). The post-build provenance pass
+        # (:func:`dakp_pipeline.composition_provenance.align_composition_provenance`)
+        # rescopes each edge's upstreams and supporting entries to the FDA source(s) its
+        # assertion row actually recorded (issue #59), so the published graph never cites
+        # DailyMed on a Drugs@FDA-only pair. The supporting entries must exist at build
+        # time for the pass to filter them, hence the union here.
         (
             INFORES_DAKP,
             "primary_knowledge_source",
@@ -1451,11 +1458,20 @@ _TABLE_ANNOTATIONS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
     ),
     COMPOSITION_TABLE: (
         # Only the SPL set CURIEs reach the edge, as ``publications``.
-        # ``FDA_regulatory_approvals`` is deliberately NOT annotated:
-        # ``ChemicalEntityToChemicalEntityAssociation`` has no ``regulatory_approvals`` slot, so
-        # the application numbers stay in the TSV for audit instead of folding into
-        # ``supporting_text``. ``ingredient_kind`` and ``supporting_spl_sets`` are audit columns
-        # for the same reason.
+        # ``FDA_regulatory_approvals`` is deliberately NOT annotated: mapping it to the
+        # canonical ``regulatory_approvals`` slot is IMPOSSIBLE on this family's pinned
+        # association class -- biolink-model 4.4.6 declares ``regulatory_approvals`` only on
+        # EntityToDiseaseAssociation / EntityToPhenotypicFeatureAssociation (and their mixin
+        # parents), and composition edges resolve to
+        # ``ChemicalEntityToChemicalEntityAssociation``. Verified against Tablassert
+        # 22.2.0 AND 22.3.2: ``tablassert.biolink.validate_record`` returns
+        # ``['regulatory_approvals: extra_forbidden']`` for such an edge, and the
+        # ``CLASS_FIELD_OVERRIDES`` grant mechanism that carried qualifier slots ahead of
+        # the model lives in the Tablassert library (DAKP drives Tablassert in a
+        # subprocess), so carrying the slot needs an upstream Tablassert release. The
+        # application numbers stay in this TSV column for audit until that grant lands.
+        # ``ingredient_kind`` and ``supporting_spl_sets`` are audit columns for the same
+        # reason.
         ("edge_evidence", "publications", "|"),
     ),
 }
