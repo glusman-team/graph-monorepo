@@ -291,11 +291,12 @@ def _write_assertion_tsv(table: str, workdir: Workdir) -> Path:
 
 def _assertion_refs(workdir: Workdir) -> list[ArtifactRef]:
     store = ArtifactStore(workdir)
+    tables = (*TABLES, COMPOSITION)
     return [
         store.register(
             _write_assertion_tsv(table, workdir), media_type=schemas.TSV_MEDIA_TYPE, rows=1
         )
-        for table in TABLES
+        for table in tables
     ]
 
 
@@ -1869,7 +1870,7 @@ def test_deferred_runner_writes_deferred_handoff_report(tmp_path: Path) -> None:
     assert report["mode"] == "deferred"
     assert report["status"] == "deferred"
     assert report["stage"] == "tablassert_handoff"
-    assert {entry["table"] for entry in report["assertion_inputs"]} == set(TABLES)
+    assert {entry["table"] for entry in report["assertion_inputs"]} == set(TABLES) | {COMPOSITION}
     assert len(report["config_inputs"]) == 5  # graph + 4 tables
 
 
@@ -2087,6 +2088,79 @@ def test_real_runner_reconciles_resolved_approvals_before_validation(
     report = _read_report(workdir)
     assert report["resolved_approval_promotions"] == 1
     assert report["kgx_contract"]["status"] == "ok"
+
+
+def test_real_runner_rescopes_composition_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Composition edges must pass through the issue-#59 provenance pass post-build.
+
+    Both-source rows are the no-op case (union template already truthful), but the
+    handoff must still run the pass and record its stats; the rescoping variant is
+    covered in test_composition_provenance.py and by the drugsfda-only end-to-end
+    test once the contract accepts per-edge alternatives.
+    """
+    __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION
+
+    workdir = Workdir(tmp_path / "work")
+    workdir.create()
+    assertion_refs = _assertion_refs(workdir)
+    config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
+
+    composition_edge = {
+        "id": "uuid-comp-0001",
+        "subject": "CHEBI:31236",
+        "original_subject": "VYTORIN",
+        "object": "CHEBI:135935",
+        "original_object": "EZETIMIBE",
+        "predicate": "biolink:has_active_ingredient",
+        "category": ["biolink:ChemicalEntityToChemicalEntityAssociation"],
+        "knowledge_level": "knowledge_assertion",
+        "agent_type": "manual_validation_of_automated_agent",
+        "sources": [
+            {
+                "resource_id": "infores:drugapprovals-kp",
+                "resource_role": "primary_knowledge_source",
+                "upstream_resource_ids": ["infores:dailymed", "infores:drugs-at-fda"],
+                "source_record_urls": ["https://linkouts.skyelanegoetz.com/edges/uuid-comp-0001"],
+            },
+            {"resource_id": "infores:dailymed", "resource_role": "supporting_data_source"},
+            {"resource_id": "infores:drugs-at-fda", "resource_role": "supporting_data_source"},
+        ],
+    }
+
+    def fake_subprocess(
+        command: list[str], cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        _fake_build_kgx(workdir)
+        path = workdir.kgx / f"{tablassert_configs.GRAPH_NAME}_{__version__}.edges.ndjson"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(composition_edge, ensure_ascii=False) + "\n")
+        # The shaper's per-pair truth: BOTH sources contributed, so the union is already
+        # truthful and the pass must leave the edge byte-identical.
+        tsv = workdir.tabular / "has_active_ingredient_assertions.tsv"
+        tsv.write_text(
+            "subject_text\tobject_text\tupstream_resource_ids\n"
+            "VYTORIN\tEZETIMIBE\tinfores:dailymed|infores:drugs-at-fda\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    _patch_installed(monkeypatch)
+    monkeypatch.setattr(_RUN_MODULE, "stream_subprocess", fake_subprocess)
+    TablassertRunner().run(
+        assertion_refs, config_refs, _ctx(workdir, run_tablassert=True, fullmap="fixture.redb")
+    )
+    report = _read_report(workdir)
+    assert report["composition_provenance"] == {"edges_checked": 1, "edges_rescoped": 0}
+    assert report["kgx_contract"]["status"] == "ok"
+    path = workdir.kgx / f"{tablassert_configs.GRAPH_NAME}_{__version__}.edges.ndjson"
+    final = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    rescoped = next(edge for edge in final if edge["predicate"] == "biolink:has_active_ingredient")
+    assert rescoped["sources"][0]["upstream_resource_ids"] == [
+        "infores:dailymed",
+        "infores:drugs-at-fda",
+    ]
 
 
 @pytest.mark.parametrize("failure", ["null", "[]", "{bad", "io"])

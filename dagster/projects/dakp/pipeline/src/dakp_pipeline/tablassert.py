@@ -2509,6 +2509,20 @@ def _find_graph(config_refs: list[ArtifactRef], ctx: TaskContext) -> Path:
     return Workdir(ctx.workdir).root / "tables" / "graph.yaml"
 
 
+def _composition_assertions_path(assertion_refs: list[ArtifactRef]) -> Path:
+    """Locate the composition assertion TSV among the shaper outputs.
+
+    A build whose configs carry the composition table must also carry its assertion TSV:
+    absence means the DAG wired the table without its shaper output, and the provenance
+    pass would silently have nothing to rescope from.
+    """
+    for ref in assertion_refs:
+        if ref.uri.stem == COMPOSITION_TABLE:
+            return ref.uri
+    msg = f"composition build carries no {_TABLE_SPECS[COMPOSITION_TABLE][0]} assertion TSV"
+    raise RuntimeError(msg)
+
+
 #: Cap on contract problems mirrored into the handoff report / error message — enough to
 #: diagnose the failure mode without bloating the report or the task log.
 _CONTRACT_PROBLEM_LIMIT = 10
@@ -2693,6 +2707,7 @@ class TablassertRunner:
         contract_problems: list[str] = []
         contract_error: str | None = None
         approval_promotions = 0
+        composition_provenance: dict[str, int] = {"edges_checked": 0, "edges_rescoped": 0}
         self_loop_report: dict[str, int] = {"self_loop_edges_dropped": 0, "orphan_nodes_dropped": 0}
         screen_report: dict[str, int] = {
             "screened_edges_dropped": 0,
@@ -2732,6 +2747,18 @@ class TablassertRunner:
                 )
                 approval_promotions = reconcile_approval_status(edges_path)
                 stats(logger, "resolved_approval_status", promoted=approval_promotions)
+                if composition:
+                    # Truthful per-edge provenance (issue #59): Tablassert stamps the static
+                    # union template, so the Drugs@FDA-only pairs would ship naming DailyMed.
+                    # The pass rescopes each edge to its TSV-recorded contributors; it runs
+                    # BEFORE the contract gate so a bad rewrite fails the build here.
+                    from dakp_pipeline.composition_provenance import (
+                        align_composition_provenance,
+                    )
+
+                    composition_provenance = align_composition_provenance(
+                        edges_path, _composition_assertions_path(assertion_refs)
+                    )
                 contract_problems = validate_kgx_contract(ctx, graph_yaml)
             except (OSError, ValueError, RuntimeError) as exc:
                 contract_error = str(exc)
@@ -2748,6 +2775,7 @@ class TablassertRunner:
                 "qc": qc,
                 "release": release,
                 "resolved_approval_promotions": approval_promotions,
+                "composition_provenance": composition_provenance,
             }
         )
         if completed.returncode == 0:
