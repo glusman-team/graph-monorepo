@@ -115,10 +115,15 @@ def _card(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         edges_path=edges,
         rig_path=rig,
     )
-    fingerprint = SourceFingerprint("b3:new", 2, ("2026-11-04",), ("2026-11-06",))
+    fingerprint = SourceFingerprint(
+        fingerprint="b3:new",
+        artifact_count=2,
+        upstream_dates=("2026-11-04",),
+        retrieved_dates=("2026-11-06",),
+    )
     delta = SourceDelta(
         current={"DailyMed": fingerprint},
-        changes=(SourceChange("DailyMed", fingerprint, None),),
+        changes=(SourceChange(source="DailyMed", current=fingerprint, previous=None),),
         previous_version="1.27.0",
         created_at="2026-11-06T17:00:00-08:00",
         check_run_id="check-1",

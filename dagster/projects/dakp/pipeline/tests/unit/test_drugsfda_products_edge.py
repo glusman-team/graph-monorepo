@@ -33,7 +33,7 @@ _FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "pipeline"
 
 
 def _ctx(wd: Path, **params: object) -> TaskContext:
-    Workdir(wd).create()
+    Workdir(root=wd).create()
     return TaskContext(workdir=wd, fixture_root=_FIXTURE_ROOT, params=params)
 
 

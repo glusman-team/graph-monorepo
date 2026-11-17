@@ -70,10 +70,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
 from typing import Any
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.assertions import (
     AT_MANUAL,
@@ -182,9 +182,10 @@ _SOFT_SAFETY_TRIGGER = re.compile(
 _HARD_TRIGGER_SECTION_KINDS = frozenset({"indications", "boxed_warning", "warnings"})
 
 
-@dataclass(frozen=True)
-class MentionDecision:
+class MentionDecision(BaseModel):
     """Conservative local semantic decision for one mined disease mention."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     accepted: bool
     trigger: str
@@ -198,18 +199,20 @@ class MentionDecision:
 _SENTENCE_BOUNDARY = re.compile(r"[.!?;](?:\s+|$)")
 
 
-@dataclass(frozen=True)
-class SentenceSpan:
+class SentenceSpan(BaseModel):
     """A sentence/clause with offsets into the original SPL section text."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     start: int
     end: int
     text: str
 
 
-@dataclass(frozen=True)
-class EvidenceSpan:
+class EvidenceSpan(BaseModel):
     """Mapping from a mined-text span to its original source sentence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     mined_start: int
     mined_end: int
@@ -218,8 +221,7 @@ class EvidenceSpan:
     text: str
 
 
-@dataclass(frozen=True)
-class ContraWorkItem:
+class ContraWorkItem(BaseModel):
     """One NER input plus enough mapping to recover local source evidence.
 
     Pass 1 uses the full section as ``text``. Pass 2 uses a filtered, joined text; its
@@ -227,6 +229,8 @@ class ContraWorkItem:
     NER offsets never become detached from provenance. The tuple-like methods intentionally
     preserve the old ``(set_id, doc_id, text)`` test/worker interface.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     set_id: str
     doc_id: str
@@ -364,7 +368,9 @@ def _classify_mention(
     """
     evidence_text = _work_item_evidence(item, mention, spans)
     if _EXPLICIT_NEGATION.search(evidence_text):
-        return MentionDecision(False, "explicit_negation", evidence_text)
+        return MentionDecision(
+            accepted=False, trigger="explicit_negation", evidence_text=evidence_text
+        )
     hard = _HARD_CONTRA_TRIGGER.search(evidence_text)
     medication = _MEDICATION_CONTEXT.search(evidence_text)
     if medication is not None and isinstance(item, ContraWorkItem):
@@ -374,22 +380,36 @@ def _classify_mention(
         # not a contraindicated patient disease. The grouped template below preserves a separate
         # patient disease when one is explicitly present.
         if mapped is not None and patient_with is None and mapped[2] <= medication.start():
-            return MentionDecision(False, "medication_only_context", evidence_text)
+            return MentionDecision(
+                accepted=False, trigger="medication_only_context", evidence_text=evidence_text
+            )
     if isinstance(item, ContraWorkItem) and item.section_kind in _HARD_TRIGGER_SECTION_KINDS:
         if hard is None:
-            return MentionDecision(False, "no_hard_trigger", evidence_text)
-        return MentionDecision(True, hard.group(0).lower(), evidence_text)
+            return MentionDecision(
+                accepted=False, trigger="no_hard_trigger", evidence_text=evidence_text
+            )
+        return MentionDecision(
+            accepted=True, trigger=hard.group(0).lower(), evidence_text=evidence_text
+        )
     if hard is not None:
-        return MentionDecision(True, hard.group(0).lower(), evidence_text)
+        return MentionDecision(
+            accepted=True, trigger=hard.group(0).lower(), evidence_text=evidence_text
+        )
     # A dedicated 34070-3 section supplies section-4 context for terse condition lists, but a
     # sentence that contains only soft warning language is not promoted to a hard edge.
     if isinstance(item, ContraWorkItem) and item.section_kind == "contraindications":
         soft = _SOFT_SAFETY_TRIGGER.search(evidence_text)
         if soft is not None:
-            return MentionDecision(False, "soft_safety_only", evidence_text)
-        return MentionDecision(True, "contraindication_section", evidence_text)
+            return MentionDecision(
+                accepted=False, trigger="soft_safety_only", evidence_text=evidence_text
+            )
+        return MentionDecision(
+            accepted=True, trigger="contraindication_section", evidence_text=evidence_text
+        )
     # Legacy tuple work items represent dedicated contraindication sections.
-    return MentionDecision(True, "contraindication_section", evidence_text)
+    return MentionDecision(
+        accepted=True, trigger="contraindication_section", evidence_text=evidence_text
+    )
 
 
 def _classify_mentions(
@@ -422,7 +442,9 @@ def _classify_mentions(
         if mapped is None:
             continue
         sentence, start, end, source_start = mapped
-        local_mention = replace(mention, start=start, end=end, text=sentence[start:end])
+        local_mention = mention.model_copy(
+            update={"start": start, "end": end, "text": sentence[start:end]}
+        )
         origin.append(index)
         localized.append(local_mention)
         sentence_by_mention[id(local_mention)] = (sentence, source_start)
@@ -437,16 +459,21 @@ def _classify_mentions(
         # qualifier without changing the logic. Drop these candidate objects rather than
         # falsely asserting either disease alone.
         decisions[origin[local_index]] = MentionDecision(
-            False, "ambiguous_patient_conjunction", sentence
+            accepted=False, trigger="ambiguous_patient_conjunction", evidence_text=sentence
         )
     for local_index, (reason, sentence) in clause.context_only.items():
-        decisions[origin[local_index]] = MentionDecision(False, reason, sentence)
+        decisions[origin[local_index]] = MentionDecision(
+            accepted=False, trigger=reason, evidence_text=sentence
+        )
     for local_index, context_text in clause.contexts.items():
         index = origin[local_index]
         if decisions[index].accepted:
             current = decisions[index]
             decisions[index] = MentionDecision(
-                True, current.trigger, current.evidence_text, context_text
+                accepted=True,
+                trigger=current.trigger,
+                evidence_text=current.evidence_text,
+                context_text=context_text,
             )
     return decisions
 
@@ -465,7 +492,13 @@ def _filtered_evidence(
             cursor += 1
         pieces.append(span.text)
         mappings.append(
-            EvidenceSpan(cursor, cursor + len(span.text), span.start, span.end, span.text)
+            EvidenceSpan(
+                mined_start=cursor,
+                mined_end=cursor + len(span.text),
+                source_start=span.start,
+                source_end=span.end,
+                text=span.text,
+            )
         )
         cursor += len(span.text)
     return "".join(pieces), tuple(mappings)
@@ -546,10 +579,25 @@ def _smpc_work_items(
             item_text = text
             source_spans = _sentence_spans(text)
             mappings = tuple(
-                EvidenceSpan(span.start, span.end, span.start, span.end, span.text)
+                EvidenceSpan(
+                    mined_start=span.start,
+                    mined_end=span.end,
+                    source_start=span.start,
+                    source_end=span.end,
+                    text=span.text,
+                )
                 for span in source_spans
             )
-        items.append(ContraWorkItem(set_id, url, item_text, text, mappings, kind))
+        items.append(
+            ContraWorkItem(
+                set_id=set_id,
+                doc_id=url,
+                text=item_text,
+                source_text=text,
+                evidence_spans=mappings,
+                section_kind=kind,
+            )
+        )
         counters["sections"] += 1
     return items, subjects, counters
 
@@ -656,11 +704,24 @@ def build_contraindication_rows(
         for doc_id, text in evidence.contraindication_docs[set_id]:
             source_spans = _sentence_spans(text)
             mappings = tuple(
-                EvidenceSpan(span.start, span.end, span.start, span.end, span.text)
+                EvidenceSpan(
+                    mined_start=span.start,
+                    mined_end=span.end,
+                    source_start=span.start,
+                    source_end=span.end,
+                    text=span.text,
+                )
                 for span in source_spans
             )
             work_items_p1.append(
-                ContraWorkItem(set_id, doc_id, text, text, mappings, "contraindications")
+                ContraWorkItem(
+                    set_id=set_id,
+                    doc_id=doc_id,
+                    text=text,
+                    source_text=text,
+                    evidence_spans=mappings,
+                    section_kind="contraindications",
+                )
             )
 
     # Pass 2 work items: indication sections filtered to contraindication-context sentences.
@@ -677,7 +738,14 @@ def build_contraindication_rows(
             filtered, mappings = _filtered_evidence(text, kw)
             if filtered.strip():
                 work_items_p2.append(
-                    ContraWorkItem(set_id, doc_id, filtered, text, mappings, "indications")
+                    ContraWorkItem(
+                        set_id=set_id,
+                        doc_id=doc_id,
+                        text=filtered,
+                        source_text=text,
+                        evidence_spans=mappings,
+                        section_kind="indications",
+                    )
                 )
 
     # Pass 3 work items: boxed-warning + warnings/precautions sections (full text, hard-trigger-only
@@ -697,11 +765,24 @@ def build_contraindication_rows(
             for doc_id, text in docs[set_id]:
                 source_spans = _sentence_spans(text)
                 mappings = tuple(
-                    EvidenceSpan(span.start, span.end, span.start, span.end, span.text)
+                    EvidenceSpan(
+                        mined_start=span.start,
+                        mined_end=span.end,
+                        source_start=span.start,
+                        source_end=span.end,
+                        text=span.text,
+                    )
                     for span in source_spans
                 )
                 work_items_p3.append(
-                    ContraWorkItem(set_id, doc_id, text, text, mappings, section_kind)
+                    ContraWorkItem(
+                        set_id=set_id,
+                        doc_id=doc_id,
+                        text=text,
+                        source_text=text,
+                        evidence_spans=mappings,
+                        section_kind=section_kind,
+                    )
                 )
 
     # Pass 4 (EU SmPC) work items join the same pool: one LPT-balanced dispatch covers FDA and
@@ -806,7 +887,7 @@ def build_contraindication_rows(
             qualifier_scores: dict[int, dict[str, tuple[float, str]]] = {}
             localized_objects: list[tuple[int, Mention, str]] = []
             localized_qualifiers: list[tuple[Mention, str]] = []
-            # Mention is a frozen, value-hashable dataclass: set membership replaces the
+            # Mention is a frozen, value-hashable model: set membership replaces the
             # O(objects) linear scan per qualifier mention.
             mention_objects = frozenset(mentions)
             for object_index, mention in enumerate(mentions):
@@ -822,7 +903,9 @@ def build_contraindication_rows(
                     localized_objects.append(
                         (
                             object_index,
-                            replace(mention, start=start, end=end, text=sentence[start:end]),
+                            mention.model_copy(
+                                update={"start": start, "end": end, "text": sentence[start:end]}
+                            ),
                             sentence,
                         )
                     )
@@ -839,7 +922,12 @@ def build_contraindication_rows(
                 else:
                     sentence, start, end, _source_start = mapped
                     localized_qualifiers.append(
-                        (replace(mention, start=start, end=end, text=sentence[start:end]), sentence)
+                        (
+                            mention.model_copy(
+                                update={"start": start, "end": end, "text": sentence[start:end]}
+                            ),
+                            sentence,
+                        )
                     )
             # Group objects and qualifiers by sentence in one pass instead of rescanning both
             # lists once per distinct sentence. Sentence groups partition the mentions, so the

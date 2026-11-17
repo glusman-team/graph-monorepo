@@ -9,8 +9,9 @@ shared by the assets and their tests.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, Field
 
 # The project root (dagster/projects/dakp) and the published-artifact root follow the
 # monorepo convention: env wins, the project dir is the default.
@@ -57,9 +58,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-@dataclass(frozen=True)
-class RunConfig:
+class RunConfig(BaseModel):
     """The resolved run configuration for one code-location process."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     published_root: Path
     workdir: Path
@@ -195,7 +197,7 @@ def task_context(config: RunConfig | None = None):
     from dakp_pipeline.runtime import build_context
 
     cfg = config or run_config()
-    workdir = Workdir(cfg.workdir)
+    workdir = Workdir(root=cfg.workdir)
     workdir.create()
     # build_context loads the lexical disease map from the fixture root into
     # params["disease_map"] (DAKP runtime.py), and the shapers' default_ner reads the
@@ -203,9 +205,10 @@ def task_context(config: RunConfig | None = None):
     return build_context(workdir, cfg.fixture_root, cfg.params())
 
 
-@dataclass(frozen=True)
-class ReleaseSettings:
+class ReleaseSettings(BaseModel):
     """Environment-backed automation settings, resolved without contacting any API."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = False
     dry_run: bool = False
@@ -218,8 +221,8 @@ class ReleaseSettings:
     github_repo: str = "glusman-team/graph-monorepo"
     repo_root: Path = PROJECT_ROOT.parents[2]
     dagster_url: str = "http://localhost:3000"
-    hf_token: str | None = field(default=None, repr=False)
-    github_token: str | None = field(default=None, repr=False)
+    hf_token: str | None = Field(default=None, repr=False)
+    github_token: str | None = Field(default=None, repr=False)
     nercache_required: bool = False
 
 

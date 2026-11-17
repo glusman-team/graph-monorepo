@@ -159,7 +159,13 @@ def test_candidate_fallback_preserves_original_offsets_and_qualifier_attachment(
         {},
         {
             ("SET-A", "DOC-A"): [
-                Mention("women", qualifier_start, qualifier_start + 5, "BiologicalSex", 0.9)
+                Mention(
+                    text="women",
+                    start=qualifier_start,
+                    end=qualifier_start + 5,
+                    type="BiologicalSex",
+                    score=0.9,
+                )
             ]
         },
     )
@@ -175,13 +181,17 @@ def test_sentence_local_clips_a_mention_that_straddles_the_sentence() -> None:
     """
     sentence = "indicated for asthma."
     straddling = Mention(
-        "asthma. Use", sentence.index("asthma"), sentence.index("asthma") + 11, "Disease", 1.0
+        text="asthma. Use",
+        start=sentence.index("asthma"),
+        end=sentence.index("asthma") + 11,
+        type="Disease",
+        score=1.0,
     )
     local = _sentence_local(straddling, 0, len(sentence), sentence)
     assert (local.start, local.end, local.text) == (14, len(sentence), "asthma.")
     assert local.text == sentence[local.start : local.end]  # the mention contract still holds
     # A span starting before the sentence clips its head the same way.
-    leading = Mention("for asthma", -3, 17, "Disease", 1.0)
+    leading = Mention(text="for asthma", start=-3, end=17, type="Disease", score=1.0)
     assert _sentence_local(leading, 4, len(sentence), sentence[4:]).start == 0
 
 
@@ -193,8 +203,20 @@ def test_indication_observations_clips_a_straddling_mention_instead_of_raising()
     the overlap filter kept a straddling span and the rebasing shifted it to ``end > len(sentence)``.
     """
     text = "Examplestatin is indicated for asthma. Use with caution in women."
-    straddling = Mention("asthma. Use", text.index("asthma"), text.index("Use") + 3, "Disease", 1.0)
-    qualifier = Mention("women", text.index("women"), text.index("women") + 5, "BiologicalSex", 0.9)
+    straddling = Mention(
+        text="asthma. Use",
+        start=text.index("asthma"),
+        end=text.index("Use") + 3,
+        type="Disease",
+        score=1.0,
+    )
+    qualifier = Mention(
+        text="women",
+        start=text.index("women"),
+        end=text.index("women") + 5,
+        type="BiologicalSex",
+        score=0.9,
+    )
     observations = _indication_observations(
         DailyMedEvidence(indication_docs={"SET-A": [("SET-A#34067-9", text)]}),
         ["SET-A"],
@@ -240,9 +262,19 @@ def test_indication_observations_reads_each_duplicate_document_section_separatel
     mentions = {
         ("SET-A", "DOC-A"): [],  # the first section carries no qualifier
         ("SET-A", "DOC-A#2"): [
-            Mention("asthma", second.index("asthma"), second.index("asthma") + 6, "Disease", 1.0),
             Mention(
-                "women", second.index("women"), second.index("women") + 5, "BiologicalSex", 0.9
+                text="asthma",
+                start=second.index("asthma"),
+                end=second.index("asthma") + 6,
+                type="Disease",
+                score=1.0,
+            ),
+            Mention(
+                text="women",
+                start=second.index("women"),
+                end=second.index("women") + 5,
+                type="BiologicalSex",
+                score=0.9,
             ),
         ],
     }
@@ -269,10 +301,14 @@ def test_patient_template_merges_qualifier_from_nonzero_host() -> None:
     asthma = [index for index in range(len(sentence)) if sentence.startswith("asthma", index)]
     mentions = {
         ("SET-A", "SET-A#34067-9"): [
-            Mention("asthma", asthma[0], asthma[0] + 6, "Disease", 1.0),
-            Mention("asthma", asthma[1], asthma[1] + 6, "Disease", 1.0),
+            Mention(text="asthma", start=asthma[0], end=asthma[0] + 6, type="Disease", score=1.0),
+            Mention(text="asthma", start=asthma[1], end=asthma[1] + 6, type="Disease", score=1.0),
             Mention(
-                "women", sentence.index("women"), sentence.index("women") + 5, "BiologicalSex", 0.9
+                text="women",
+                start=sentence.index("women"),
+                end=sentence.index("women") + 5,
+                type="BiologicalSex",
+                score=0.9,
             ),
         ]
     }
@@ -298,8 +334,8 @@ def test_dailymed_offsets_rebase_before_attachment() -> None:
     base = len(prefix)
     mentions = {
         ("SET-A", "SET-A#34067-9"): [
-            Mention("Drug", base, base + 4, "Disease", 1.0),
-            Mention("women", base + 16, base + 21, "BiologicalSex", 0.9),
+            Mention(text="Drug", start=base, end=base + 4, type="Disease", score=1.0),
+            Mention(text="women", start=base + 16, end=base + 21, type="BiologicalSex", score=0.9),
         ]
     }
     observations = _indication_observations(
@@ -337,7 +373,9 @@ def test_indication_observation_merges_duplicate_host_qualifiers_by_score(
         {},
         {
             ("SET-A", "SET-A#34067-9"): [
-                Mention("asthma", host_start, host_start + 6, "Disease", 1.0)
+                Mention(
+                    text="asthma", start=host_start, end=host_start + 6, type="Disease", score=1.0
+                )
             ]
         },
     )
@@ -357,14 +395,18 @@ def test_patient_clause_disease_context_attaches_to_the_indication_host() -> Non
     mentions = {
         ("SET-A", "SET-A#34067-9"): [
             Mention(
-                "asthma", sentence.index("asthma"), sentence.index("asthma") + 6, "Disease", 1.0
+                text="asthma",
+                start=sentence.index("asthma"),
+                end=sentence.index("asthma") + 6,
+                type="Disease",
+                score=1.0,
             ),
             Mention(
-                "diabetes",
-                sentence.index("diabetes"),
-                sentence.index("diabetes") + 8,
-                "Disease",
-                1.0,
+                text="diabetes",
+                start=sentence.index("diabetes"),
+                end=sentence.index("diabetes") + 8,
+                type="Disease",
+                score=1.0,
             ),
         ]
     }
@@ -391,7 +433,11 @@ def test_indication_without_patient_clause_leaves_disease_context_blank() -> Non
     mentions = {
         ("SET-A", "SET-A#34067-9"): [
             Mention(
-                "asthma", sentence.index("asthma"), sentence.index("asthma") + 6, "Disease", 1.0
+                text="asthma",
+                start=sentence.index("asthma"),
+                end=sentence.index("asthma") + 6,
+                type="Disease",
+                score=1.0,
             )
         ]
     }
@@ -422,14 +468,14 @@ def test_patient_clause_context_does_not_attach_to_a_non_host_disease() -> None:
     second = sentence.index("asthma", first + 1)
     mentions = {
         ("SET-A", "SET-A#34067-9"): [
-            Mention("asthma", first, first + 6, "Disease", 1.0),
-            Mention("asthma", second, second + 6, "Disease", 1.0),
+            Mention(text="asthma", start=first, end=first + 6, type="Disease", score=1.0),
+            Mention(text="asthma", start=second, end=second + 6, type="Disease", score=1.0),
             Mention(
-                "diabetes",
-                sentence.index("diabetes"),
-                sentence.index("diabetes") + 8,
-                "Disease",
-                1.0,
+                text="diabetes",
+                start=sentence.index("diabetes"),
+                end=sentence.index("diabetes") + 8,
+                type="Disease",
+                score=1.0,
             ),
         ]
     }
@@ -455,15 +501,21 @@ def test_dailymed_context_and_qualifiers_aggregate_model_metadata() -> None:
     mentions = {
         ("SET-A", "SET-A#34067-9"): [
             Mention(
-                "asthma",
-                host_start,
-                host_start + 6,
-                "Disease",
-                1.0,
+                text="asthma",
+                start=host_start,
+                end=host_start + 6,
+                type="Disease",
+                score=1.0,
                 context_model="contraindication",
                 context_model_score=0.8,
             ),
-            Mention("women", text.index("women"), text.index("women") + 5, "BiologicalSex", 0.9),
+            Mention(
+                text="women",
+                start=text.index("women"),
+                end=text.index("women") + 5,
+                type="BiologicalSex",
+                score=0.9,
+            ),
         ]
     }
     observations = _indication_observations(ev, ["SET-A"], {"object_text": "asthma"}, {}, mentions)
@@ -686,10 +738,9 @@ def test_production_ner_single_section_still_uses_the_open_pool(fake_dispatch_po
 
 def test_shaper_uses_injected_ner(ctx: TaskContext, dailymed_refs: Any, drugsfda_refs: Any) -> None:
     """An injected params['ner'] backend is used as-is (no default construction)."""
-    import dataclasses
 
     ner = DiseaseNER(gazetteer={"asthma": "disease"})
-    injected_ctx = dataclasses.replace(ctx, params={**ctx.params, "ner": ner})
+    injected_ctx = ctx.model_copy(update={"params": {**ctx.params, "ner": ner}})
     refs = ApprovedTreatsShaper().transform([*dailymed_refs, *drugsfda_refs], injected_ctx)
     assert len(refs) == 1
     assert refs[0].uri.name == "approved_treats_assertions.tsv"

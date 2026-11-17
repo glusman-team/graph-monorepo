@@ -24,9 +24,10 @@ import re
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.artifact_store import ArtifactStore
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
@@ -56,9 +57,10 @@ _DOWNLOAD_CONCURRENCY = 4
 _EVENT = "acquire_faers"
 
 
-@dataclass(frozen=True)
-class QuarterSource:
+class QuarterSource(BaseModel):
     """A discovered FAERS quarter: a canonical quarter label and its zip URL."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     quarter: str  # canonical label, e.g. "24Q3"
     url: str
@@ -86,7 +88,7 @@ def discover_quarters(
         found[label] = url
     # Lexicographic reverse sort == most-recent first for zero-padded 2-digit years
     # (covers FAERS quarters from 2004 through 2099).
-    return [QuarterSource(label, found[label]) for label in sorted(found, reverse=True)]
+    return [QuarterSource(quarter=label, url=found[label]) for label in sorted(found, reverse=True)]
 
 
 def _apply_quarter_limit[T](quarters: list[T], ctx: TaskContext) -> list[T]:
@@ -123,7 +125,7 @@ class FAERSFetcher:
                 logger.warning("{}: no FAERS quarters discovered from index", _EVENT)
                 return []
             if policy.cached_only:
-                store = ArtifactStore(Workdir(ctx.workdir))
+                store = ArtifactStore(Workdir(root=ctx.workdir))
                 refs = [
                     require_cached(
                         store.cached_ref(f"faers/faers_ascii_{source.quarter}.zip"),
@@ -146,8 +148,8 @@ class FAERSFetcher:
 
     def cached_quarters(self, ctx: TaskContext) -> list[QuarterSource]:
         """Enumerate cached quarter aliases without any network access."""
-        store = ArtifactStore(Workdir(ctx.workdir))
-        alias_root = Workdir(ctx.workdir).aliases / "faers"
+        store = ArtifactStore(Workdir(root=ctx.workdir))
+        alias_root = Workdir(root=ctx.workdir).aliases / "faers"
         if not alias_root.exists():
             return []
         found: dict[str, str] = {}
@@ -166,11 +168,13 @@ class FAERSFetcher:
                 else f"{FDA_FAERS_DOWNLOAD_BASE}/faers_ascii_20{quarter[:2]}q{quarter[-1]}.zip"
             )
             found[quarter] = url
-        return [QuarterSource(label, found[label]) for label in sorted(found, reverse=True)]
+        return [
+            QuarterSource(quarter=label, url=found[label]) for label in sorted(found, reverse=True)
+        ]
 
     def _discovery_index(self, ctx: TaskContext, policy) -> str:
         """Reuse a fresh discovery index, otherwise fetch and content-address it."""
-        store = ArtifactStore(Workdir(ctx.workdir))
+        store = ArtifactStore(Workdir(root=ctx.workdir))
         cached = store.cached_ref(_INDEX_ALIAS)
         manifest = store.read_manifest(cached.blake3) if cached is not None else None
         age = _cache_age_days(manifest)
@@ -178,7 +182,7 @@ class FAERSFetcher:
             stats(logger, f"{_EVENT} index", cache_hit=True, age_days=round(age, 2))
             return cached.uri.read_text(encoding="utf-8", errors="replace")
         index_html = self.fetch_index(ctx)
-        dest = Workdir(ctx.workdir).raw / "downloads" / "faers-discovery-index.html"
+        dest = Workdir(root=ctx.workdir).raw / "downloads" / "faers-discovery-index.html"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(index_html, encoding="utf-8")
         store.ingest(
@@ -212,7 +216,7 @@ class FAERSFetcher:
         ``force`` re-downloads unconditionally. Downloads stream in 1 MiB chunks (a quarter
         zip never sits whole in memory) and the staged copy is removed once content-addressed.
         """
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         alias = f"faers/faers_ascii_{source.quarter}.zip"
         quarter_event = f"{_EVENT} quarter"

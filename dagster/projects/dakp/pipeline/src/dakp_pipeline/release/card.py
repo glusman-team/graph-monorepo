@@ -8,13 +8,13 @@ import json
 import re
 import shutil
 from collections import Counter
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from string import Template
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.release.delta import SourceDelta
 from dakp_pipeline.release.verify import ReleaseVerification
@@ -23,19 +23,19 @@ _TEMPLATE_PATH = Path(__file__).with_name("card_template.md")
 _RELEASE_HEADER = "| Version | Nodes | Edges | File size |"
 
 
-@dataclass(frozen=True)
-class ReleaseFile:
+class ReleaseFile(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     name: str
     path: Path
     bytes: int
     md5: str
 
     def to_dict(self) -> dict[str, Any]:
-        return {**asdict(self), "path": str(self.path)}
+        return {**self.model_dump(), "path": str(self.path)}
 
 
-@dataclass(frozen=True)
-class KGStats:
+class KGStats(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     nodes: int
     edges: int
     node_categories: dict[str, int]
@@ -47,8 +47,8 @@ class KGStats:
     study_backed_edges: int
 
 
-@dataclass(frozen=True)
-class CardResult:
+class CardResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     markdown: str
     stats: KGStats
     files: tuple[ReleaseFile, ...]
@@ -106,7 +106,7 @@ def file_stat(path: Path) -> ReleaseFile:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(8 << 20), b""):
             digest.update(chunk)
-    return ReleaseFile(path.name, path, path.stat().st_size, digest.hexdigest())
+    return ReleaseFile(name=path.name, path=path, bytes=path.stat().st_size, md5=digest.hexdigest())
 
 
 def stage_release_files(

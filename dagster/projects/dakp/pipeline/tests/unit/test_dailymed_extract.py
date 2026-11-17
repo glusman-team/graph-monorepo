@@ -30,7 +30,7 @@ def _acquire_and_extract(
     tmp_path: Path,
 ) -> tuple[list[ArtifactRef], list[ArtifactRef], TaskContext]:
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     # Fetchers always run real; the extractor test reads the SPL fixture directly (offline).
     raw = [ctx.fixture(_DAILYMED_FIXTURE)]
     refs = spl_xml.extract(raw, ctx)
@@ -150,9 +150,9 @@ def test_approvals_and_sets_tables(tmp_path: Path) -> None:
 def test_source_record_id_is_deterministic(tmp_path: Path) -> None:
     """Re-extracting the same source yields identical source_record_id values."""
     ctx_a = _ctx(tmp_path / "a")
-    Workdir(ctx_a.workdir).create()
+    Workdir(root=ctx_a.workdir).create()
     ctx_b = _ctx(tmp_path / "b")
-    Workdir(ctx_b.workdir).create()
+    Workdir(root=ctx_b.workdir).create()
 
     raw = [ctx_a.fixture(_DAILYMED_FIXTURE)]
     refs_a = spl_xml.extract(raw, ctx_a)
@@ -220,7 +220,7 @@ def test_extractor_handles_plain_and_gzipped_xml(tmp_path: Path) -> None:
     import gzip
 
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     gz_fixture = _FIXTURE_ROOT / "dailymed" / "dailymed_spl.xml.gz"
     plain = tmp_path / "dailymed_spl.xml"
     plain.write_bytes(gzip.decompress(gz_fixture.read_bytes()))
@@ -267,7 +267,7 @@ _HL7V3_WARNINGS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 def test_hl7v3_sections_prefer_loinc_oid_code(tmp_path: Path) -> None:
     """A codeSystem=LOINC-OID code beats an earlier LOINC-shaped code from another system."""
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     path = tmp_path / "warnings_spl.xml"
     path.write_text(_HL7V3_WARNINGS_XML, encoding="utf-8")
 
@@ -307,7 +307,7 @@ _HL7V3_TWO_PLAIN_CODES_XML = """<?xml version="1.0" encoding="UTF-8"?>
 def test_hl7v3_first_loinc_shaped_code_wins_without_oid(tmp_path: Path) -> None:
     """No OID-tagged code: the first LOINC-shaped code wins and later codes are ignored."""
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     path = tmp_path / "two_code_spl.xml"
     path.write_text(_HL7V3_TWO_PLAIN_CODES_XML, encoding="utf-8")
 
@@ -349,7 +349,7 @@ def test_mock_products_table(tmp_path: Path) -> None:
 def test_hl7v3_products_table(tmp_path: Path) -> None:
     """Real-shape SPL: ACTIB actives, substance + moiety, IACT/CNTM excluded, suffix spaced."""
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     refs = spl_xml.extract([ctx.fixture("dailymed/hl7v3_spl.xml.gz")], ctx)
     frame = pl.read_parquet(next(r for r in refs if r.uri.name == "spl_products.parquet").uri)
     rows = frame.sort(["ingredient_kind", "ingredient_name"]).to_dicts()
@@ -395,7 +395,7 @@ def test_hl7v3_products_legacy_and_kits(tmp_path: Path) -> None:
 
 def test_animal_fixture_products(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
-    Workdir(ctx.workdir).create()
+    Workdir(root=ctx.workdir).create()
     refs = spl_xml.extract([ctx.fixture("dailymed/dailymed_spl_animal.xml.gz")], ctx)
     frame = pl.read_parquet(next(r for r in refs if r.uri.name == "spl_products.parquet").uri)
     assert set(frame.get_column("product_name").to_list()) == {"FleaWash", "ItchAway"}

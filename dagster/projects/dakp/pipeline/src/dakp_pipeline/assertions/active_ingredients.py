@@ -33,7 +33,8 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.assertions import (
     AT_MANUAL,
@@ -89,18 +90,19 @@ def split_active_ingredients(cell: object) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
-@dataclass
-class _Aggregate:
+class _Aggregate(BaseModel):
     """One (product, ingredient) pair accumulated across both FDA sources."""
+
+    model_config = ConfigDict(extra="forbid")
 
     subject_text: str = ""
     object_text: str = ""
-    kinds: set[str] = field(default_factory=set)
-    sets: set[str] = field(default_factory=set)
-    approvals: set[str] = field(default_factory=set)
+    kinds: set[str] = Field(default_factory=set)
+    sets: set[str] = Field(default_factory=set)
+    approvals: set[str] = Field(default_factory=set)
     # FDA infores CURIEs that actually contributed rows to this pair. Drugs@FDA-only pairs
     # (the issue-#59 case) must not name DailyMed, and vice versa.
-    sources: set[str] = field(default_factory=set)
+    sources: set[str] = Field(default_factory=set)
 
 
 def build_has_active_ingredient_rows(

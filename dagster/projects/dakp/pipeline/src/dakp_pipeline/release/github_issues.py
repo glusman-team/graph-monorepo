@@ -9,11 +9,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from string import Template
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 
 def _find_template() -> Path:
@@ -35,8 +36,8 @@ ISSUE_LABEL = "dakp-build-failure"
 MAX_ISSUE_BODY = 60_000
 
 
-@dataclass(frozen=True)
-class StepStat:
+class StepStat(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     name: str
     status: str
     started_at: str = ""
@@ -46,8 +47,8 @@ class StepStat:
     log_tail: str = ""
 
 
-@dataclass(frozen=True)
-class FailureEvent:
+class FailureEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     job_name: str
     run_id: str
     run_url: str

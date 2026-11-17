@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.release.state import (
     DELTA_SCHEMA,
@@ -17,8 +18,8 @@ from dakp_pipeline.release.state import (
 )
 
 
-@dataclass(frozen=True)
-class SourceChange:
+class SourceChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     source: str
     current: SourceFingerprint
     previous: SourceFingerprint | None
@@ -28,12 +29,12 @@ class SourceChange:
         return self.current.upstream_dates or self.current.retrieved_dates
 
 
-@dataclass(frozen=True)
-class SourceDelta:
+class SourceDelta(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     current: dict[str, SourceFingerprint]
     changes: tuple[SourceChange, ...]
     previous_version: str | None
-    created_at: str = field(default_factory=utc_now_iso)
+    created_at: str = Field(default_factory=utc_now_iso)
     check_run_id: str | None = None
     check_started_at: str | None = None
 
@@ -128,7 +129,7 @@ def compute_delta(
         )
         raise ValueError(msg)
     changes = tuple(
-        SourceChange(name, fingerprint, previous_sources.get(name))
+        SourceChange(source=name, current=fingerprint, previous=previous_sources.get(name))
         for name, fingerprint in sorted(current.items())
         if name not in previous_sources
         or previous_sources[name].fingerprint != fingerprint.fingerprint

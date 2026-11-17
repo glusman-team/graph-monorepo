@@ -8,15 +8,16 @@ import shutil
 import subprocess
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
 
-@dataclass
-class PreflightReport:
-    checks: dict[str, str] = field(default_factory=dict)
-    failures: list[str] = field(default_factory=list)
+
+class PreflightReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    checks: dict[str, str] = Field(default_factory=dict)
+    failures: list[str] = Field(default_factory=list)
     git_sha: str | None = None
     hf_user: str | None = None
 

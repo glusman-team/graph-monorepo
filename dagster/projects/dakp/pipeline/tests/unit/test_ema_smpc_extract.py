@@ -558,7 +558,7 @@ def test_read_pdf_text_decrypts_an_empty_password(tmp_path: Path) -> None:
 
 
 def _ctx(workdir: Path) -> TaskContext:
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     return TaskContext(workdir=workdir, fixture_root=_FIXTURE_ROOT, params={})
 
 
@@ -582,7 +582,7 @@ def test_extract_writes_the_sections_and_warnings_tables(tmp_path: Path) -> None
     assert sections_ref.schema_fingerprint == schemas.schema_fingerprint(
         ema_smpc.SMPC_SECTIONS_COLUMNS
     )
-    store = ArtifactStore(Workdir(workdir))
+    store = ArtifactStore(Workdir(root=workdir))
     manifest = store.read_manifest(sections_ref.blake3)
     assert manifest is not None
     assert manifest.operation is not None

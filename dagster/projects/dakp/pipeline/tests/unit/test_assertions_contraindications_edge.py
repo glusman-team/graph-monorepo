@@ -136,7 +136,7 @@ class _BlankNER(DiseaseNER):
 
 def _ctx(tmp_path: Path, params: Mapping[str, Any]) -> TaskContext:
     context = TaskContext(workdir=tmp_path / "work", fixture_root=FIXTURE_ROOT, params=params)
-    Workdir(context.workdir).create()
+    Workdir(root=context.workdir).create()
     return context
 
 
@@ -259,29 +259,49 @@ def test_legacy_tuple_mined_mentions_use_fallback_evidence(tmp_path: Path) -> No
     """
     from dakp_pipeline.assertions.contraindications import _mention_local_span
 
-    mention = Mention("asthma", 0, 6, "Disease", 1.0)
+    mention = Mention(text="asthma", start=0, end=6, type="Disease", score=1.0)
     assert _work_item_parts(("SET", "DOC", "text")) == ("SET", "DOC", "text")
     assert _work_item_evidence(("SET", "DOC", "text"), mention) == "text"
     item = ContraWorkItem(
-        "SET", "DOC", "asthma in women", "asthma in women", (EvidenceSpan(0, 6, 0, 6, "asthma"),)
+        set_id="SET",
+        doc_id="DOC",
+        text="asthma in women",
+        source_text="asthma in women",
+        evidence_spans=(
+            EvidenceSpan(mined_start=0, mined_end=6, source_start=0, source_end=6, text="asthma"),
+        ),
     )
     assert _mention_local_span(item, mention) == ("asthma", 0, 6, 0)
-    assert _mention_local_span(item, Mention("women", 10, 15, "BiologicalSex", 0.9)) is None
     assert (
-        _work_item_evidence(item, Mention("women", 10, 15, "BiologicalSex", 0.9))
+        _mention_local_span(
+            item, Mention(text="women", start=10, end=15, type="BiologicalSex", score=0.9)
+        )
+        is None
+    )
+    assert (
+        _work_item_evidence(
+            item, Mention(text="women", start=10, end=15, type="BiologicalSex", score=0.9)
+        )
         == "asthma in women"
     )
     assert (
-        _work_item_evidence(item, Mention("women", 10, 15, "BiologicalSex", 0.9))
+        _work_item_evidence(
+            item, Mention(text="women", start=10, end=15, type="BiologicalSex", score=0.9)
+        )
         == "asthma in women"
     )
     assert _work_item_evidence(item, mention) == "asthma"
     assert (
-        _work_item_evidence(item, Mention("women", 10, 15, "BiologicalSex", 0.9))
+        _work_item_evidence(
+            item, Mention(text="women", start=10, end=15, type="BiologicalSex", score=0.9)
+        )
         == "asthma in women"
     )
     assert (
-        _work_item_evidence(("SET", "DOC", "text"), Mention("asthma", 0, 6, "Disease", 1.0))
+        _work_item_evidence(
+            ("SET", "DOC", "text"),
+            Mention(text="asthma", start=0, end=6, type="Disease", score=1.0),
+        )
         == "text"
     )
 
@@ -302,8 +322,8 @@ def test_contraindication_localizes_objects_and_qualifiers(
         contra_mod,
         "extract_contraindication_diseases",
         lambda text, ner: [
-            Mention("asthma", 0, 6, "Disease", 0.9),
-            Mention("women", 10, 15, "BiologicalSex", 0.8),
+            Mention(text="asthma", start=0, end=6, type="Disease", score=0.9),
+            Mention(text="women", start=10, end=15, type="BiologicalSex", score=0.8),
         ],
     )
     rows = build_contraindication_rows(
@@ -324,8 +344,8 @@ def test_unmapped_work_items_use_fallback_evidence_for_objects_and_qualifiers(
         contra_mod,
         "extract_contraindication_diseases",
         lambda text, ner: [
-            Mention("asthma", 0, 6, "Disease", 0.9),
-            Mention("women", 10, 15, "BiologicalSex", 0.8),
+            Mention(text="asthma", start=0, end=6, type="Disease", score=0.9),
+            Mention(text="women", start=10, end=15, type="BiologicalSex", score=0.8),
         ],
     )
     sections = _sections(tmp_path, [("SET-L", "SET-L#d", "asthma in women")])
@@ -1269,7 +1289,13 @@ def test_spawn_safe_main_leaves_module_main_untouched(monkeypatch: pytest.Monkey
 def test_contra_work_item_keeps_legacy_tuple_protocol() -> None:
     """Legacy workers/tests treat work items as ``(set_id, doc_id, text)`` 3-tuples, so
     indexing, ``len()``, and unpacking must keep behaving like the old tuple interface."""
-    item = ContraWorkItem("SET-A", "DOC-A", "mined text", "full source text", ())
+    item = ContraWorkItem(
+        set_id="SET-A",
+        doc_id="DOC-A",
+        text="mined text",
+        source_text="full source text",
+        evidence_spans=(),
+    )
     assert item[0] == "SET-A"
     assert item[1] == "DOC-A"
     assert item[2] == "mined text"
@@ -1312,13 +1338,21 @@ def test_work_item_evidence_resolves_spans_and_falls_back() -> None:
     span contains the mention, and uses the whole text for legacy tuple items."""
     source = "First clean. Second with asthma. Trailing provenance."
     item = ContraWorkItem(
-        "SET-A",
-        "DOC-A",
-        "First clean. Second with asthma.",
-        source,
-        (
-            EvidenceSpan(0, 12, 0, 12, "First clean."),
-            EvidenceSpan(13, 32, 40, 59, "Second with asthma."),
+        set_id="SET-A",
+        doc_id="DOC-A",
+        text="First clean. Second with asthma.",
+        source_text=source,
+        evidence_spans=(
+            EvidenceSpan(
+                mined_start=0, mined_end=12, source_start=0, source_end=12, text="First clean."
+            ),
+            EvidenceSpan(
+                mined_start=13,
+                mined_end=32,
+                source_start=40,
+                source_end=59,
+                text="Second with asthma.",
+            ),
         ),
     )
     # Mention inside the SECOND joined span: the first span is skipped without overlap.
@@ -1342,11 +1376,15 @@ def test_offset_space_keeps_unmapped_mention_offsets_in_bounds() -> None:
     """
     mined = "First clean. Second with asthma."
     gapped = ContraWorkItem(
-        "SET-A",
-        "DOC-A",
-        mined,
-        "First clean. Unrelated source prose.",
-        (EvidenceSpan(0, 12, 0, 12, "First clean."),),
+        set_id="SET-A",
+        doc_id="DOC-A",
+        text=mined,
+        source_text="First clean. Unrelated source prose.",
+        evidence_spans=(
+            EvidenceSpan(
+                mined_start=0, mined_end=12, source_start=0, source_end=12, text="First clean."
+            ),
+        ),
     )
     unmapped = Mention(
         text="asthma",
@@ -1379,7 +1417,15 @@ def test_mention_local_span_maps_overlap_and_returns_none_without_any() -> None:
     """A mapped mention yields ``(sentence, local start, local end, source start)`` offsets;
     a mention overlapping NO span maps to None so qualifier logic can skip it safely."""
     item = ContraWorkItem(
-        "SET-A", "DOC-A", "xxxx asthma", "src asthma text", (EvidenceSpan(5, 11, 20, 26, "asthma"),)
+        set_id="SET-A",
+        doc_id="DOC-A",
+        text="xxxx asthma",
+        source_text="src asthma text",
+        evidence_spans=(
+            EvidenceSpan(
+                mined_start=5, mined_end=11, source_start=20, source_end=26, text="asthma"
+            ),
+        ),
     )
     overlapping = Mention(text="asthma", start=5, end=11, type="Disease", score=1.0)
     assert _mention_local_span(item, overlapping) == ("asthma", 0, 6, 20)
@@ -1391,8 +1437,16 @@ def test_mention_local_span_maps_overlap_and_returns_none_without_any() -> None:
 def test_classify_mentions_keeps_unmapped_mentions_out_of_qualifier_grouping() -> None:
     """A mention that maps to no source span keeps its local decision but cannot join the
     per-sentence patient-clause grouping (there is no sentence to group on)."""
-    spans = (EvidenceSpan(0, 7, 30, 37, "asthma."),)
-    item = ContraWorkItem("SET-A", "DOC-A", "asthma. diabetes.", "asthma. diabetes.", spans)
+    spans = (
+        EvidenceSpan(mined_start=0, mined_end=7, source_start=30, source_end=37, text="asthma."),
+    )
+    item = ContraWorkItem(
+        set_id="SET-A",
+        doc_id="DOC-A",
+        text="asthma. diabetes.",
+        source_text="asthma. diabetes.",
+        evidence_spans=spans,
+    )
     mapped = Mention(text="asthma", start=0, end=6, type="Disease", score=1.0)
     unmapped = Mention(text="diabetes", start=8, end=16, type="Disease", score=1.0)
     decisions = _classify_mentions(item, [mapped, unmapped])
@@ -1518,8 +1572,18 @@ def test_context_qualifier_skipped_when_context_normalizes_blank() -> None:
     """A before-marker mention whose normalized text is empty (punctuation-only) cannot become
     a qualifier: the loop bails out and the object edge survives untouched."""
     sentence = "Contraindicated for treatment of --- in patients with asthma."
-    spans = (EvidenceSpan(0, len(sentence), 0, len(sentence), sentence),)
-    item = ContraWorkItem("SET-A", "DOC-A", sentence, sentence, spans)
+    spans = (
+        EvidenceSpan(
+            mined_start=0,
+            mined_end=len(sentence),
+            source_start=0,
+            source_end=len(sentence),
+            text=sentence,
+        ),
+    )
+    item = ContraWorkItem(
+        set_id="SET-A", doc_id="DOC-A", text=sentence, source_text=sentence, evidence_spans=spans
+    )
     context = Mention(text="---", start=33, end=36, type="Disease", score=1.0)
     asthma = Mention(text="asthma", start=54, end=60, type="Disease", score=1.0)
     decisions = _classify_mentions(item, [context, asthma])

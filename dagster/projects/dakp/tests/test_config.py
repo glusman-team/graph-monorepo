@@ -9,8 +9,15 @@ fullmap in ``runtime.py``). The publication version was likewise never forwarded
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
-from dakp_dag.config import run_config, task_context
+from dakp_dag.config import (
+    ReleaseSettings,
+    RunConfig,
+    release_settings,
+    run_config,
+    task_context,
+)
 
 
 def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,3 +65,27 @@ def test_release_run_tag_overrides_env_publication_version(monkeypatch: pytest.M
     assert run_config_for(context).publication_version == "1.27.1"
     context.run.tags = {}
     assert run_config_for(context).publication_version == "1.0.0"
+
+
+def test_run_config_is_immutable_and_rejects_unknown_knobs(tmp_path) -> None:
+    """A typo in a run knob must fail loudly, and a resolved config must not drift mid-run."""
+    config = run_config()
+    with pytest.raises(ValidationError, match="frozen_instance"):
+        config.quarter_limit = 5
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        RunConfig(**config.model_dump(), quarter_limt=5)
+    assert isinstance(config, RunConfig)
+    assert config.refs_dir == config.published_root / "dakp" / "refs"
+
+
+def test_release_settings_keep_tokens_out_of_the_repr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Secrets stay out of logs: the token fields are repr-excluded after the model migration."""
+    monkeypatch.setenv("HF_TOKEN", "hf-secret-value")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-secret-value")
+    settings = release_settings()
+    assert settings.hf_token == "hf-secret-value"
+    assert settings.github_token == "github-secret-value"
+    rendered = repr(settings)
+    assert "hf-secret-value" not in rendered
+    assert "github-secret-value" not in rendered
+    assert isinstance(settings, ReleaseSettings)

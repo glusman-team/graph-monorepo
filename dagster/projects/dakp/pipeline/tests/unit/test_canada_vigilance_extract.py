@@ -155,7 +155,7 @@ def test_extract_writes_the_indications_and_warnings_tables(tmp_path: Path) -> N
     )
     assert warnings.columns == cv.CV_WARNINGS_COLUMNS
     assert warnings.height == 1  # the GHOSTDRUG fallback warning
-    store = ArtifactStore(Workdir(workdir))
+    store = ArtifactStore(Workdir(root=workdir))
     manifest = store.read_manifest(indications_ref.blake3)
     assert manifest is not None
     assert manifest.operation is not None

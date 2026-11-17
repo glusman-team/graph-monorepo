@@ -31,10 +31,11 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.content_hash import TREE_HASH_V1, TREE_HASH_V2_MT, hash_tree, hash_tree_mt
 from dakp_pipeline.logging_setup import logger, stats
@@ -67,13 +68,14 @@ class NERDependencyError(ImportError):
     """
 
 
-@dataclass(frozen=True)
-class ModelRef:
+class ModelRef(BaseModel):
     """Handle to a cached model: where its files live plus provenance.
 
     ``path`` is the ``content/`` directory a backend loads from; ``b3`` is its BLAKE3 tree
     hash; ``manifest`` is the JSON provenance file.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     model_id: str
     source: str

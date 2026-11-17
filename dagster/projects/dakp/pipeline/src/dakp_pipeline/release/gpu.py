@@ -6,36 +6,37 @@ import csv
 import io
 import subprocess
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 
 class GPUProbeError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class GPUDevice:
+class GPUDevice(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     index: int
     name: str
     used_mib: int
     total_mib: int
 
 
-@dataclass(frozen=True)
-class GPUStatus:
+class GPUStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     devices: tuple[GPUDevice, ...]
     processes: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "devices": [asdict(device) for device in self.devices],
+            "devices": [device.model_dump() for device in self.devices],
             "processes": list(self.processes),
         }
 
 
-@dataclass(frozen=True)
-class GPUGateResult:
+class GPUGateResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     free: bool
     reason: str
     status: GPUStatus

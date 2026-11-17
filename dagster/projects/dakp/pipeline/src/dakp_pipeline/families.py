@@ -21,8 +21,9 @@ with the shapers; registering a family must never change an emitted row.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.io.contracts import ArtifactRef, TaskContext
 
@@ -35,9 +36,10 @@ class Shaper(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class EdgeFamily:
+class EdgeFamily(BaseModel):
     """One edge predicate family: table contract + shaper wiring."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str  # registry key, e.g. "approved_treats"
     table: str  # tabular TSV file name, a key of io/schemas.ASSERTION_TABLES

@@ -25,7 +25,10 @@ def test_check_rows_skips_unconstrained_invariants(monkeypatch: pytest.MonkeyPat
     # A family with neither a clinical_approval_status nor a knowledge_level constraint:
     # both guards short-circuit (the knowledge_level-None branch is otherwise unreachable).
     custom = regression.FamilyInvariant(
-        "biolink:custom", frozenset({"infores:dailymed"}), None, None
+        predicate="biolink:custom",
+        required_upstream=frozenset({"infores:dailymed"}),
+        clinical_approval_status=None,
+        knowledge_level=None,
     )
     patched = dict(regression.FAMILY_INVARIANTS)
     patched["biolink:custom"] = custom

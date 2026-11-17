@@ -144,7 +144,7 @@ class DrugsFDAProductsExtractor:
     """Parse Drugs@FDA tab-delimited tables into normalized parquet + a Tablassert TSV."""
 
     def extract(self, inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         log = bind(task_id="extract_drugsfda_products")
         warnings: list[dict[str, str]] = []

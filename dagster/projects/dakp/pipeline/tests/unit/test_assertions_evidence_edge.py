@@ -552,7 +552,9 @@ def test_fda_approval_index_register_wins_on_human_edges_and_the_animal_form_rid
     )
     index = build_fda_approval_index([approvals, products])
 
-    assert index.register == {"65470": "ANDA065470"}  # join keys are zero-stripped norms
+    assert index.authoritative_displays == {
+        "65470": "ANDA065470"
+    }  # join keys are zero-stripped norms
     assert index.expand("065470") == ["ANDA065470"]  # register form, not the animal spelling
     assert index.expand_for_edge("065470", animal_edge=True) == ["NADA065470"]
 

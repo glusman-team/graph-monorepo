@@ -97,7 +97,7 @@ def test_load_or_build_dailymed_evidence_rebuilds_when_the_cached_artifact_vanis
         return real_build(inputs)  # type: ignore[arg-type]
 
     # Deleting the registered pickle prunes the index entry: the next call rebuilds + re-registers.
-    store = ArtifactStore(Workdir(ctx.workdir))
+    store = ArtifactStore(Workdir(root=ctx.workdir))
     consumed = sorted(
         ref.blake3 for ref in dailymed_refs if ref.uri.name in evidence._EVIDENCE_TABLES
     )

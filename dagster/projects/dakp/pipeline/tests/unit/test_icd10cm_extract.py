@@ -163,8 +163,8 @@ def test_extractor_writes_the_interim_table(monkeypatch, tmp_path: Path) -> None
     zip_path = tmp_path / "icd10cm-table-and-index-2027.zip"
     with zipfile.ZipFile(zip_path, "w") as archive:
         archive.writestr("icd10cm-table-and-index-2027/icd10cm-drug-2027.xml", _XML)
-    Workdir(tmp_path / "work").create()
-    store = ArtifactStore(Workdir(tmp_path / "work"))
+    Workdir(root=tmp_path / "work").create()
+    store = ArtifactStore(Workdir(root=tmp_path / "work"))
     raw_ref, _ = store.ingest(zip_path, media_type="application/zip", alias="icd10cm/release.zip")
     ctx = TaskContext(workdir=tmp_path / "work", fixture_root=None, params={})
 

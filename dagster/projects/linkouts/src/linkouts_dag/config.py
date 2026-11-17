@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -13,8 +14,9 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-@dataclass(frozen=True)
-class RuntimeConfig:
+class RuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     published_root: Path
     workdir: Path
     worker_bin: Path

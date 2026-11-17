@@ -29,7 +29,7 @@ _EMA_FIXTURE = _FIXTURE_ROOT / "ema" / "medicines-output-medicines-report_en.xls
 
 
 def _ctx(workdir: Path) -> TaskContext:
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     return TaskContext(workdir=workdir, fixture_root=_FIXTURE_ROOT, params={})
 
 
@@ -101,7 +101,7 @@ def test_extract_writes_and_registers_interim_parquet(tmp_path: Path) -> None:
 
     assert len(refs) == 1
     ref = refs[0]
-    assert ref.uri == Workdir(ctx.workdir).interim / "ema" / "ema_registry.parquet"
+    assert ref.uri == Workdir(root=ctx.workdir).interim / "ema" / "ema_registry.parquet"
     assert ref.media_type == schemas.PARQUET_MEDIA_TYPE
     assert ref.manifest is not None
     assert ref.manifest.exists()

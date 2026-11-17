@@ -114,7 +114,7 @@ class EmaSmpcExtractor:
     """Parse the crawled product-information PDFs into the normalized section table."""
 
     def extract(self, inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         log = bind(task_id=_EVENT)
 

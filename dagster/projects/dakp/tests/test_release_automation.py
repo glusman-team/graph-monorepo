@@ -54,7 +54,7 @@ def test_weekly_schedule_is_friday_1700_pacific_and_deduplicated() -> None:
 
 
 def _fake_acquisition(context, config, stage: str, fn_name: str) -> dg.MaterializeResult:
-    store = ArtifactStore(Workdir(config.workdir))
+    store = ArtifactStore(Workdir(root=config.workdir))
     path = config.workdir / "downloads" / f"{stage}.bin"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(stage.encode("utf-8"))
@@ -102,7 +102,9 @@ def test_release_check_writes_delta_then_skips_unchanged_sources(
     assert pending.changed and pending.check_run_id
     write_state(
         state_path(dag_env.published),
-        ReleaseState("1.27.0", "2026-11-01T00:00:00+00:00", pending.current),
+        ReleaseState(
+            version="1.27.0", published_at="2026-11-01T00:00:00+00:00", sources=pending.current
+        ),
     )
 
     second = _run_check(monkeypatch)
@@ -114,10 +116,17 @@ def test_release_check_writes_delta_then_skips_unchanged_sources(
 
 
 def _write_gate_delta(root: Path, *, changed: bool = True) -> SourceDelta:
-    fingerprint = SourceFingerprint("b3:abc", 1, ("2026-11-04",), ("2026-11-06",))
+    fingerprint = SourceFingerprint(
+        fingerprint="b3:abc",
+        artifact_count=1,
+        upstream_dates=("2026-11-04",),
+        retrieved_dates=("2026-11-06",),
+    )
     delta = SourceDelta(
         current={"DailyMed": fingerprint},
-        changes=(SourceChange("DailyMed", fingerprint, None),) if changed else (),
+        changes=(SourceChange(source="DailyMed", current=fingerprint, previous=None),)
+        if changed
+        else (),
         previous_version="1.27.0" if changed else None,
         created_at="2026-11-06T17:10:00-08:00",
         check_started_at="2026-11-06T17:00:00-08:00",
@@ -164,8 +173,8 @@ def test_gpu_gate_retries_then_launches_once_with_version(
     dag_env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_gate_delta(dag_env.published)
-    busy = GPUStatus((GPUDevice(0, "P100", 13000, 16384),))
-    free = GPUStatus((GPUDevice(0, "P100", 512, 16384),))
+    busy = GPUStatus(devices=(GPUDevice(index=0, name="P100", used_mib=13000, total_mib=16384),))
+    free = GPUStatus(devices=(GPUDevice(index=0, name="P100", used_mib=512, total_mib=16384),))
     monkeypatch.setattr(automation, "probe_gpus", lambda: busy)
     monkeypatch.setattr(automation, "_hf_api", lambda settings: object())
     monkeypatch.setattr(automation, "next_hf_patch_version", lambda api, repo: "1.27.1")
@@ -245,7 +254,7 @@ def test_verify_and_card_assets_stage_real_outputs(
         + "\n",
         encoding="utf-8",
     )
-    rig_dir = Workdir(dag_env.workdir).kgx
+    rig_dir = Workdir(root=dag_env.workdir).kgx
     rig_dir.mkdir(parents=True, exist_ok=True)
     rig = rig_dir / "DRUG_APPROVALS_KP_1.27.1.RIG.yaml"
     rig.write_text(
@@ -402,7 +411,9 @@ def test_failure_sensor_builds_step_stats_and_sanitizes_through_issue_client(
         failure_event=SimpleNamespace(message="run failed"),
     )
     monkeypatch.setattr(
-        automation, "probe_gpus", lambda: GPUStatus((GPUDevice(0, "P100", 0, 16384),))
+        automation,
+        "probe_gpus",
+        lambda: GPUStatus(devices=(GPUDevice(index=0, name="P100", used_mib=0, total_mib=16384),)),
     )
     captured = []
 

@@ -31,6 +31,7 @@ Useful commands:
 ```sh
 npx nx affected -t test
 make dead-code-check
+make no-dataclass-check
 npm run docs:check
 npm run docs:build
 prek run --all-files --hook-stage pre-push
@@ -51,6 +52,8 @@ Component details live in each project README and the Linkouts operating guides.
 - Do not weaken assertions, make vulnerability scans informational, or skip an applicable CI job to obtain a green result.
 
 ## Style and commits
+
+Python records are Pydantic `BaseModel` classes. Importing `dataclasses` or `pydantic.dataclasses` fails `make no-dataclass-check`, the pre-push hook, and CI, because a second record dialect would skip validation and serialize differently from every other model. Use `ConfigDict(frozen=True)` for value objects and `extra="forbid"` for configuration so a typo fails instead of being ignored.
 
 Python uses Ruff with a 100-character line length. Go uses the module's formatters and linters. Phoenix uses `mix format` and strict Credo. Documentation uses Prettier, typed Starlight content, and generated-link checks. User-facing text is ASCII.
 

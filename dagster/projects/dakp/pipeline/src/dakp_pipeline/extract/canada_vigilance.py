@@ -34,11 +34,11 @@ Outputs (under ``interim/canada_vigilance/``):
 from __future__ import annotations
 
 import zipfile
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
@@ -74,7 +74,7 @@ class CanadaVigilanceExtractor:
     """Parse the Canada Vigilance data-extract ZIP into the normalized indication table."""
 
     def extract(self, inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         log = bind(task_id=_EVENT)
 
@@ -116,11 +116,12 @@ class CanadaVigilanceExtractor:
         return refs
 
 
-@dataclass
-class _Warnings:
+class _Warnings(BaseModel):
     """Accumulates warning rows (dedup + counted), like the FAERS extractor's audit."""
 
-    items: list[dict[str, str]] = field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[dict[str, str]] = Field(default_factory=list)
 
     def add(self, file: str, code: str, message: str) -> None:
         self.items.append({"file": file, "code": code, "message": message, "count": "1"})

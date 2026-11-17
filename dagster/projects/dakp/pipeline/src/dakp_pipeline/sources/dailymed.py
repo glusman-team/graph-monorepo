@@ -46,7 +46,6 @@ import urllib.error
 import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -109,15 +108,15 @@ def _download_full_release(ctx: TaskContext) -> list[ArtifactRef]:
     never renamed or deleted. Conditional headers skip bytes the server reports unchanged.
     """
     with step(logger, _EVENT):
-        store = ArtifactStore(Workdir(ctx.workdir))
+        store = ArtifactStore(Workdir(root=ctx.workdir))
         policy = source_policy(ctx, _max_age_days(ctx))
         if policy.cached_only:
             cached = require_cached(
                 store.cached_ref(_REFS_ALIAS), source="DailyMed", alias=_REFS_ALIAS
             )
             stats(logger, _EVENT, cache_hit=True, source_refresh=policy.mode, blake3=cached.blake3)
-            return [replace(cached, media_type=REFS_FILE_MEDIA_TYPE)]
-        staging = Workdir(ctx.workdir).root / ".staging" / "dailymed"
+            return [cached.model_copy(update={"media_type": REFS_FILE_MEDIA_TYPE})]
+        staging = Workdir(root=ctx.workdir).root / ".staging" / "dailymed"
         staging.mkdir(parents=True, exist_ok=True)
 
         index_html = _fetch_index(ctx, staging, store)
@@ -216,8 +215,8 @@ def write_refs_manifest(ctx: TaskContext, refs: list[ArtifactRef]) -> ArtifactRe
     cached-refs fast path) funnels through here; identical refs are a store cache hit, so re-runs
     stay idempotent.
     """
-    store = ArtifactStore(Workdir(ctx.workdir))
-    staging = Workdir(ctx.workdir).root / ".staging" / "dailymed" / "spl-refs.json"
+    store = ArtifactStore(Workdir(root=ctx.workdir))
+    staging = Workdir(root=ctx.workdir).root / ".staging" / "dailymed" / "spl-refs.json"
     staging.parent.mkdir(parents=True, exist_ok=True)
     staging.write_text(json.dumps(refs_to_dicts(refs), indent=2), encoding="utf-8")
     ref, cache_hit = store.ingest(staging, alias=_REFS_ALIAS, media_type=REFS_FILE_MEDIA_TYPE)
@@ -680,7 +679,7 @@ def _conditional_download(
 
 def _prior_source(store: ArtifactStore, *, alias: str) -> SourceBlock | None:
     """Read the source block previously recorded for ``alias`` (for conditional GET)."""
-    alias_path = Workdir(store.workdir.root).aliases / alias
+    alias_path = Workdir(root=store.workdir.root).aliases / alias
     if not alias_path.exists():
         return None
     artifact_id = alias_path.read_text(encoding="utf-8").strip()

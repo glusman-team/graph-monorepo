@@ -45,10 +45,10 @@ import re
 import zipfile
 from collections import defaultdict
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict, Field
 
 from dakp_pipeline.io import schemas
 from dakp_pipeline.io.artifact_store import ArtifactStore
@@ -118,9 +118,10 @@ _DEDUP_AUDIT_COLUMNS = [
 _WARNINGS_COLUMNS = ["quarter", "family", "code", "message", "count"]
 
 
-@dataclass(frozen=True)
-class _FaersSource:
+class _FaersSource(BaseModel):
     """One logical FAERS ASCII file (a loose ``.txt`` or a zip member)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     quarter: str
     family: str
@@ -129,8 +130,8 @@ class _FaersSource:
     source_b3: str
 
 
-@dataclass
-class _Warning:
+class _Warning(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     quarter: str
     family: str
     code: str
@@ -138,12 +139,14 @@ class _Warning:
     count: int = 1
 
 
-@dataclass
-class _Warnings:
-    items: list[_Warning] = field(default_factory=list)
+class _Warnings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[_Warning] = Field(default_factory=list)
 
     def add(self, quarter: str, family: str, code: str, message: str, count: int = 1) -> None:
-        self.items.append(_Warning(quarter, family, code, message, count))
+        self.items.append(
+            _Warning(quarter=quarter, family=family, code=code, message=message, count=count)
+        )
 
     @property
     def total(self) -> int:
@@ -173,7 +176,7 @@ class FAERSASCIIExtractor:
             logger.warning("extract_faers: no FAERS ASCII sources parsed")
             return []
 
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         input_ids = [ref.blake3 for ref in inputs]
 
@@ -331,14 +334,26 @@ def _iter_faers_sources(refs: list[ArtifactRef]) -> Iterator[_FaersSource]:
                     if family is None or quarter is None:
                         continue
                     content = zf.read(info)
-                    yield _FaersSource(quarter, family, content, info.filename, hash_bytes(content))
+                    yield _FaersSource(
+                        quarter=quarter,
+                        family=family,
+                        content=content,
+                        source_name=info.filename,
+                        source_b3=hash_bytes(content),
+                    )
         elif suffix == ".txt":
             family, quarter = _family_and_quarter(uri.name)
             if family is None or quarter is None:
                 stats(logger, "extract_faers", level="DEBUG", skipped_uri=str(uri))
                 continue
             content = uri.read_bytes()
-            yield _FaersSource(quarter, family, content, uri.name, hash_bytes(content))
+            yield _FaersSource(
+                quarter=quarter,
+                family=family,
+                content=content,
+                source_name=uri.name,
+                source_b3=hash_bytes(content),
+            )
         else:
             stats(logger, "extract_faers", level="DEBUG", skipped_uri=str(uri))
 

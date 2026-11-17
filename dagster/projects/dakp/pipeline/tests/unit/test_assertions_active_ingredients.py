@@ -23,7 +23,7 @@ from dakp_pipeline.paths import Workdir
 
 def _ctx(tmp_path: Path) -> TaskContext:
     workdir = tmp_path / "work"
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     return TaskContext(workdir=workdir, fixture_root=None, params={})
 
 

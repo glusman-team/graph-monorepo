@@ -52,7 +52,7 @@ def test_real_fetch_ingests_zip_and_is_idempotent(monkeypatch, tmp_path: Path) -
         return dest
 
     monkeypatch.setattr(drugsfda, "download_drugsfda_zip", fake_download)
-    Workdir(tmp_path / "work").create()
+    Workdir(root=tmp_path / "work").create()
     ctx = _ctx(tmp_path / "work")
 
     first = drugsfda.fetch(ctx)
@@ -80,7 +80,7 @@ def test_real_fetch_url_overridable_via_params(monkeypatch, tmp_path: Path) -> N
         return dest
 
     monkeypatch.setattr(drugsfda, "download_drugsfda_zip", fake_download)
-    Workdir(tmp_path / "work").create()
+    Workdir(root=tmp_path / "work").create()
     override = "https://example.test/drugsfda-snapshot.zip"
     ctx = _ctx(tmp_path / "work", params={"drugsfda_url": override})
 

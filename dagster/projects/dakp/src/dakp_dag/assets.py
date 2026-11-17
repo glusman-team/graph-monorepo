@@ -29,13 +29,13 @@ import json
 import shutil
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 
 import dagster as dg
 from dagster import AssetExecutionContext
 from mo_dagster import pipes as mo_pipes
 from mo_kg import kgx
+from pydantic import BaseModel, ConfigDict
 
 from dakp_dag import refsio
 from dakp_dag.config import RunConfig, run_config_for, task_context
@@ -43,14 +43,15 @@ from dakp_dag.config import RunConfig, run_config_for, task_context
 # --- source table (the extension seam for new sources) -------------------------------
 
 
-@dataclass(frozen=True)
-class Source:
+class Source(BaseModel):
     """One upstream data source: how it is acquired and how it is extracted.
 
     ``extractor`` is ``"go:<stage>"`` (the Dagster Pipes worker in ``workers/go`` for the
     heavy parses: DailyMed SPL zips, FAERS ASCII quarters, Drugs@FDA tables) or
     ``"py:<module>"`` (an in-process extractor module under ``dakp_pipeline.extract``).
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     key: str
     acquire: str
@@ -608,7 +609,7 @@ def kg_build(context: AssetExecutionContext) -> dg.MaterializeResult:
     if not stem:
         msg = "kg_build: a non-deferred handoff report carries no kgx_stem; cannot locate the KGX pair"
         raise RuntimeError(msg)
-    kgx_dir = Workdir(ctx.workdir).kgx
+    kgx_dir = Workdir(root=ctx.workdir).kgx
     sources = {"nodes": kgx_dir / f"{stem}.nodes.ndjson", "edges": kgx_dir / f"{stem}.edges.ndjson"}
     missing = [str(path) for path in sources.values() if not path.is_file()]
     if missing:

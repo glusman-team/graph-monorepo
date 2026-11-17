@@ -48,7 +48,7 @@ class DrugsFDAFetcher:
 
     def fetch(self, ctx: TaskContext) -> list[ArtifactRef]:
         with step(logger, _EVENT):
-            store = ArtifactStore(Workdir(ctx.workdir))
+            store = ArtifactStore(Workdir(root=ctx.workdir))
             url = str(ctx.params.get("drugsfda_url", self.url))
             policy = source_policy(ctx, _max_age_days(ctx))
             stats(logger, _EVENT, url=url, source_refresh=policy.mode)

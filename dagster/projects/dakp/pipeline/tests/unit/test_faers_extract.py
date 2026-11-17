@@ -53,7 +53,11 @@ def _cases(wd: Path) -> pl.DataFrame:
 
 def test_parse_lowercases_headers_and_drops_trailing_empty_column() -> None:
     src = _FaersSource(
-        "24Q3", "DEMO", b"PRIMARYID$CASEID$\r\n1001$5001$\r\n", "DEMO24Q3.txt", "b3:abcdef012345"
+        quarter="24Q3",
+        family="DEMO",
+        content=b"PRIMARYID$CASEID$\r\n1001$5001$\r\n",
+        source_name="DEMO24Q3.txt",
+        source_b3="b3:abcdef012345",
     )
     frame = _parse_source(src, _Warnings())
     assert frame is not None
@@ -66,7 +70,11 @@ def test_parse_lowercases_headers_and_drops_trailing_empty_column() -> None:
 def test_parse_resolves_legacy_isr_column_as_primaryid() -> None:
     # Pre-2014 FAERS used ISR instead of PRIMARYID.
     src = _FaersSource(
-        "12Q1", "DEMO", b"ISR$CASEID$\r\n9001$6001$\r\n", "DEMO12Q1.txt", "b3:abcdef012345"
+        quarter="12Q1",
+        family="DEMO",
+        content=b"ISR$CASEID$\r\n9001$6001$\r\n",
+        source_name="DEMO12Q1.txt",
+        source_b3="b3:abcdef012345",
     )
     frame = _parse_source(src, _Warnings())
     assert frame is not None
@@ -80,11 +88,11 @@ def test_parse_resolves_aers_era_drug_seq_and_case_columns() -> None:
     # number CASE; both are renamed to their modern equivalents for the case join.
     indi = _parse_source(
         _FaersSource(
-            "04Q1",
-            "INDI",
-            b"ISR$DRUG_SEQ$INDI_PT$\r\n4204616$1$HEADACHE$\r\n",
-            "INDI04Q1.TXT",
-            "b3:abcdef012345",
+            quarter="04Q1",
+            family="INDI",
+            content=b"ISR$DRUG_SEQ$INDI_PT$\r\n4204616$1$HEADACHE$\r\n",
+            source_name="INDI04Q1.TXT",
+            source_b3="b3:abcdef012345",
         ),
         _Warnings(),
     )
@@ -95,11 +103,11 @@ def test_parse_resolves_aers_era_drug_seq_and_case_columns() -> None:
 
     demo = _parse_source(
         _FaersSource(
-            "04Q1",
-            "DEMO",
-            b"ISR$CASE$OCCP_COD$\r\n4204616$5657190$MD$\r\n",
-            "DEMO04Q1.TXT",
-            "b3:abcdef012345",
+            quarter="04Q1",
+            family="DEMO",
+            content=b"ISR$CASE$OCCP_COD$\r\n4204616$5657190$MD$\r\n",
+            source_name="DEMO04Q1.TXT",
+            source_b3="b3:abcdef012345",
         ),
         _Warnings(),
     )
@@ -113,11 +121,11 @@ def test_parse_handles_crlf_and_trailing_dollar() -> None:
     # Real FAERS lines end with `$\r\n`; the fixture files are written that way.
     frame = _parse_source(
         _FaersSource(
-            "24Q3",
-            "DRUG",
-            (_FAERS_DIR / "DRUG24Q3.txt").read_bytes(),
-            "DRUG24Q3.txt",
-            "b3:abcdef012345",
+            quarter="24Q3",
+            family="DRUG",
+            content=(_FAERS_DIR / "DRUG24Q3.txt").read_bytes(),
+            source_name="DRUG24Q3.txt",
+            source_b3="b3:abcdef012345",
         ),
         _Warnings(),
     )
@@ -133,7 +141,13 @@ def test_parse_handles_crlf_and_trailing_dollar() -> None:
 def test_parse_missing_primaryid_records_warning() -> None:
     warnings = _Warnings()
     frame = _parse_source(
-        _FaersSource("24Q3", "DEMO", b"CASEID$\r\n5001$\r\n", "DEMO24Q3.txt", "b3:abcdef012345"),
+        _FaersSource(
+            quarter="24Q3",
+            family="DEMO",
+            content=b"CASEID$\r\n5001$\r\n",
+            source_name="DEMO24Q3.txt",
+            source_b3="b3:abcdef012345",
+        ),
         warnings,
     )
     assert frame is None

@@ -14,12 +14,12 @@ import sys
 import types
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
 from loguru import logger
+from pydantic import ValidationError
 
 from dakp_pipeline.ner import ner as ner_module
 from dakp_pipeline.ner.dictionary import OBJECT_TYPES, Gazetteer
@@ -165,7 +165,7 @@ def test_sort_key_and_overlaps_helpers() -> None:
 
 def test_mention_is_frozen() -> None:
     mention = Mention(text="asthma", start=0, end=6, type="Disease", score=1.0)
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(ValidationError):
         mention.score = 0.5  # type: ignore[misc]
 
 

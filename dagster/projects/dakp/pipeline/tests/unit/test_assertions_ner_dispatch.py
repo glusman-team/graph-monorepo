@@ -902,16 +902,18 @@ def test_mentions_fit_rejects_an_entry_mined_from_another_text() -> None:
     """The mention contract is the cheap proof that a cached entry belongs to THIS text."""
     text = "contraindicated in asthma"
     start = text.index("asthma")
-    assert _mentions_fit(text, [Mention("asthma", start, start + 6, "Disease", 1.0)])
+    assert _mentions_fit(
+        text, [Mention(text="asthma", start=start, end=start + 6, type="Disease", score=1.0)]
+    )
     assert _mentions_fit(text, [])  # an empty entry is a valid "no mentions" result, not a miss
     assert not _mentions_fit(
-        text, [Mention("asthma", 589, 605, "Disease", 1.0)]
+        text, [Mention(text="asthma", start=589, end=605, type="Disease", score=1.0)]
     )  # run 13: past the end
     assert not _mentions_fit(
-        text, [Mention("asthma", 0, 6, "Disease", 1.0)]
+        text, [Mention(text="asthma", start=0, end=6, type="Disease", score=1.0)]
     )  # in bounds, wrong surface
     assert not _mentions_fit(
-        text, [Mention("asthma", -1, start + 6, "Disease", 1.0)]
+        text, [Mention(text="asthma", start=-1, end=start + 6, type="Disease", score=1.0)]
     )  # negative start
 
 
@@ -932,7 +934,7 @@ def test_mine_with_cache_reminds_when_a_cached_entry_does_not_fit_the_text(
     assert calls == ["asthma"]
 
     key = next(iter(cache.store))
-    stale = [Mention("asthma", 589, 605, "Disease", 1.0).to_dict()]
+    stale = [Mention(text="asthma", start=589, end=605, type="Disease", score=1.0).to_dict()]
     cache.store[key] = stale
     calls.clear()
     second = mine_with_cache(items, ner, _sequential_mine(ner), cache)  # type: ignore[arg-type]

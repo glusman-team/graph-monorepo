@@ -8,12 +8,12 @@ environment after Dagster launches the narrow job.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import dagster as dg
 from dagster import SensorEvaluationContext
+from pydantic import BaseModel, ConfigDict
 
 from linkouts_dag.assets import linkouts_load_release
 from linkouts_dag.config import PROJECT_ROOT
@@ -42,9 +42,10 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(msg) from None
 
 
-@dataclass(frozen=True)
-class LinkoutsAutomationSettings:
+class LinkoutsAutomationSettings(BaseModel):
     """Environment-backed settings for the DAKP-to-Linkouts release path."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = False
     target_store: str = "cosmos"

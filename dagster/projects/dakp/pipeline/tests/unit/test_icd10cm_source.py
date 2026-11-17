@@ -60,7 +60,7 @@ def _patch_download(monkeypatch, fixture_zip: Path) -> list[str]:
 
 def test_fetch_ingests_the_release_zip(monkeypatch, tmp_path: Path) -> None:
     captured = _patch_download(monkeypatch, _fixture_zip(tmp_path))
-    Workdir(tmp_path / "work").create()
+    Workdir(root=tmp_path / "work").create()
     refs = icd10cm.fetch(_ctx(tmp_path / "work"))
 
     assert captured == [icd10cm.ICD10CM_DRUG_TABLE_ZIP_URL]
@@ -81,13 +81,13 @@ def test_release_pinned_artifact_is_reused_without_an_age_gate(monkeypatch, tmp_
     fixture = _fixture_zip(tmp_path)
     captured = _patch_download(monkeypatch, fixture)
     workdir = tmp_path / "work"
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
 
     first = icd10cm.fetch(_ctx(workdir))
     second = icd10cm.fetch(_ctx(workdir))
     assert captured == [icd10cm.ICD10CM_DRUG_TABLE_ZIP_URL]  # one download only
     assert second[0].blake3 == first[0].blake3
-    store = ArtifactStore(Workdir(workdir))
+    store = ArtifactStore(Workdir(root=workdir))
     assert store.cached_ref(f"icd10cm/{Path(icd10cm.ICD10CM_DRUG_TABLE_ZIP_URL).name}") is not None
 
 
@@ -116,7 +116,7 @@ def test_force_param_redownloads(monkeypatch, tmp_path: Path) -> None:
     fixture = _fixture_zip(tmp_path)
     captured = _patch_download(monkeypatch, fixture)
     workdir = tmp_path / "work"
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     icd10cm.fetch(_ctx(workdir))
     icd10cm.fetch(_ctx(workdir, params={"force": True}))
     assert len(captured) == 2
@@ -127,12 +127,12 @@ def test_url_override_acquires_under_its_own_alias(monkeypatch, tmp_path: Path) 
     fixture = _fixture_zip(tmp_path)
     captured = _patch_download(monkeypatch, fixture)
     workdir = tmp_path / "work"
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     override = "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2028/icd10cm-table-and-index-2028.zip"
 
     refs = icd10cm.fetch(_ctx(workdir, params={"icd10cm_url": override}))
     assert captured == [override]
-    store = ArtifactStore(Workdir(workdir))
+    store = ArtifactStore(Workdir(root=workdir))
     assert store.cached_ref("icd10cm/icd10cm-table-and-index-2028.zip") is not None
     assert refs[0].manifest is not None
     assert read_manifest(refs[0].manifest) is not None
@@ -173,7 +173,7 @@ def test_table_zip_selection_tolerates_spaces_and_april_names() -> None:
 def test_cached_mode_uses_selection_and_zip_without_network(monkeypatch, tmp_path: Path) -> None:
     captured = _patch_download(monkeypatch, _fixture_zip(tmp_path))
     workdir = tmp_path / "work"
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     first = icd10cm.fetch(_ctx(workdir))
     assert captured == [icd10cm.ICD10CM_DRUG_TABLE_ZIP_URL]
 

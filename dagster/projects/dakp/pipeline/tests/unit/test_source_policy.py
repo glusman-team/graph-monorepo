@@ -35,7 +35,7 @@ def test_cached_fixed_url_source_never_calls_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workdir = tmp_path / "work"
-    Workdir(workdir).create()
+    Workdir(root=workdir).create()
     fixture = tmp_path / "drugsfda.zip"
     fixture.write_bytes(b"cached source bytes")
 
@@ -55,7 +55,7 @@ def test_cached_fixed_url_source_never_calls_network(
 
 
 def test_cached_fixed_url_source_fails_loudly_when_missing(tmp_path: Path) -> None:
-    Workdir(tmp_path).create()
+    Workdir(root=tmp_path).create()
     with pytest.raises(FileNotFoundError, match=r"Drugs@FDA.*cached-only"):
         drugsfda.fetch(_ctx(tmp_path, source_refresh="cached"))
 
@@ -63,7 +63,7 @@ def test_cached_fixed_url_source_fails_loudly_when_missing(tmp_path: Path) -> No
 def test_cached_dailymed_uses_published_refs_without_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    Workdir(tmp_path).create()
+    Workdir(root=tmp_path).create()
     sentinel = dailymed.write_refs_manifest(_ctx(tmp_path), [])
     monkeypatch.setattr(
         dailymed,
@@ -77,6 +77,6 @@ def test_cached_dailymed_uses_published_refs_without_network(
 
 
 def test_cached_dailymed_fails_loudly_when_missing(tmp_path: Path) -> None:
-    Workdir(tmp_path).create()
+    Workdir(root=tmp_path).create()
     with pytest.raises(FileNotFoundError, match=r"DailyMed.*cached-only"):
         dailymed.fetch(_ctx(tmp_path, source_refresh="cached"))

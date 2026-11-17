@@ -23,6 +23,7 @@ PYTHON_SOURCES = (
     "dagster/projects/linkouts/pipeline/src",
     "dagster/projects/linkouts/src",
     "scripts/check_dead_code.py",
+    "scripts/check_no_dataclasses.py",
     "scripts/ci_changes.py",
     "sites/linkouts/scripts/check_deploy.py",
 )

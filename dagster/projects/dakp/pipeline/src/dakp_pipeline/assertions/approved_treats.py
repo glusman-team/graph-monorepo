@@ -105,10 +105,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
 from typing import Any
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.assertions import (
     AT_MANUAL,
@@ -243,7 +243,7 @@ def _sentence_local(
     """
     start = max(mention.start, sentence_start) - sentence_start
     end = min(mention.end, sentence_end) - sentence_start
-    return replace(mention, start=start, end=end, text=sentence[start:end])
+    return mention.model_copy(update={"start": start, "end": end, "text": sentence[start:end]})
 
 
 def _doc_key(doc_id: str, occurrence: int) -> str:
@@ -453,8 +453,7 @@ def _positive_context_text(section_text: str) -> str:
     return " ".join(kept)
 
 
-@dataclass(frozen=True)
-class _SectionPreparation:
+class _SectionPreparation(BaseModel):
     """Candidate-invariant preparation of one indication-section (or sentence) text.
 
     Every field is a pure function of the text and the run's disease map, so it can be
@@ -462,6 +461,8 @@ class _SectionPreparation:
     comparison itself (needle/CURIE branching, mention loop) stays candidate-sensitive and
     is never cached.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     normalized_text: str
     dictionary_matches: tuple[Mapping[str, str], ...]

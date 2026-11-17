@@ -24,8 +24,9 @@ Design notes:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from dakp_pipeline.ner.dictionary import Gazetteer, normalize_text, normalize_with_map
 
@@ -65,8 +66,7 @@ DEFAULT_IGNORE_TERMS: frozenset[str] = frozenset(
 LEGACY_SYNONYMS: Mapping[str, str] = {"cardiac": "heart", "renal": "kidney", "hepatic": "liver"}
 
 
-@dataclass(frozen=True)
-class Mention:
+class Mention(BaseModel):
     """One disease/phenotype mention span — text + type ONLY (no ontology CURIE).
 
     ``text`` is the original surface form; ``start``/``end`` are half-open offsets into the
@@ -75,6 +75,8 @@ class Mention:
     normalized surface form (the unique-string key used downstream); ``notes`` records how the
     span matched (``exact`` / ``synonym:...`` / ``gliner``); ``section`` is caller context.
     """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     text: str
     start: int

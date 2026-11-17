@@ -72,7 +72,7 @@ class EMARegistryExtractor:
     """Parse the EMA medicines xlsx into a normalized interim parquet table."""
 
     def extract(self, inputs: list[ArtifactRef], ctx: TaskContext) -> list[ArtifactRef]:
-        wd = Workdir(ctx.workdir)
+        wd = Workdir(root=ctx.workdir)
         store = ArtifactStore(wd)
         log = bind(task_id="extract_ema_registry")
 

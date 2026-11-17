@@ -1779,7 +1779,7 @@ def test_graph_yaml_is_valid_and_faithful() -> None:
 
 
 def test_generate_writes_graph_and_table_configs(tmp_path: Path) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     ctx = _ctx(workdir)
@@ -1825,7 +1825,7 @@ def test_generate_embeds_the_explicit_publication_version(tmp_path: Path) -> Non
     Publication identity is decoupled from release tags and the package version: the caller
     passes it per build, and the KGX stem (``<name>_<version>``) follows the graph config.
     """
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     ctx = _ctx(workdir, publication_version="1.25.0")
@@ -1841,7 +1841,7 @@ def test_generate_embeds_the_explicit_publication_version(tmp_path: Path) -> Non
 
 
 def test_generate_links_assertion_inputs_as_provenance(tmp_path: Path) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     ctx = _ctx(workdir)
@@ -1857,7 +1857,7 @@ def test_generate_links_assertion_inputs_as_provenance(tmp_path: Path) -> None:
 
 
 def test_deferred_runner_writes_deferred_handoff_report(tmp_path: Path) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -1979,7 +1979,7 @@ def _patch_installed(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_real_runner_captures_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2027,7 +2027,7 @@ def test_real_runner_captures_success(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 def test_real_runner_records_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A non-zero exit writes the report (status=failed) AND raises TablassertError."""
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2059,7 +2059,7 @@ def test_real_runner_reconciles_resolved_approvals_before_validation(
     """The production handoff must repair resolved overlap, not only expose a pure helper."""
     __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION  # explicit default, not a tag
 
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2127,7 +2127,7 @@ def test_real_runner_rescopes_composition_provenance(
     """
     __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION
 
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2178,7 +2178,7 @@ def test_real_runner_rescopes_drugsfda_only_composition_edge(
     """
     __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION
 
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2227,7 +2227,7 @@ def test_real_runner_records_reconciliation_failure(
 
     __version__ = tablassert_configs.DEFAULT_PUBLICATION_VERSION
 
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2268,7 +2268,7 @@ def test_real_runner_fails_on_kgx_contract_violation(
     the task (``TablassertError``) with the violations recorded in the handoff report, so a
     broken graph can never reach the export/publish stages.
     """
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2322,7 +2322,7 @@ def test_real_runner_missing_kgx_after_success_is_loud(
     convention moved. The failure is recorded as a contract ``error`` in the handoff report
     (written before raising) so a long build's logs are never lost with it.
     """
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2347,7 +2347,7 @@ def test_real_runner_missing_kgx_after_success_is_loud(
 
 
 def test_real_runner_honors_ctx_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2380,7 +2380,7 @@ def test_real_runner_honors_ctx_overrides(monkeypatch: pytest.MonkeyPatch, tmp_p
 def test_real_runner_raises_when_tablassert_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2397,7 +2397,7 @@ def test_real_runner_raises_when_tablassert_missing(
 def test_real_runner_raises_when_fullmap_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2410,7 +2410,7 @@ def test_real_runner_raises_when_fullmap_missing(
 def test_real_runner_appends_qc_when_runtime_available(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2447,7 +2447,7 @@ def test_real_runner_appends_qc_when_runtime_available(
 def test_real_runner_skips_qc_when_runtime_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2473,7 +2473,7 @@ def test_real_runner_skips_qc_when_runtime_missing(
 
 
 def test_real_runner_appends_release_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2500,7 +2500,7 @@ def test_real_runner_appends_release_flag(monkeypatch: pytest.MonkeyPatch, tmp_p
 def test_real_runner_omits_no_original_flag_and_report_field(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2530,7 +2530,7 @@ def test_real_runner_omits_no_original_flag_and_report_field(
 def test_run_dispatches_to_deferred_without_run_tablassert(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2551,7 +2551,7 @@ def test_run_dispatches_to_deferred_without_run_tablassert(
 def test_run_dispatches_to_real_with_run_tablassert(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2660,7 +2660,7 @@ def _append_composition_self_loop(workdir: Workdir) -> Path:
 def test_real_runner_drops_composition_self_loops_before_the_contract_gate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
@@ -2692,7 +2692,7 @@ def test_real_runner_drops_composition_self_loops_before_the_contract_gate(
 def test_real_runner_fails_when_the_deferred_study_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workdir = Workdir(tmp_path / "work")
+    workdir = Workdir(root=tmp_path / "work")
     workdir.create()
     assertion_refs = _assertion_refs(workdir)
     config_refs = tablassert_configs.generate(assertion_refs, _ctx(workdir))
