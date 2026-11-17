@@ -115,6 +115,15 @@ pass_filenames = false
 stages = ["pre-push"]
 
 [[repos.hooks]]
+id = "no-dataclasses"
+name = "dataclass ban (pydantic models only)"
+entry = "python3 scripts/check_no_dataclasses.py"
+language = "system"
+files = '''\.py$'''
+pass_filenames = false
+stages = ["pre-push"]
+
+[[repos.hooks]]
 id = "nx-affected"
 name = "Nx affected test and lint"
 entry = "scripts/run-nx-affected.sh"

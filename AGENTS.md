@@ -50,6 +50,10 @@ Monorepo for ISB multiomics knowledge-graph pipelines and their reader:
 
 ## Conventions
 
+- Python records are pydantic `BaseModel` classes: `dataclasses` and `pydantic.dataclasses`
+  imports are banned repo-wide by `scripts/check_no_dataclasses.py` (`make no-dataclass-check`,
+  pre-push hook, CI). Frozen value objects use `model_config = ConfigDict(frozen=True)`;
+  unknown keys must fail, so config models add `extra="forbid"`.
 - Formatting: ruff (python, line-length 100), golangci-lint+gofmt (go),
   `mix format` (elixir), prettier (docs), nixfmt-tree (nix) - all wired into
   `prek.toml` two-stage hooks (pre-commit = fast auto-fix, pre-push =
