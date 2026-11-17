@@ -354,6 +354,30 @@ def _mention_local_span(
     )
 
 
+# Explicit past-tense reaction descriptions do not describe a pre-existing condition.
+# Restrict the cue to a clause boundary; "history of reactions including X" is different.
+_REACTION_LIST = re.compile(
+    r"(?:^|[.;:]\s*|\bbut\s+)(?:these\s+)?(?:hypersensitivity\s+)?reactions\s+"
+    r"(?:have\s+included|included)\s*:?\s*",
+    re.IGNORECASE,
+)
+_REACTION_END = re.compile(r"[.;]|\b(?:but|however|whereas)\b", re.IGNORECASE)
+
+
+def _described_reaction(item: ContraWorkItem, mention: Mention) -> bool:
+    """Whether the mention lies inside an explicit, source-local reaction list."""
+    mapped = _mention_local_span(item, mention)
+    if mapped is None:
+        return False
+    sentence, start, end, _ = mapped
+    for cue in _REACTION_LIST.finditer(sentence):
+        boundary = _REACTION_END.search(sentence, cue.end())
+        stop = boundary.start() if boundary is not None else len(sentence)
+        if cue.end() <= start < end <= stop:
+            return True
+    return False
+
+
 def _classify_mention(
     item: ContraWorkItem | tuple[str, str, str],
     mention: Mention,
@@ -370,6 +394,10 @@ def _classify_mention(
     if _EXPLICIT_NEGATION.search(evidence_text):
         return MentionDecision(
             accepted=False, trigger="explicit_negation", evidence_text=evidence_text
+        )
+    if isinstance(item, ContraWorkItem) and _described_reaction(item, mention):
+        return MentionDecision(
+            accepted=False, trigger="described_reaction", evidence_text=evidence_text
         )
     hard = _HARD_CONTRA_TRIGGER.search(evidence_text)
     medication = _MEDICATION_CONTEXT.search(evidence_text)
