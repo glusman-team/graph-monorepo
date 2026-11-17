@@ -608,7 +608,7 @@ def kg_build(context: AssetExecutionContext) -> dg.MaterializeResult:
     if not stem:
         msg = "kg_build: a non-deferred handoff report carries no kgx_stem; cannot locate the KGX pair"
         raise RuntimeError(msg)
-    kgx_dir = Workdir(ctx.workdir).kgx
+    kgx_dir = Workdir(root=ctx.workdir).kgx
     sources = {"nodes": kgx_dir / f"{stem}.nodes.ndjson", "edges": kgx_dir / f"{stem}.edges.ndjson"}
     missing = [str(path) for path in sources.values() if not path.is_file()]
     if missing:

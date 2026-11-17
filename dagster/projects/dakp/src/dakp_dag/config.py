@@ -195,7 +195,7 @@ def task_context(config: RunConfig | None = None):
     from dakp_pipeline.runtime import build_context
 
     cfg = config or run_config()
-    workdir = Workdir(cfg.workdir)
+    workdir = Workdir(root=cfg.workdir)
     workdir.create()
     # build_context loads the lexical disease map from the fixture root into
     # params["disease_map"] (DAKP runtime.py), and the shapers' default_ner reads the

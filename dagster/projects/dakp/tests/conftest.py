@@ -237,7 +237,7 @@ def stubbed_pipeline(monkeypatch, dag_env) -> SimpleNamespace:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text("synthetic\n", encoding="utf-8")
             return [
-                ArtifactStore(Workdir(ctx.workdir)).register(
+                ArtifactStore(Workdir(root=ctx.workdir)).register(
                     out,
                     media_type="text/tab-separated-values",
                     rows=len(inputs),
@@ -254,7 +254,7 @@ def stubbed_pipeline(monkeypatch, dag_env) -> SimpleNamespace:
 
     def fake_run(assertion_refs, config_refs, ctx):
         state.calls.append("tablassert.run")
-        reports = Workdir(ctx.workdir).reports
+        reports = Workdir(root=ctx.workdir).reports
         reports.mkdir(parents=True, exist_ok=True)
         report_path = reports / tablassert.REPORT_NAME
         report: dict[str, object] = {

@@ -173,7 +173,7 @@ def _release_output_paths(config, version: str) -> tuple[Path, Path, Path]:
     return (
         config.kg_dir / core_assets.KG_NODES,
         config.kg_dir / core_assets.KG_EDGES,
-        Workdir(config.workdir).kgx / f"DRUG_APPROVALS_KP_{version}.RIG.yaml",
+        Workdir(root=config.workdir).kgx / f"DRUG_APPROVALS_KP_{version}.RIG.yaml",
     )
 
 
