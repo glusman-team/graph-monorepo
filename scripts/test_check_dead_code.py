@@ -5,7 +5,38 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from check_dead_code import ACQUIRE_MODULE, DAKP_GO, go_findings, python_findings, run
+from check_dead_code import (
+    ACQUIRE_MODULE,
+    DAKP_GO,
+    go_findings,
+    nix_findings,
+    python_findings,
+    run,
+)
+
+
+class NixFindingTests(unittest.TestCase):
+    """deadnix exits 0 with findings, so the JSON report is the only gate."""
+
+    def test_renders_json_findings(self) -> None:
+        line = (
+            '{"file":"flake.nix","results":'
+            '[{"column":9,"endColumn":13,"line":30,"message":"Unused lambda pattern: self"}]}'
+        )
+        self.assertEqual(
+            nix_findings(line), ["flake.nix:30:9: Unused lambda pattern: self"]
+        )
+
+    def test_empty_output_passes(self) -> None:
+        self.assertEqual(nix_findings(""), [])
+
+    def test_malformed_json_fails_closed(self) -> None:
+        line = "deadnix produced an unparsable result"
+        self.assertEqual(nix_findings(line), [f"unrecognized deadnix output: {line}"])
+
+    def test_missing_result_key_fails_closed(self) -> None:
+        line = '{"file":"flake.nix"}'
+        self.assertEqual(nix_findings(line), [f"unrecognized deadnix output: {line}"])
 
 
 class PythonFindingTests(unittest.TestCase):

@@ -110,7 +110,7 @@ id = "dead-code"
 name = "Python and Go dead-code check"
 entry = "python3 scripts/check_dead_code.py"
 language = "system"
-files = '''\.py$|\.go$|^nix/modules/devshell\.nix$'''
+files = '''\.(py|go|nix)$'''
 pass_filenames = false
 stages = ["pre-push"]
 

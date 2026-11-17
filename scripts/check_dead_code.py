@@ -1,7 +1,8 @@
-"""Fail on unused Python functions/classes and unreachable Go production code."""
+"""Fail on unused Python functions/classes, unreachable Go production code, and dead Nix bindings."""
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -104,6 +105,30 @@ def go_findings(output: str, module: str) -> list[str]:
     return findings
 
 
+def nix_findings(output: str) -> list[str]:
+    """Return deadnix findings from its JSON-lines output; malformed output is an error.
+
+    deadnix exits 0 even when it finds dead code, so the report itself is the
+    gate: every result is a finding (the repo policy is deletion, not waivers),
+    and any unparsable line fails closed instead of being skipped.
+    """
+    findings = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+            rendered = [
+                f"{record['file']}:{item['line']}:{item['column']}: {item['message']}"
+                for item in record["results"]
+            ]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            findings.append(f"unrecognized deadnix output: {line}")
+            continue
+        findings.extend(rendered)
+    return findings
+
+
 def run(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -148,11 +173,31 @@ def main() -> int:
         else:
             failures.extend(go_findings(go.stdout, module))
 
+    tracked_nix = run(["git", "ls-files", "-z", "--", "*.nix"], ROOT)
+    if tracked_nix.returncode:
+        detail = "\n".join(
+            part.strip()
+            for part in (tracked_nix.stdout, tracked_nix.stderr)
+            if part.strip()
+        )
+        failures.append(f"git ls-files exited {tracked_nix.returncode}: {detail}")
+    else:
+        nix_files = [path for path in tracked_nix.stdout.split("\0") if path]
+        if nix_files:
+            nix = run(["deadnix", "--output-format", "json", "--", *nix_files], ROOT)
+            if nix.returncode:
+                detail = "\n".join(
+                    part.strip() for part in (nix.stdout, nix.stderr) if part.strip()
+                )
+                failures.append(f"deadnix exited {nix.returncode}: {detail}")
+            else:
+                failures.extend(nix_findings(nix.stdout))
+
     if failures:
         print("Dead-code check failed:", file=sys.stderr)
         print("\n".join(failures), file=sys.stderr)
         return 1
-    print("Dead-code check passed for Python and both Go modules.")
+    print("Dead-code check passed for Python, both Go modules, and Nix.")
     return 0
 
 

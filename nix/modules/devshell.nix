@@ -22,9 +22,10 @@ let
     pkgs.gopls
     pkgs.golangci-lint
     pkgs.govulncheck
-    # dead-code gates (vulture + deadcode)
+    # dead-code gates (vulture + deadcode + deadnix)
     pkgs.python313Packages.vulture
     pkgs.gotools
+    pkgs.deadnix
 
     # Phoenix LiveView (BEAM/OTP 28)
     pkgs.beam28Packages.elixir_1_19
