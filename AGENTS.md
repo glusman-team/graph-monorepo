@@ -88,6 +88,7 @@ Monorepo for ISB multiomics knowledge-graph pipelines and their reader:
 make dev            # dg dev, UI http://localhost:3000
 make up             # process-compose: dagster-daemon + webserver (fixed ports)
 make test / lint / fmt / hooks / locks / dead-code-check / check
+make typecheck      # dialyzer type checking for the linkouts Phoenix reader
 make help           # component commands (dakp-*, linkouts-*, docs-*)
 npx nx affected -t test          # fast loop: only what changed
 go build -o bin/dakp-extract ./cmd/dakp-extract   # inside projects/dakp/workers/go
