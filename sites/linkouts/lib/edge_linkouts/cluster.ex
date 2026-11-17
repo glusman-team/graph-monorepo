@@ -29,6 +29,7 @@ defmodule EdgeLinkouts.Cluster do
   # different names in one VM cannot fight over one count cell.
   defp count_key(name), do: {__MODULE__, :node_count, name}
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
   end

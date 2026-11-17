@@ -8,7 +8,7 @@ LINKOUTS = dagster/projects/linkouts
 LINKOUTS_GO = $(LINKOUTS)/workers/go
 LINKOUTS_WEB = sites/linkouts
 
-.PHONY: dev up test lint fmt hooks locks go-test-race dead-code-check check help
+.PHONY: dev up test lint fmt hooks locks go-test-race dead-code-check check help typecheck
 .PHONY: docs-dev docs-build docs-test docs-format docs-check
 .PHONY: dakp-test dakp-lint
 .PHONY: linkouts-test linkouts-lint linkouts-pipeline-test linkouts-dag-test linkouts-dag-lint
@@ -28,6 +28,9 @@ test:
 lint:
 	npx nx run-many -t lint --parallel=4
 
+typecheck:
+	npx nx run-many -t dialyzer --parallel=4
+
 fmt:
 	nix fmt
 	npm run docs:format
@@ -44,7 +47,7 @@ go-test-race:
 dead-code-check:
 	python3 scripts/check_dead_code.py
 
-check: lint test go-test-race dead-code-check docs-test linkouts-check-deploy
+check: lint typecheck test go-test-race dead-code-check docs-test linkouts-check-deploy
 
 # Documentation (Astro Starlight + Pagefind).
 docs-dev:
@@ -132,6 +135,7 @@ linkouts-smoke:
 help:
 	@echo "make dev / up              Dagster development UI or full local runtime"
 	@echo "make test / lint           cached Nx tests and lint, at most four parallel tasks"
+	@echo "make typecheck            dialyzer type checking for the Phoenix reader"
 	@echo "make check                 offline aggregate verification"
 	@echo "make locks                 recursive uv/npm/Go/Mix lock checks"
 	@echo "make go-test-race          race suites in every independent Go module"
