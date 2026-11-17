@@ -38,6 +38,8 @@ prek run --all-files --hook-stage pre-push
 
 Component details live in each project README and the Linkouts operating guides.
 
+`make dead-code-check` gates Python (Vulture), Go (`deadcode`), Nix (`deadnix`), and JS/TS (`knip`, requires `npm ci`); waivers live in `scripts/check_dead_code.py` and `knip.jsonc` and each one is documented.
+
 ## Safety rules
 
 - Never commit `.env`, `.envrc`, Cosmos keys, Fly tokens, connection strings, or production data dumps.

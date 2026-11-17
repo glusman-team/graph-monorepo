@@ -107,10 +107,10 @@ stages = ["pre-push"]
 
 [[repos.hooks]]
 id = "dead-code"
-name = "Python and Go dead-code check"
+name = "Python, Go, Nix, and JS dead-code check"
 entry = "python3 scripts/check_dead_code.py"
 language = "system"
-files = '''\.py$|\.go$|^nix/modules/devshell\.nix$'''
+files = '''\.(py|go|nix|js|mjs|ts)$|(^|/)knip\.jsonc?$|(^|/)package(-lock)?\.json$'''
 pass_filenames = false
 stages = ["pre-push"]
 
