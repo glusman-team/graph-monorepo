@@ -1,0 +1,8 @@
+# npm audit advisories accepted until an upstream fix ships. One GitHub advisory id
+# per line; anything not listed fails scripts/npm-audit-allowlist.sh.
+#
+# GHSA-fc5q-39xc-vjpf: picomatch ReDoS through single-branch repeated extglobs.
+# Every released picomatch version is affected and no fixed release exists, so the
+# astro/vite tree in sites/docs cannot drop it yet. Remove this line as soon as
+# picomatch ships the patch (https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+GHSA-fc5q-39xc-vjpf

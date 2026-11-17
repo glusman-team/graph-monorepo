@@ -501,7 +501,51 @@ def test_composition_edge_rejects_a_bare_association_category() -> None:
     assert INCOMPATIBLE_EDGE_CATEGORY in _codes(report)
 
 
-def test_composition_rows_require_both_fda_upstreams() -> None:
+def test_composition_edges_pass_with_any_contributing_fda_source() -> None:
+    """Per-edge truth (issue #59): exactly the contributing FDA source(s) must validate."""
+    report = validate_kgx(_composition_nodes(), [_composition_edge(upstream=["infores:dailymed"])])
+    assert report.kgx_problems == []
+    assert report.ok is True
+    report = validate_kgx(
+        _composition_nodes(),
+        [_composition_edge(upstream=["infores:drugs-at-fda"])],
+    )
+    assert report.ok is True
+
+
+def _composition_edge_with_supporting(*supporting_ids: str) -> dict[str, object]:
+    """A composition edge whose sources name only the given FDA supporting source(s)."""
+    sources: list[dict[str, object]] = _composition_edge()["sources"]  # type: ignore[assignment]
+    primary = dict(sources[0])
+    primary["upstream_resource_ids"] = list(supporting_ids) or ["infores:nothing"]
+    return {
+        **_composition_edge(),
+        "sources": [
+            primary,
+            *(
+                {"resource_id": resource_id, "resource_role": "supporting_data_source"}
+                for resource_id in supporting_ids
+            ),
+        ],
+    }
+
+
+def test_composition_edge_passes_with_one_fda_source_and_fails_with_none() -> None:
+    """Any non-empty FDA subset is valid; no FDA source at all is a provenance problem."""
+    report = validate_kgx(
+        _composition_nodes(), [_composition_edge_with_supporting("infores:drugs-at-fda")]
+    )
+    assert report.ok is True
+    report = validate_kgx(
+        _composition_nodes(), [_composition_edge_with_supporting("infores:dailymed")]
+    )
+    assert report.ok is True
+    report = validate_kgx(_composition_nodes(), [_composition_edge_with_supporting()])
+    assert MISSING_PROVENANCE in _codes(report)
+
+
+def test_composition_rows_accept_contributor_subsets() -> None:
+    """The TSV names exactly the contributing source(s); every non-empty subset is valid."""
     from dakp_pipeline.translator import check_rows
 
     row = {
@@ -509,11 +553,16 @@ def test_composition_rows_require_both_fda_upstreams() -> None:
         "clinical_approval_status": "",
         "knowledge_level": "knowledge_assertion",
         "primary_knowledge_source": "infores:drugapprovals-kp",
-        "upstream_resource_ids": "infores:dailymed",
+        "upstream_resource_ids": "",
     }
     report = check_rows([row])
     assert [(v.family, v.invariant) for v in report.violations] == [
         ("biolink:has_active_ingredient", "upstream_provenance")
     ]
+    row["upstream_resource_ids"] = "infores:dailymed"
+    assert check_rows([row]).ok is True
+    # The issue-#59 case: a Drugs@FDA-only pair is valid on its own.
+    row["upstream_resource_ids"] = "infores:drugs-at-fda"
+    assert check_rows([row]).ok is True
     row["upstream_resource_ids"] = "infores:dailymed|infores:drugs-at-fda"
     assert check_rows([row]).ok is True

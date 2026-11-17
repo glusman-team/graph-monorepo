@@ -23,7 +23,10 @@ These edges carry NO qualifiers: composition is a property of the product, not o
 species, disease or population. Animal labels therefore emit the same unqualified rows as
 human ones. ``FDA_regulatory_approvals`` and ``supporting_spl_sets`` stay in the TSV for
 audit; only ``edge_evidence`` (the ``dailymed:<set_id>`` CURIEs) reaches the edge, as
-``publications``.
+``publications``. ``upstream_resource_ids`` names exactly the FDA source(s) that
+contributed to the pair -- ``infores:dailymed``, ``infores:drugs-at-fda``, or both -- so the
+post-build provenance pass (:mod:`dakp_pipeline.composition_provenance`) can rescope each
+edge's ``sources`` to its real inputs instead of the build-time union template.
 """
 
 from __future__ import annotations
@@ -56,9 +59,6 @@ from dakp_pipeline.logging_setup import logger, stats, step
 _TABLE = "has_active_ingredient_assertions"
 PREDICATE = "biolink:has_active_ingredient"
 _OPERATION = "shape_has_active_ingredient"
-
-#: Edge provenance matches the other families: DAKP primary, both FDA sources upstream.
-UPSTREAM_RESOURCE_IDS = sorted_pipe([INFORES_DAILYMED, INFORES_DRUGS_AT_FDA])
 
 
 def _norm(text: object) -> str:
@@ -98,6 +98,9 @@ class _Aggregate:
     kinds: set[str] = field(default_factory=set)
     sets: set[str] = field(default_factory=set)
     approvals: set[str] = field(default_factory=set)
+    # FDA infores CURIEs that actually contributed rows to this pair. Drugs@FDA-only pairs
+    # (the issue-#59 case) must not name DailyMed, and vice versa.
+    sources: set[str] = field(default_factory=set)
 
 
 def build_has_active_ingredient_rows(
@@ -147,6 +150,7 @@ def build_has_active_ingredient_rows(
             if agg is None:
                 continue
             counters["dailymed_pairs"] += 1
+            agg.sources.add(INFORES_DAILYMED)
             set_id = str(rec.get("spl_set_id") or "").strip()
             if set_id:
                 agg.sets.add(set_id)
@@ -174,6 +178,7 @@ def build_has_active_ingredient_rows(
                 if agg is None:
                     continue
                 counters["drugsfda_pairs"] += 1
+                agg.sources.add(INFORES_DRUGS_AT_FDA)
                 agg.kinds.add("substance")
                 agg.approvals.update(displays)
 
@@ -193,7 +198,7 @@ def build_has_active_ingredient_rows(
                 knowledge_level=KL_ASSERTION,
                 agent_type=AT_MANUAL,
                 primary_knowledge_source=INFORES_DAKP,
-                upstream_resource_ids=UPSTREAM_RESOURCE_IDS,
+                upstream_resource_ids=sorted_pipe(agg.sources),
             )
         )
     stats(
@@ -217,7 +222,6 @@ class HasActiveIngredientShaper:
 
 __all__ = [
     "PREDICATE",
-    "UPSTREAM_RESOURCE_IDS",
     "HasActiveIngredientShaper",
     "build_has_active_ingredient_rows",
     "split_active_ingredients",

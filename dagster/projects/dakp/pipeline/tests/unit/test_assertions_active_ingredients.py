@@ -117,7 +117,8 @@ def test_dailymed_substance_and_moiety_both_emit(tmp_path: Path) -> None:
         assert row["primary_knowledge_source"] == "infores:drugapprovals-kp"
         assert row["knowledge_level"] == "knowledge_assertion"
         assert row["agent_type"] == "manual_validation_of_automated_agent"
-        assert row["upstream_resource_ids"] == "infores:dailymed|infores:drugs-at-fda"
+        # DailyMed-only fixture: Drugs@FDA contributed nothing, so it is not named.
+        assert row["upstream_resource_ids"] == "infores:dailymed"
 
 
 def test_self_named_products_are_dropped(tmp_path: Path) -> None:
@@ -161,6 +162,8 @@ def test_drugsfda_rows_split_and_cite_the_application(tmp_path: Path) -> None:
         # No SPL backing: nothing to cite on publications.
         assert row["edge_evidence"] == ""
         assert row["supporting_spl_sets"] == ""
+        # Drugs@FDA-only fixture: DailyMed contributed nothing, so it is not named.
+        assert row["upstream_resource_ids"] == "infores:drugs-at-fda"
 
 
 def test_dailymed_and_drugsfda_merge_into_one_row(tmp_path: Path) -> None:
@@ -187,6 +190,8 @@ def test_dailymed_and_drugsfda_merge_into_one_row(tmp_path: Path) -> None:
     assert row["FDA_regulatory_approvals"] == "NDA021687"
     # Both kinds survive the merge (DailyMed said moiety, Drugs@FDA is substance-granular).
     assert row["ingredient_kind"] == "moiety|substance"
+    # Both sources contributed, so both are named.
+    assert row["upstream_resource_ids"] == "infores:dailymed|infores:drugs-at-fda"
 
 
 def test_animal_set_cites_the_animal_application(tmp_path: Path) -> None:

@@ -158,11 +158,17 @@ EDGE_FAMILIES: dict[str, EdgeFamily] = {
         frozenset({INFORES_DAILYMED}),
         alternative_upstream=(frozenset({INFORES_EPAR}),),
     ),
-    # Product composition: every edge's sources carry BOTH FDA sources upstream (the Tablassert
-    # override stamps one fixed chain per table), whichever of them supplied the row.
+    # Product composition: every edge cites at least one FDA source -- exactly the sources
+    # that contributed to the pair (the post-build provenance pass rescopes the union
+    # template; see dakp_pipeline.composition_provenance). A Drugs@FDA-only pair (issue #59)
+    # carries the drugs-at-fda chain alone and must not fail the gate for missing DailyMed.
     PREDICATE_HAS_ACTIVE_INGREDIENT: EdgeFamily(
         PREDICATE_HAS_ACTIVE_INGREDIENT,
-        frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
+        frozenset({INFORES_DAILYMED}),
+        alternative_upstream=(
+            frozenset({INFORES_DRUGS_AT_FDA}),
+            frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
+        ),
     ),
 }
 
@@ -708,11 +714,17 @@ FAMILY_INVARIANTS: dict[str, FamilyInvariant] = {
         alternative_upstream=(frozenset({INFORES_EPAR}),),
     ),
     # No clinical_approval_status: composition is a property of the product, not of an indication.
+    # Rows name exactly their contributing FDA source(s) since the shaper tracks contributors,
+    # so any non-empty subset is valid; an edge with no FDA source at all still fails.
     PREDICATE_HAS_ACTIVE_INGREDIENT: FamilyInvariant(
         PREDICATE_HAS_ACTIVE_INGREDIENT,
-        frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
+        frozenset({INFORES_DAILYMED}),
         None,
         "knowledge_assertion",
+        alternative_upstream=(
+            frozenset({INFORES_DRUGS_AT_FDA}),
+            frozenset({INFORES_DAILYMED, INFORES_DRUGS_AT_FDA}),
+        ),
     ),
 }
 
