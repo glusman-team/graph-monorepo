@@ -18,6 +18,7 @@ defmodule EdgeLinkouts.Cosmos.File do
 
   use GenServer
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     opts = Keyword.put_new(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))

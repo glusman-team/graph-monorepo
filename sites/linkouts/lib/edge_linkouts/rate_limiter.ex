@@ -32,6 +32,7 @@ defmodule EdgeLinkouts.RateLimiter do
   @default_budget 150
   @mask 0xFFFFFFFF
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     opts = Keyword.put_new(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))

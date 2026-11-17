@@ -117,6 +117,7 @@ defmodule EdgeLinkouts.Display.Config do
   # NimbleOptions has no nullable string type, and it validates defaults too; display_name and
   # extends are both omit-able strings.
   @doc false
+  @spec validate_optional_string(term()) :: {:ok, String.t() | nil} | {:error, String.t()}
   def validate_optional_string(value) when is_binary(value) or value == nil,
     do: {:ok, value}
 
@@ -144,6 +145,7 @@ defmodule EdgeLinkouts.Display.Config do
   @type t :: %__MODULE__{}
 
   @doc "The NimbleOptions schema, for docs and for `mix linkouts.check`."
+  @spec schema() :: NimbleOptions.t()
   def schema, do: @schema
 
   @doc """
@@ -290,6 +292,7 @@ defmodule EdgeLinkouts.Display.Config do
   # Every problem in a spec, depth-first. Slot references cannot be checked here (a slot may be
   # defined in the same config), so Display.check_slots/1 does that pass once the whole config is
   # loaded.
+  @spec spec_problems(term(), String.t()) :: [String.t()]
   def spec_problems(nil, _where), do: ["nil spec"]
   def spec_problems(spec, _where) when is_binary(spec), do: []
 
