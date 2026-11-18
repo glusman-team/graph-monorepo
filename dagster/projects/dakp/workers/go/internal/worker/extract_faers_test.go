@@ -336,3 +336,47 @@ func TestFAERSIncrementalQuarterCache(t *testing.T) {
 		}
 	}
 }
+
+// A quarter whose source bytes changed must re-parse, not reuse the stale shard.
+func TestFAERSQuarterCacheInvalidatesOnContentChange(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	body, err := os.ReadFile("../faers/testdata/DRUG24Q2.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "DRUG24Q2.txt")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := blake3store.HashFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := ArtifactRef{URI: path, Blake3: id, MediaType: "text/plain"}
+	cfg := Config{Workdir: t.TempDir(), Threads: 4}
+	first, err := ParseFAERSQuarters(ctx, cfg, []ArtifactRef{ref})
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first parse: %v, %v", first, err)
+	}
+	if err := os.WriteFile(path, append(append([]byte(nil), body...), []byte("x$y$\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newID, err := blake3store.HashFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ParseFAERSQuarters(ctx, cfg, []ArtifactRef{{URI: path, Blake3: newID, MediaType: "text/plain"}})
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second parse: %v, %v", second, err)
+	}
+	if second[0].Blake3 == first[0].Blake3 {
+		t.Fatal("changed quarter content reused the stale shard")
+	}
+	if err := os.Truncate(first[0].URI, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFAERSQuarter(first[0].URI); err == nil {
+		t.Fatal("truncated shard decoded without error")
+	}
+}

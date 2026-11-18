@@ -14,7 +14,7 @@ npm ci
 make hooks
 ```
 
-Run heavy Linkouts tests/builds on `wenceslaus` with at most four CPUs. Use `/users/sgoetz/Code/linkouts-port-test` for isolated port verification; do not disturb the dirty DAKP checkout at `/users/sgoetz/Code/graph-monorepo`. Local editing, synchronization, and `gofmt` are fine.
+Run heavy tests and builds on `wenceslaus` inside the shared `graph-build.slice` (70-CPU budget; `systemd-run --user --scope --slice=graph-build.slice -- ...`), so concurrent work shares one host-wide cap. Use `/users/sgoetz/Code/linkouts-port-test` for isolated port verification; do not disturb the dirty DAKP checkout at `/users/sgoetz/Code/graph-monorepo`. Local editing, synchronization, and `gofmt` are fine.
 
 The committed `.envrc` contains only `use flake`; `.envrc.example` shows public settings. Keep credentials outside Git. A copied `~/.envrc` must not be edited or printed during verification.
 

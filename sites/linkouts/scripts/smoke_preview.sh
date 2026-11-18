@@ -17,7 +17,7 @@ cleanup() {
 trap cleanup EXIT
 cleanup
 
-docker run --detach --rm --cpus=4 --name "$name" \
+docker run --detach --rm --cpus="${LINKOUTS_PREVIEW_CPUS:-8}" --name "$name" \
   --publish "127.0.0.1:${port}:8080" \
   --env SECRET_KEY_BASE="$secret" \
   --env PHX_HOST=127.0.0.1 \

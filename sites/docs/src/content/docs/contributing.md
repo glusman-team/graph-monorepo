@@ -16,7 +16,7 @@ make hooks
 make test
 ```
 
-Run heavy Linkouts builds and tests on the designated build host. Limit concurrent work to four CPUs there and never run them on a workstation that is being used interactively.
+Run heavy builds and tests on the designated build host inside the shared `graph-build.slice` (70-CPU aggregate budget) and never run them on a workstation that is being used interactively.
 
 ## Daily loop
 

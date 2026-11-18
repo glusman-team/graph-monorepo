@@ -9,7 +9,7 @@ elif git rev-parse --verify --quiet refs/heads/main >/dev/null; then
   base=main
 else
   echo "No main ref is available; running all Nx test and lint targets."
-  exec npx nx run-many -t test lint --parallel=4
+  exec npx nx run-many -t test lint --parallel=8
 fi
 
-exec npx nx affected --base="$base" -t test lint --parallel=4
+exec npx nx affected --base="$base" -t test lint --parallel=8

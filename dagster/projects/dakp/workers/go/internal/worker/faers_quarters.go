@@ -28,9 +28,28 @@ type faersQuarter struct {
 }
 
 // ParseFAERSQuarters builds independent, reusable shards before cross-quarter dedup.
+const faersParseTaskOperation = "parse_faers_quarters_task_v1"
+
 func ParseFAERSQuarters(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]ArtifactRef, error) {
+	store := Store{Workdir: cfg.Workdir}
+	upstream := upstreamInputIDs(inputs)
+	if !cfg.Force {
+		if cached := store.FindByOperation(faersParseTaskOperation, upstream); cached != nil {
+			Stat(ctx, "parse_faers_quarters", "skipped_already_done", len(cached))
+			return cached, nil
+		}
+	}
+	refs, err := parseFAERSQuartersUnscoped(ctx, cfg, inputs)
+	if err == nil {
+		store.RecordOperation(faersParseTaskOperation, upstream, refs)
+	}
+	return refs, err
+}
+
+func parseFAERSQuartersUnscoped(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]ArtifactRef, error) {
 	if cfg.MemoryBudgetGB > 0 {
 		defer debug.SetMemoryLimit(debug.SetMemoryLimit(int64(cfg.MemoryBudgetGB) << 30))
+		Stat(ctx, "parse_faers_quarters", "memory_budget_gb", cfg.MemoryBudgetGB)
 	}
 	store := Store{Workdir: cfg.Workdir}
 	// Use the workdir filesystem so staging can hardlink large acquisition artifacts.
@@ -53,7 +72,7 @@ func ParseFAERSQuarters(ctx context.Context, cfg Config, inputs []ArtifactRef) (
 	}
 	defer closeAll()
 	if len(quarters) == 0 {
-		return nil, fmt.Errorf("extract_faers: no FAERS ASCII .txt sources staged in %s", inDir)
+		return nil, fmt.Errorf("parse_faers_quarters: no FAERS ASCII .txt sources staged in %s", inDir)
 	}
 
 	order := make([]string, 0, len(quarters))

@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=dakp,dakp-pipeline,mo-core,mo-kg,mo-dagster --parallel=4'
+      - run: nix develop "$GITHUB_WORKSPACE#deploy" --command bash -c 'set -e; npm ci; npx nx run-many -t test lint --projects=dakp,dakp-pipeline,mo-core,mo-kg,mo-dagster --parallel=8'
 
   dakp-go:
     needs: changes
@@ -138,7 +138,7 @@ jobs:
           LINKOUTS_IMAGE: linkouts:ci
         run: |
           set -euo pipefail
-          docker build --cpuset-cpus=0-3 -f sites/linkouts/Dockerfile -t "$LINKOUTS_IMAGE" .
+          docker build -f sites/linkouts/Dockerfile -t "$LINKOUTS_IMAGE" .
           sites/linkouts/scripts/smoke_preview.sh
 
   repository:

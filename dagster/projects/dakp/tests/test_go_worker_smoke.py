@@ -8,6 +8,7 @@ across two dagster runs against the production binary.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -119,7 +120,13 @@ def test_real_faers_worker_publishes_separate_parse_and_merge_assets(dag_env, mo
     refsio.publish_refs(run_config(), "acquire_faers", refs)
     stage = assets.FAERS_QUARTERS
     parsed = materialization(run_job(f"dakp_build_{stage}"), stage)
-    assert parsed["refs"] == len(refs) + 2
+    quarter_names = set()
+    for path in fixtures.glob("*.txt"):
+        match = re.search(r"(\d{2})q(\d)", path.name, re.IGNORECASE)
+        if match:
+            quarter_names.add(match.group(1).upper() + "Q" + match.group(2))
+    expected_shards = len(quarter_names)
+    assert parsed["refs"] == len(refs) + expected_shards
     # The merge reads a coherent snapshot from the parse asset, not the latest acquisition.
     (dag_env.published / "dakp" / "refs" / "acquire_faers.refs.json").unlink()
     cold = materialization(run_job("dakp_build_extract_faers"), "extract_faers")

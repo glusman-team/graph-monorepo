@@ -40,6 +40,11 @@ const faersTaskOperation = "extract_faers"
 
 // ExtractFAERS runs both phases for callers that do not use Dagster's separate assets.
 func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]ArtifactRef, error) {
+	if cfg.MemoryBudgetGB > 0 {
+		previous := debug.SetMemoryLimit(int64(cfg.MemoryBudgetGB) << 30)
+		defer debug.SetMemoryLimit(previous)
+		Stat(ctx, faersEvent, "memory_budget_gb", cfg.MemoryBudgetGB)
+	}
 	store := Store{Workdir: cfg.Workdir}
 	if !cfg.Force {
 		if cached := store.FindByOperation(faersTaskOperation, upstreamInputIDs(inputs)); cached != nil {

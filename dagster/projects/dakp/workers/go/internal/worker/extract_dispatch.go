@@ -13,6 +13,8 @@ func TaskOperation(stage string) string {
 		return faersTaskOperation
 	case "faers_merge":
 		return faersMergeOperation
+	case "faers_parse":
+		return faersParseTaskOperation
 	case "drugsfda":
 		return drugsfdaTaskOperation
 	default:

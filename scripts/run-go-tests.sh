@@ -31,8 +31,6 @@ for file in "$@"; do
 done
 
 export GOTOOLCHAIN=local
-export GOMAXPROCS=${GOMAXPROCS:-4}
-export GOFLAGS=${GOFLAGS:--p=4}
 for module in "${!modules[@]}"; do
   echo "go test -race: $module"
   (cd "$module" && go test -race -count=1 ./...)
