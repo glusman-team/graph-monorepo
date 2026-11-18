@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,96 +37,70 @@ const faersEvent = "extract_faers"
 // per-artifact manifests keep their own operation names; see opindex.go).
 const faersTaskOperation = "extract_faers"
 
-// ExtractFAERS is the native Go implementation of the DAG's extract_faers stage. It mirrors
-// faers_ascii.FAERSASCIIExtractor semantics (DELETE-filtered, cross-quarter-deduped case join)
-// but runs as a **bounded-memory streaming pipeline** (plans/fix-faers-memory.md): quarters are
-// processed one at a time, most-recent-first - each quarter's family files stream through
-// faers.ParseStream (never buffered whole), the case join + cross-quarter caseid dedup run per
-// quarter, kept rows spill to sorted scratch run files, and a k-way merge emits the global
-// cases.parquet FIRST (so the observed-uses shaper resolves it) plus the public
-// faers_cases.tsv in a single pass. Peak memory is one quarter's tables + the dedup-key map,
-// NOT the whole corpus. Returns the five ArtifactRefs in the same order as before.
+// ExtractFAERS runs both phases for callers that do not use Dagster's separate assets.
 func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]ArtifactRef, error) {
-	if cfg.MemoryBudgetGB > 0 {
-		debug.SetMemoryLimit(int64(cfg.MemoryBudgetGB) << 30)
-		Stat(ctx, faersEvent, "memory_budget_gb", cfg.MemoryBudgetGB)
-	}
-
 	store := Store{Workdir: cfg.Workdir}
-	upstreamIDs := upstreamInputIDs(inputs)
 	if !cfg.Force {
-		// Already-done skip: the same upstream artifacts were extracted before.
-		if cached := store.FindByOperation(faersTaskOperation, upstreamIDs); cached != nil {
+		if cached := store.FindByOperation(faersTaskOperation, upstreamInputIDs(inputs)); cached != nil {
 			Stat(ctx, faersEvent, "skipped_already_done", len(cached))
 			return cached, nil
 		}
 	}
-	faersDir := filepath.Join(store.InterimDir(), "faers")
-	if err := os.MkdirAll(faersDir, 0o755); err != nil {
+	quarters, err := ParseFAERSQuarters(ctx, cfg, inputs)
+	if err != nil {
 		return nil, err
 	}
+	refs, err := mergeFAERSQuarters(ctx, cfg, quarters, upstreamInputIDs(inputs))
+	if err == nil {
+		store.RecordOperation(faersTaskOperation, upstreamInputIDs(inputs), refs)
+	}
+	return refs, err
+}
 
+// mergeFAERSQuarters applies cross-quarter dedup in descending quarter order, retaining
+// only one decoded quarter at a time before the final k-way merge.
+func mergeFAERSQuarters(ctx context.Context, cfg Config, quarters []ArtifactRef, inputIDs []string) ([]ArtifactRef, error) {
+	store := Store{Workdir: cfg.Workdir}
+	deduper := faers.NewDeduper()
 	scratch, err := os.MkdirTemp("", "dakp-faers-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
-	inDir := filepath.Join(scratch, "in")
-	if err := StageInputs(inputs, inDir); err != nil {
+	faersDir := filepath.Join(store.InterimDir(), "faers", OpIndexKey(faersTaskOperation, append(append([]string(nil), inputIDs...), upstreamInputIDs(quarters)...)))
+	if err := os.MkdirAll(faersDir, 0o755); err != nil {
 		return nil, err
 	}
-	Stat(ctx, faersEvent, "staged_inputs", len(inputs))
-	for i, ref := range inputs {
-		StatDebug(ctx, faersEvent, fmt.Sprintf("input[%d].uri", i), ref.URI)
-		StatDebug(ctx, faersEvent, fmt.Sprintf("input[%d].blake3", i), ref.Blake3)
-	}
-
-	quarters, err := inventoryFAERSQuarters(inDir)
-	if err != nil {
-		return nil, err
-	}
-	if len(quarters) == 0 {
-		return nil, fmt.Errorf("extract_faers: no FAERS ASCII .txt sources staged in %s", inDir)
-	}
-	quarterList := make([]string, 0, len(quarters))
-	for q := range quarters {
-		quarterList = append(quarterList, q)
-	}
-	// Most-recent-first: the streaming dedup relies on newer quarters arriving first, and it
-	// mirrors sorted(by_quarter_family, reverse=True) in the Python reference.
-	sort.Slice(quarterList, func(i, j int) bool { return quarterList[i] > quarterList[j] })
-	Stat(ctx, faersEvent, "quarters_discovered", len(quarterList))
-	for _, q := range quarterList {
-		StatDebug(ctx, faersEvent, "quarter", q)
-	}
-
-	warn := &faers.Warnings{}
-	deduper := faers.NewDeduper()
 	runsDir := filepath.Join(scratch, "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return nil, err
 	}
 
 	var (
-		runs         []string
-		dedupAudit   []faers.DedupAuditRow
-		deleteTables []*faers.Table
+		runs        []string
+		dedupAudit  []faers.DedupAuditRow
+		deleteAudit []faers.DeleteAuditRow
+		warnings    []faers.Warning
 	)
-	for _, q := range quarterList {
+	ordered := append([]ArtifactRef(nil), quarters...)
+	sort.Slice(ordered, func(i, j int) bool { return filepath.Base(ordered[i].URI) > filepath.Base(ordered[j].URI) })
+	previous := ""
+	for _, ref := range ordered {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		quarterStart := time.Now()
-		families, err := parseFAERSQuarter(ctx, q, quarters[q], warn)
+		shard, err := readFAERSQuarter(ref.URI)
 		if err != nil {
-			return nil, fmt.Errorf("extract_faers: quarter %s: %w", q, err)
+			return nil, err
 		}
-		parsedRows := 0
-		for family, tbl := range families {
-			parsedRows += len(tbl.Rows)
-			StatDebug(ctx, faersEvent, q+"."+family+"_rows", len(tbl.Rows))
+		q, cases := shard.Quarter, shard.Cases
+		if filepath.Base(ref.URI) != q+".gob" || q == "" || (previous != "" && q >= previous) {
+			return nil, fmt.Errorf("invalid or duplicate FAERS quarter %q in %s", q, ref.URI)
 		}
-		if del := families["DELETE"]; del != nil && len(del.Rows) > 0 {
-			deleteTables = append(deleteTables, del)
-		}
-		cases := faers.BuildQuarterCases(families, q, faers.DeletedPrimaryIDs(families["DELETE"]), warn)
+		previous = q
+		deleteAudit = append(deleteAudit, shard.Deletes...)
+		warnings = append(warnings, shard.Warnings...)
 		kept, superseded, newKeys := deduper.Split(q, cases)
 		deduper.Commit(q, newKeys)
 		dedupAudit = append(dedupAudit, superseded...)
@@ -138,20 +111,17 @@ func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]Arti
 			}
 			runs = append(runs, run)
 		}
-		Stat(ctx, faersEvent, q+".parsed_rows", parsedRows)
 		Stat(ctx, faersEvent, q+".cases", len(cases))
 		Stat(ctx, faersEvent, q+".kept", len(kept))
 		Stat(ctx, faersEvent, q+".superseded", len(superseded))
 		Stat(ctx, faersEvent, q+".elapsed_s", fmt.Sprintf("%.3f", time.Since(quarterStart).Seconds()))
 	}
 	faers.SortDedupAudit(dedupAudit)
-	Stat(ctx, faersEvent, "warnings_total", int64(warn.Total()))
-
-	inputIDs := make([]string, len(inputs))
-	for i, ref := range inputs {
-		inputIDs[i] = ref.Blake3
+	var warningsTotal int64
+	for _, item := range warnings {
+		warningsTotal += int64(item.Count)
 	}
-	warningsTotal := int64(warn.Total())
+	Stat(ctx, faersEvent, "warnings_total", warningsTotal)
 
 	// 1+2. Global cases.parquet and public faers_cases.tsv, emitted in ONE merged pass.
 	casesPath := filepath.Join(faersDir, "cases.parquet")
@@ -187,7 +157,13 @@ func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]Arti
 	// 3+4+5. delete_audit / dedup_audit / warnings parquets: written, then registered as
 	// one batch (hashes run concurrently; refs and stat lines keep their order).
 	deleteRows := make([][]string, 0)
-	for _, r := range faers.BuildDeleteAudit(deleteTables) {
+	sort.SliceStable(deleteAudit, func(i, j int) bool {
+		if deleteAudit[i].Quarter != deleteAudit[j].Quarter {
+			return deleteAudit[i].Quarter < deleteAudit[j].Quarter
+		}
+		return deleteAudit[i].PrimaryID < deleteAudit[j].PrimaryID
+	})
+	for _, r := range deleteAudit {
 		deleteRows = append(deleteRows, []string{r.Quarter, r.PrimaryID, r.CaseID, r.SourceFile, r.SourceRecordID})
 	}
 	deleteIn, err := writeFAERSAuditParquet(faersDir, "delete_audit", faers.DeleteAuditColumns, deleteRows, inputIDs, warningsTotal)
@@ -206,7 +182,7 @@ func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]Arti
 	// _WARNINGS_COLUMNS, sorted by quarter, family, code, message so repeated runs produce
 	// byte-identical output for the BLAKE3 op-index cache). The per-quarter parse runs in
 	// parallel, so Items() order is scheduling-dependent; the sort makes it deterministic.
-	warningsIn, err := writeFAERSAuditParquet(faersDir, "warnings", faersWarningsColumns, faersWarningRows(warn.Items()), inputIDs, warningsTotal)
+	warningsIn, err := writeFAERSAuditParquet(faersDir, "warnings", faersWarningsColumns, faersWarningRows(warnings), inputIDs, warningsTotal)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +197,6 @@ func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]Arti
 
 	refs := []ArtifactRef{casesRef, tsvRef, deleteRef, dedupRef, warningsRef}
 	Stat(ctx, faersEvent, "output_refs", len(refs))
-	store.RecordOperation(faersTaskOperation, upstreamIDs, refs)
 	return refs, nil
 }
 
@@ -320,43 +295,17 @@ func writeFAERSAuditParquet(dir, name string, columns []string, rows [][]string,
 // faersSourceHandle is one logical FAERS ASCII file opened on demand - loose .txt or a zip
 // member. Content is never buffered up front: ParseStream hashes + parses it in one pass.
 type faersSourceHandle struct {
-	Family string
-	Name   string // basename used in provenance (source_file)
-	Open   func() (io.ReadCloser, error)
-}
-
-// zipSession tracks an open quarterly zip shared by the handles of its members; it is closed
-// when the last quarter drawing from it has been parsed.
-type zipSession struct {
-	rc   *zip.ReadCloser
-	refs int
-}
-
-func (z *zipSession) release() error {
-	z.refs--
-	if z.refs <= 0 {
-		return z.rc.Close()
-	}
-	return nil
-}
-
-// faersQuarterSources is one quarter's lazy family handles plus the zips to release after it.
-type faersQuarterSources struct {
-	families map[string]faersSourceHandle
-	zips     []*zipSession
-}
-
-func (qs *faersQuarterSources) closeZips() {
-	for _, z := range qs.zips {
-		z.release()
-	}
+	Name     string
+	Identity string
+	InputID  string
+	Open     func() (io.ReadCloser, error)
 }
 
 // inventoryFAERSQuarters scans inDir (recursively) for FAERS ASCII sources - loose .txt files
 // and .txt members inside quarterly ASCII .zip archives (the shape the FAERS fetcher
 // downloads) - and returns quarter -> lazy family handles. Nothing is read into memory here;
 // each handle streams its content when opened. Deterministic: paths walk in sorted order.
-func inventoryFAERSQuarters(inDir string) (map[string]*faersQuarterSources, error) {
+func inventoryFAERSQuarters(inDir string, refs map[string]ArtifactRef) (map[string]map[string]faersSourceHandle, func(), error) {
 	var txtPaths, zipPaths []string
 	err := filepath.WalkDir(inDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -374,41 +323,39 @@ func inventoryFAERSQuarters(inDir string) (map[string]*faersQuarterSources, erro
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.Strings(txtPaths)
 	sort.Strings(zipPaths)
-
-	out := map[string]*faersQuarterSources{}
-	get := func(q string) *faersQuarterSources {
-		if out[q] == nil {
-			out[q] = &faersQuarterSources{families: map[string]faersSourceHandle{}}
+	out := map[string]map[string]faersSourceHandle{}
+	var readers []*zip.ReadCloser
+	closeAll := func() {
+		for _, reader := range readers {
+			_ = reader.Close()
 		}
-		return out[q]
 	}
-
-	for _, p := range txtPaths {
-		name := filepath.Base(p)
+	add := func(q, family string, handle faersSourceHandle) {
+		if out[q] == nil {
+			out[q] = map[string]faersSourceHandle{}
+		}
+		out[q][family] = handle
+	}
+	for _, path := range txtPaths {
+		name := filepath.Base(path)
 		family, quarter := faers.FamilyAndQuarter(name)
 		if family == "" || quarter == "" {
-			continue // not a FAERS ASCII file
+			continue
 		}
-		path := p
-		get(quarter).families[family] = faersSourceHandle{
-			Family: family,
-			Name:   name,
-			Open:   func() (io.ReadCloser, error) { return os.Open(path) },
-		}
+		add(quarter, family, faersSourceHandle{Name: name, Identity: name, InputID: refs[path].Blake3, Open: func() (io.ReadCloser, error) { return os.Open(path) }})
 	}
-
-	for _, zp := range zipPaths {
-		reader, err := zip.OpenReader(zp)
+	for _, path := range zipPaths {
+		reader, err := zip.OpenReader(path)
 		if err != nil {
-			return nil, err
+			closeAll()
+			return nil, nil, err
 		}
-		sess := &zipSession{rc: reader}
-		zipQuarters := map[string]bool{}
-		for _, file := range reader.File {
+		readers = append(readers, reader)
+		for i, file := range reader.File {
 			if file.FileInfo().IsDir() || !strings.EqualFold(filepath.Ext(file.Name), ".txt") {
 				continue
 			}
@@ -417,39 +364,29 @@ func inventoryFAERSQuarters(inDir string) (map[string]*faersQuarterSources, erro
 			if family == "" || quarter == "" {
 				continue
 			}
-			mem := file
-			qs := get(quarter)
-			qs.families[family] = faersSourceHandle{Family: family, Name: name, Open: mem.Open}
-			if !zipQuarters[quarter] {
-				zipQuarters[quarter] = true
-				sess.refs++
-				qs.zips = append(qs.zips, sess)
-			}
-		}
-		if sess.refs == 0 { // zip held no FAERS members
-			if err := reader.Close(); err != nil {
-				return nil, err
-			}
+			add(quarter, family, faersSourceHandle{Name: name, Identity: fmt.Sprintf("%d:%s", i, file.Name), InputID: refs[path].Blake3, Open: file.Open})
 		}
 	}
-	return out, nil
+	return out, closeAll, nil
 }
 
 // parseFAERSQuarter streams one quarter's family files into normalized Tables concurrently
 // (bounded by the family count - at most six files, never the whole corpus at once). The
-// quarter's zips are released before returning.
-func parseFAERSQuarter(ctx context.Context, quarter string, qs *faersQuarterSources, warn *faers.Warnings) (map[string]*faers.Table, error) {
-	defer qs.closeZips()
+// inventory owns the lifetime of the open zip readers.
+func parseFAERSQuarter(ctx context.Context, quarter string, handles map[string]faersSourceHandle, warn *faers.Warnings, slots chan struct{}) (map[string]*faers.Table, error) {
 	var (
 		mu       sync.Mutex
 		families = map[string]*faers.Table{}
 	)
 	g, gctx := errgroup.WithContext(ctx)
-	for family, h := range qs.families {
+	for family, h := range handles {
 		family, h := family, h
 		g.Go(func() error {
-			if err := gctx.Err(); err != nil {
-				return err
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-gctx.Done():
+				return gctx.Err()
 			}
 			rc, err := h.Open()
 			if err != nil {

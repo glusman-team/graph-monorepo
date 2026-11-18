@@ -6,7 +6,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/glusman-team/dakp/go/internal/blake3store"
 	"github.com/glusman-team/dakp/go/internal/faers"
@@ -288,6 +290,49 @@ func TestLoadFAERSSourcesFromZip(t *testing.T) {
 		want, _ := os.ReadFile(filepath.Join("../faers/testdata", fam+"24Q3.txt"))
 		if !bytes.Equal(s.Content, want) {
 			t.Errorf("%s content mismatch", fam)
+		}
+	}
+}
+
+// Adding a quarter must reuse the old shard and preserve every final artifact.
+func TestFAERSIncrementalQuarterCache(t *testing.T) {
+	ctx := context.Background()
+	inputs := faersFixtureRefs(t)
+	var older []ArtifactRef
+	for _, ref := range inputs {
+		if strings.Contains(filepath.Base(ref.URI), "24Q2") {
+			older = append(older, ref)
+		}
+	}
+	cfg := Config{Workdir: t.TempDir(), Threads: 8}
+	first, err := ParseFAERSQuarters(ctx, cfg, older)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first parse: %v, %v", first, err)
+	}
+	stamp := time.Unix(1700000000, 0)
+	if err := os.Chtimes(first[0].URI, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ExtractFAERS(ctx, cfg, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(first[0].URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatal("unchanged quarter was rewritten")
+	}
+	cfg.Workdir = t.TempDir()
+	cfg.Threads = 1
+	cold, err := ExtractFAERS(ctx, cfg, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ref := range cold {
+		if ref.Blake3 != got[i].Blake3 {
+			t.Errorf("output %s differs between incremental and cold run", ref.URI)
 		}
 	}
 }
