@@ -106,9 +106,29 @@ def _contraindications() -> EdgeFamily:
     )
 
 
+def _side_effects() -> EdgeFamily:
+    from dakp_pipeline.assertions.side_effects import SideEffectsShaper
+
+    return EdgeFamily(
+        name="side_effects",
+        table="side_effect_assertions",
+        predicate="biolink:has_side_effect",
+        knowledge_level="knowledge_assertion",
+        agent_type="manual_validation_of_automated_agent",
+        ner_profile="contraindications",
+        shaper=SideEffectsShaper,
+    )
+
+
 # Registration order is the deterministic stage/build order (observed-uses consumes the
 # approved_treats table, so it must follow it).
-_FAMILY_BUILDERS = (_approved_treats, _observed_uses, _contraindications, _has_active_ingredient)
+_FAMILY_BUILDERS = (
+    _approved_treats,
+    _observed_uses,
+    _contraindications,
+    _has_active_ingredient,
+    _side_effects,
+)
 
 
 def all_families() -> list[EdgeFamily]:

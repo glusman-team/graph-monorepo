@@ -33,6 +33,7 @@ FAMILY_OPERATIONS = {
     "approved_treats": "shape_approved_treats",
     "faers_applied_to_treat": "shape_faers_applied_to_treat",
     "contraindications": "shape_contraindications",
+    "side_effects": "shape_side_effects",
     "has_active_ingredient": "shape_has_active_ingredient",
 }
 

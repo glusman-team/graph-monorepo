@@ -162,6 +162,7 @@ ASSERTION_TABLES: dict[str, list[str]] = {
     "approved_treats_assertions": APPROVED_TREATS_COLUMNS,
     "faers_applied_to_treat_assertions": FAERS_APPLIED_TO_TREAT_COLUMNS,
     "contraindication_assertions": CONTRAINDICATION_COLUMNS,
+    "side_effect_assertions": CONTRAINDICATION_COLUMNS.copy(),
     "has_active_ingredient_assertions": HAS_ACTIVE_INGREDIENT_COLUMNS,
 }
 

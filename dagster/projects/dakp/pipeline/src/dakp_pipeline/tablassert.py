@@ -299,6 +299,7 @@ _TABLE_SOURCE_URLS: dict[str, tuple[str, ...]] = {
         canada_vigilance_source.CANADA_VIGILANCE_EXTRACTS_URL,
         icd10cm_source.ICD10CM_DRUG_TABLE_ZIP_URL,
     ),
+    "side_effect_assertions": (dailymed_source.FULL_RELEASE_INDEX_URL,),
     "contraindication_assertions": (
         dailymed_source.FULL_RELEASE_INDEX_URL,
         ema_documents_source.EMA_DOCUMENTS_URL,
@@ -945,12 +946,13 @@ def _rig_config(
     )
 
 
-# Canonical emission order for the four assertion tables.
+# Canonical emission order for assertion tables.
 _TABLE_ORDER = (
     "approved_treats_assertions",
     "faers_applied_to_treat_assertions",
     "contraindication_assertions",
     COMPOSITION_TABLE,
+    "side_effect_assertions",
 )
 
 # assertion table -> subject_text row exclusions, emitted as ONE ``source.reindex`` ``antijoin``
@@ -1249,6 +1251,12 @@ _TABLE_SPECS: dict[str, tuple[str, str, str, str]] = {
         "observation",
         AGENT_TYPE,
     ),
+    "side_effect_assertions": (
+        "side_effects",
+        "has_side_effect",
+        "knowledge_assertion",
+        AGENT_TYPE,
+    ),
     "contraindication_assertions": (
         "contraindications",
         "contraindicated_in",
@@ -1344,6 +1352,12 @@ _TABLE_SOURCES: dict[str, tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]
         ("infores:drugs-at-fda", "supporting_data_source", (), ()),
     ),
 }
+
+
+_TABLE_SOURCES["side_effect_assertions"] = (
+    (INFORES_DAKP, "primary_knowledge_source", ("infores:dailymed",), ()),
+    ("infores:dailymed", "supporting_data_source", (), ()),
+)
 
 
 def _sources_template(table: str) -> list[dict[str, Any]]:
@@ -1448,6 +1462,10 @@ _TABLE_ANNOTATIONS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         # Keep the TSV column for status lookup/audit, but never encode it onto observed edges.
         ("edge_evidence", "publications", "|"),
         ("clinical_approval_status", "clinical_approval_status", None),
+    ),
+    "side_effect_assertions": (
+        ("edge_evidence", "publications", "|"),
+        ("ner_confidence_score", "ner_confidence_score", None),
     ),
     "contraindication_assertions": (
         ("FDA_regulatory_approvals", "regulatory_approvals", "|"),
@@ -1802,6 +1820,7 @@ _TABLE_QUALIFIERS: dict[str, tuple[tuple[str, str], ...]] = {
     # Composition carries NO qualifiers: it is a property of the product, not of a species,
     # disease or population. ``table_config`` omits the ``qualifiers`` key for an empty entry.
     COMPOSITION_TABLE: (),
+    "side_effect_assertions": ((SPECIES_QUALIFIER, "species_context_text"),),
     "contraindication_assertions": (
         ("disease_context_qualifier", "disease_context_text"),
         ("anatomical_context_qualifier", "anatomical_context_text"),

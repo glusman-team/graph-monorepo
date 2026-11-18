@@ -8,6 +8,7 @@ deterministic and dep-free; the production (GLiNER2) mode is asserted to be *laz
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -204,9 +205,20 @@ def test_extract_contraindication_diseases_delegates() -> None:
 
 
 def test_importing_ner_does_not_import_heavy_deps() -> None:
-    assert "dakp_pipeline.ner.ner" in sys.modules
-    for module in ("gliner2", "huggingface_hub"):
-        assert module not in sys.modules, f"importing ner.ner must not import {module}"
+    """Use a fresh interpreter so other tests' optional imports cannot contaminate this check."""
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import dakp_pipeline.ner.ner; "
+                "assert 'gliner2' not in sys.modules; "
+                "assert 'huggingface_hub' not in sys.modules"
+            ),
+        ],
+        check=True,
+        timeout=30,
+    )
 
 
 def test_constructing_production_backend_does_not_import_gliner2() -> None:

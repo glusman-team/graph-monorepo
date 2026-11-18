@@ -291,7 +291,7 @@ def _write_assertion_tsv(table: str, workdir: Workdir) -> Path:
 
 def _assertion_refs(workdir: Workdir) -> list[ArtifactRef]:
     store = ArtifactStore(workdir)
-    tables = (*TABLES, COMPOSITION)
+    tables = (*TABLES, COMPOSITION, "side_effect_assertions")
     return [
         store.register(
             _write_assertion_tsv(table, workdir), media_type=schemas.TSV_MEDIA_TYPE, rows=1
@@ -885,7 +885,7 @@ def test_committed_table_configs_match_generator_output() -> None:
     # DAKP's only in the RIG versioning prose (publication version decoupled from the
     # package version), diff verified against dakp v1.25.0 at port time.
     repo_tables = Path(__file__).resolve().parents[1] / "fixtures" / "tables"
-    for table in (*TABLES, COMPOSITION):
+    for table in (*TABLES, COMPOSITION, "side_effect_assertions"):
         basename = tablassert_configs._TABLE_SPECS[table][0]
         assert (repo_tables / f"{basename}.yaml").read_text(
             encoding="utf-8"
@@ -1350,6 +1350,7 @@ def test_graph_config_structure() -> None:
         "tables/faers_applied_to_treat.yaml",
         "tables/contraindications.yaml",
         "tables/has_active_ingredient.yaml",
+        "tables/side_effects.yaml",
     ]
     # Tablassert >= 11 rejects the legacy top-level RIG keys; every RIG fact lives under `rig:`.
     for legacy_key in ("description", "infores", "contributions", "ui_explanation"):
@@ -1793,6 +1794,7 @@ def test_generate_writes_graph_and_table_configs(tmp_path: Path) -> None:
         "faers_applied_to_treat.yaml",
         "contraindications.yaml",
         "has_active_ingredient.yaml",
+        "side_effects.yaml",
     ]
     for ref in refs:
         assert ref.uri.exists()
@@ -1816,6 +1818,7 @@ def test_generate_writes_graph_and_table_configs(tmp_path: Path) -> None:
         "faers_applied_to_treat": "applied_to_treat",
         "contraindications": "contraindicated_in",
         "has_active_ingredient": "has_active_ingredient",
+        "side_effects": "has_side_effect",
     }
 
 
@@ -1850,7 +1853,7 @@ def test_generate_links_assertion_inputs_as_provenance(tmp_path: Path) -> None:
     # The graph manifest lists the four table configs as inputs; each table config lists its TSV.
     assert refs[0].manifest is not None
     graph_manifest = json.loads(refs[0].manifest.read_text(encoding="utf-8"))
-    assert len(graph_manifest["inputs"]) == 4
+    assert len(graph_manifest["inputs"]) == 5
 
 
 # --- runner: deferred handoff report ----------------------------------------------
@@ -1870,8 +1873,11 @@ def test_deferred_runner_writes_deferred_handoff_report(tmp_path: Path) -> None:
     assert report["mode"] == "deferred"
     assert report["status"] == "deferred"
     assert report["stage"] == "tablassert_handoff"
-    assert {entry["table"] for entry in report["assertion_inputs"]} == set(TABLES) | {COMPOSITION}
-    assert len(report["config_inputs"]) == 5  # graph + 4 tables
+    assert {entry["table"] for entry in report["assertion_inputs"]} == set(TABLES) | {
+        COMPOSITION,
+        "side_effect_assertions",
+    }
+    assert len(report["config_inputs"]) == 6  # graph + 5 tables
 
 
 # --- runner: availability probes (importlib.util.find_spec seams) -----------------

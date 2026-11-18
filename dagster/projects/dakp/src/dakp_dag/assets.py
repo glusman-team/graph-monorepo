@@ -500,6 +500,21 @@ def shape_contraindications(context: AssetExecutionContext) -> dg.MaterializeRes
 
 
 @dg.asset(
+    name="shape_side_effects",
+    description="Mine explicit DailyMed treatment-reaction lists as label-backed side effects.",
+    deps=[EXTRACT_ASSETS["dailymed"], acquire_ner_models],
+)
+def shape_side_effects(context: AssetExecutionContext) -> dg.MaterializeResult:
+    return _run_shape(
+        context,
+        stage="shape_side_effects",
+        family_name="side_effects",
+        operation="shape_side_effects",
+        input_stages=[extract_stage("dailymed")],
+    )
+
+
+@dg.asset(
     name="shape_has_active_ingredient",
     description=(
         "Shape drug-product/active-ingredient composition assertions (family: "
@@ -526,6 +541,7 @@ SHAPE_STAGES: tuple[str, ...] = (
     "shape_faers_uses",
     "shape_contraindications",
     "shape_has_active_ingredient",
+    "shape_side_effects",
 )
 
 
@@ -537,6 +553,7 @@ SHAPE_STAGES: tuple[str, ...] = (
         shape_faers_uses,
         shape_contraindications,
         shape_has_active_ingredient,
+        shape_side_effects,
     ],
 )
 def tablassert_configs(context: AssetExecutionContext) -> dg.MaterializeResult:
@@ -567,6 +584,7 @@ def _kgx_pair(config: RunConfig) -> tuple[Path, Path]:
         shape_faers_uses,
         shape_contraindications,
         shape_has_active_ingredient,
+        shape_side_effects,
         tablassert_configs,
     ],
 )
@@ -683,6 +701,7 @@ all_assets: list[dg.AssetsDefinition] = [
     shape_faers_uses,
     shape_contraindications,
     shape_has_active_ingredient,
+    shape_side_effects,
     tablassert_configs,
     kg_build,
     kg_qc,

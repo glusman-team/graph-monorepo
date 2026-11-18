@@ -21,6 +21,7 @@ def test_registry_tables_match_the_shipped_schemas() -> None:
         "approved_treats_assertions",
         "faers_applied_to_treat_assertions",
         "contraindication_assertions",
+        "side_effect_assertions",
         "has_active_ingredient_assertions",
     }
     assert {family.table for family in families.all_families()} == shipped
