@@ -1,6 +1,8 @@
 $front_matter
 # Drug Approvals Knowledge Provider (DAKP)
 
+[![Hugging Face likes](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2FSkyeAv%2Fdrug-approvals-kp&query=%24.likes&label=likes&logo=huggingface)](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp) [![GitHub stars](https://img.shields.io/github/stars/glusman-team/graph-monorepo?label=stars&logo=github)](https://github.com/glusman-team/graph-monorepo)
+
 DAKP is a knowledge graph of drug–indication relationships built from drug labels,
 approval data, post-marketing adverse-event reports, and the ICD-10-CM Table of
 Drugs and Chemicals. It is distributed as KGX NDJSON plus the emitted Release

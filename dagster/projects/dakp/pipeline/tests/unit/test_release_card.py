@@ -168,6 +168,16 @@ def test_card_computes_real_stats_checksums_and_preserves_releases(
         assert file.md5 in result.markdown
 
 
+def test_card_links_likes_and_stars_badges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    markdown = _card(tmp_path, monkeypatch).markdown
+    assert "[![Hugging Face likes]" in markdown
+    assert "query=%24.likes&label=likes" in markdown
+    assert "(https://huggingface.co/datasets/SkyeAv/drug-approvals-kp)" in markdown
+    assert "[![GitHub stars]" in markdown
+    assert "img.shields.io/github/stars/glusman-team/graph-monorepo" in markdown
+    assert "(https://github.com/glusman-team/graph-monorepo)" in markdown
+
+
 def test_dataset_card_golden(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     result = _card(tmp_path, monkeypatch)
     golden = Path(__file__).parents[1] / "fixtures" / "release" / "dataset_card.md"
