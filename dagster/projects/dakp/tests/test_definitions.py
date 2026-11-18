@@ -21,6 +21,7 @@ EXPLICIT_STAGES = [
 EXPECTED_STAGES = [
     *[assets.acquire_stage(source.key) for source in assets.SOURCES],
     assets.ACQUIRE_NER_MODELS,
+    assets.FAERS_QUARTERS,
     *[assets.extract_stage(source.key) for source in assets.SOURCES],
     *EXPLICIT_STAGES,
 ]
@@ -90,7 +91,15 @@ def test_extraction_deps_on_its_own_acquisition_only():
     for source in assets.SOURCES:
         extract = assets.EXTRACT_ASSETS[source.key]
         deps = {dep.asset_key.to_user_string() for spec in extract.specs for dep in spec.deps}
-        assert deps == {assets.acquire_stage(source.key)}
+        expected = {assets.acquire_stage(source.key)}
+        if source.key == "faers":
+            expected = {assets.FAERS_QUARTERS}
+        assert deps == expected
+    assert {
+        dep.asset_key.to_user_string()
+        for spec in assets.parse_faers_quarters.specs
+        for dep in spec.deps
+    } == {"acquire_faers"}
 
 
 def test_shaping_deps_match_the_dakp_dag():

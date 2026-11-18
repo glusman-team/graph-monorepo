@@ -100,9 +100,14 @@ def real_worker(tmp_path_factory) -> Path:
     env = {
         **os.environ,
         "GOTOOLCHAIN": "local",
-        "GOMAXPROCS": os.environ.get("GOMAXPROCS", "4"),
-        "GOFLAGS": os.environ.get("GOFLAGS", "-p=4"),
     }
+    for key in ("GOMAXPROCS", "GOFLAGS"):
+        # Unset in the sandbox when the devshell stopped exporting the old four-CPU
+        # defaults; drop the keys instead of passing None into subprocess env.
+        if value := os.environ.get(key):
+            env[key] = value
+        else:
+            env.pop(key, None)
     subprocess.run(
         ["go", "build", "-o", str(out), "./cmd/linkouts-worker"],
         cwd=GO_MODULE,

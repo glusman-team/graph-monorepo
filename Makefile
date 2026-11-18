@@ -1,7 +1,4 @@
-export GOMAXPROCS ?= 4
-export GOFLAGS ?= -p=4
 export GOTOOLCHAIN ?= local
-export ERL_FLAGS ?= +S 4:4
 export ELIXIR_ERL_OPTIONS ?= +fnu
 
 LINKOUTS = dagster/projects/linkouts
@@ -23,13 +20,13 @@ up:
 	nix run .#processes
 
 test:
-	npx nx run-many -t test --parallel=4
+	npx nx run-many -t test --parallel=8
 
 lint:
-	npx nx run-many -t lint --parallel=4
+	npx nx run-many -t lint --parallel=8
 
 typecheck:
-	npx nx run-many -t dialyzer --parallel=4
+	npx nx run-many -t dialyzer --parallel=4 --batch-size=1
 
 fmt:
 	nix fmt
@@ -137,7 +134,7 @@ linkouts-smoke:
 
 help:
 	@echo "make dev / up              Dagster development UI or full local runtime"
-	@echo "make test / lint           cached Nx tests and lint, at most four parallel tasks"
+	@echo "make test / lint           cached Nx tests and lint, eight parallel tasks"
 	@echo "make typecheck            dialyzer type checking for the Phoenix reader"
 	@echo "make check                 offline aggregate verification"
 	@echo "make locks                 recursive uv/npm/Go/Mix lock checks"

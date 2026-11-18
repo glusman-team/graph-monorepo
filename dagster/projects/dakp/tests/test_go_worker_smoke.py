@@ -8,6 +8,7 @@ across two dagster runs against the production binary.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -53,10 +54,15 @@ def test_real_worker_extracts_and_reports_cache_metadata(dag_env, monkeypatch):
         (dag_env.published / "dakp" / "refs" / "extract_dailymed.refs.json").read_text()
     )
     names = [Path(item["uri"]).name for item in published]
-    # the locked order the Go suite pins: 5 interim parquet (spl_documents first) + sections TSV
-    assert len(published) == 6, names
-    assert names[0] == "spl_documents.parquet"
-    assert names[-1] == "dailymed_spl_sections.tsv"
+    assert names == [
+        "spl_documents.parquet",
+        "spl_sets.parquet",
+        "spl_approvals.parquet",
+        "spl_ingredients.parquet",
+        "spl_products.parquet",
+        "spl_sections.parquet",
+        "dailymed_spl_sections.tsv",
+    ]
     assert int(cold["rows"]) == sum(item["rows"] or 0 for item in published)
     assert all(Path(item["uri"]).exists() for item in published)
     assert "dakp/refs/extract_dailymed.refs.json" in published_files(dag_env.published)
@@ -104,3 +110,28 @@ def test_run_config_limits_reach_the_worker(dag_env, monkeypatch):
         1,
     )
     assert assets.extract_stage("dailymed") == "extract_dailymed"
+
+
+def test_real_faers_worker_publishes_separate_parse_and_merge_assets(dag_env, monkeypatch):
+    """Verify the real shard handoff and its warm merge cache through Dagster Pipes."""
+    monkeypatch.setenv("DAKP_EXTRACT_WORKER_BIN", str(WORKER_BIN))
+    fixtures = PROJECT_ROOT / "workers" / "go" / "internal" / "faers" / "testdata"
+    refs = [make_ref(path, rows=None) for path in sorted(fixtures.glob("*.txt"))]
+    refsio.publish_refs(run_config(), "acquire_faers", refs)
+    stage = assets.FAERS_QUARTERS
+    parsed = materialization(run_job(f"dakp_build_{stage}"), stage)
+    quarter_names = set()
+    for path in fixtures.glob("*.txt"):
+        match = re.search(r"(\d{2})q(\d)", path.name, re.IGNORECASE)
+        if match:
+            quarter_names.add(match.group(1).upper() + "Q" + match.group(2))
+    expected_shards = len(quarter_names)
+    assert parsed["refs"] == len(refs) + expected_shards
+    # The merge reads a coherent snapshot from the parse asset, not the latest acquisition.
+    (dag_env.published / "dakp" / "refs" / "acquire_faers.refs.json").unlink()
+    cold = materialization(run_job("dakp_build_extract_faers"), "extract_faers")
+    warm = materialization(run_job("dakp_build_extract_faers"), "extract_faers")
+    assert cold["refs"] == 5
+    assert cold["cache_hit"] is False
+    assert warm["cache_hit"] is True
+    assert warm["cache_key"] == cold["cache_key"]

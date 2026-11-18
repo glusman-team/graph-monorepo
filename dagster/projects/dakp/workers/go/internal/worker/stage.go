@@ -12,9 +12,15 @@ import (
 // family stems, Drugs@FDA table stems). Mirrors Python go_runner.stage_inputs. On a basename
 // collision the file is prefixed with its zero-padded index so distinct inputs never clobber.
 func StageInputs(refs []ArtifactRef, dir string) error {
+	_, err := stageInputPaths(refs, dir)
+	return err
+}
+
+func stageInputPaths(refs []ArtifactRef, dir string) (map[string]ArtifactRef, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return nil, err
 	}
+	paths := make(map[string]ArtifactRef, len(refs))
 	for i, ref := range refs {
 		base := filepath.Base(ref.URI)
 		dest := filepath.Join(dir, base)
@@ -23,11 +29,12 @@ func StageInputs(refs []ArtifactRef, dir string) error {
 		}
 		if err := os.Link(ref.URI, dest); err != nil {
 			if cerr := copyFile(ref.URI, dest); cerr != nil {
-				return cerr
+				return nil, cerr
 			}
 		}
+		paths[dest] = ref
 	}
-	return nil
+	return paths, nil
 }
 
 func copyFile(src, dst string) error {

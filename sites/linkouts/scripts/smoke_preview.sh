@@ -17,13 +17,21 @@ cleanup() {
 trap cleanup EXIT
 cleanup
 
-docker run --detach --rm --cpus=4 --name "$name" \
-  --publish "127.0.0.1:${port}:8080" \
-  --env SECRET_KEY_BASE="$secret" \
-  --env PHX_HOST=127.0.0.1 \
-  --env LINKOUTS_PREVIEW_FIXTURES=/app/preview-docs.ndjson \
-  --volume "$PWD/dagster/projects/linkouts/contracts/docs.ndjson:/app/preview-docs.ndjson:ro" \
-  "$image" >/dev/null
+docker_flags=(
+  --detach --rm --name "$name"
+  --publish "127.0.0.1:${port}:8080"
+  --env SECRET_KEY_BASE="$secret"
+  --env PHX_HOST=127.0.0.1
+  --env LINKOUTS_PREVIEW_FIXTURES=/app/preview-docs.ndjson
+  --volume "$PWD/dagster/projects/linkouts/contracts/docs.ndjson:/app/preview-docs.ndjson:ro"
+)
+# No CPU cap by default: the host (or the CI daemon's own limits) governs.
+# Set LINKOUTS_PREVIEW_CPUS explicitly when a bound is wanted; values above
+# the daemon's CPU count are rejected by docker itself.
+if [[ -n "${LINKOUTS_PREVIEW_CPUS:-}" ]]; then
+  docker_flags+=(--cpus "$LINKOUTS_PREVIEW_CPUS")
+fi
+docker run "${docker_flags[@]}" "$image" >/dev/null
 
 for attempt in $(seq 1 60); do
   if curl --fail --silent --show-error "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then

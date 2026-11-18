@@ -6,7 +6,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/glusman-team/dakp/go/internal/blake3store"
 	"github.com/glusman-team/dakp/go/internal/faers"
@@ -290,4 +292,129 @@ func TestLoadFAERSSourcesFromZip(t *testing.T) {
 			t.Errorf("%s content mismatch", fam)
 		}
 	}
+}
+
+// Adding a quarter must reuse the old shard and preserve every final artifact.
+func TestFAERSIncrementalQuarterCache(t *testing.T) {
+	ctx := context.Background()
+	inputs := faersFixtureRefs(t)
+	var older []ArtifactRef
+	for _, ref := range inputs {
+		if strings.Contains(filepath.Base(ref.URI), "24Q2") {
+			older = append(older, ref)
+		}
+	}
+	cfg := Config{Workdir: t.TempDir(), Threads: 8}
+	first, err := ParseFAERSQuarters(ctx, cfg, older)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first parse: %v, %v", first, err)
+	}
+	stamp := time.Unix(1700000000, 0)
+	if err := os.Chtimes(first[0].URI, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ExtractFAERS(ctx, cfg, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(first[0].URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatal("unchanged quarter was rewritten")
+	}
+	cfg.Workdir = t.TempDir()
+	cfg.Threads = 1
+	cold, err := ExtractFAERS(ctx, cfg, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ref := range cold {
+		if ref.Blake3 != got[i].Blake3 {
+			t.Errorf("output %s differs between incremental and cold run", ref.URI)
+		}
+	}
+}
+
+// A quarter whose source bytes changed must re-parse, not reuse the stale shard.
+// Every 24Q2 family is staged so the indication-driven join produces real cases;
+// the mutation rewrites a drug name that flows into those case rows (ragged-line
+// padding would be invisible in the shard, so the value change is what proves it).
+func TestFAERSQuarterCacheInvalidatesOnContentChange(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	var refs []ArtifactRef
+	mutated := ""
+	for _, name := range []string{"DEMO24Q2.txt", "DRUG24Q2.txt", "INDI24Q2.txt", "REAC24Q2.txt", "RPSR24Q2.txt"} {
+		body, err := os.ReadFile(filepath.Join("..", "faers", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name == "DRUG24Q2.txt" {
+			body = bytes.ReplaceAll(body, []byte("OldStatin"), []byte("NewStatin"))
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := blake3store.HashFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := ArtifactRef{URI: path, Blake3: id, MediaType: "text/plain"}
+		refs = append(refs, ref)
+		if name == "DRUG24Q2.txt" {
+			mutated = path
+		}
+	}
+	cfg := Config{Workdir: t.TempDir(), Threads: 4}
+	first, err := ParseFAERSQuarters(ctx, cfg, refs)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first parse: %v, %v", first, err)
+	}
+	shard, err := readFAERSQuarter(first[0].URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(caseDrugNames(shard.Cases), "|"), "NewStatin") {
+		t.Fatal("mutation premise broken: no case carries the rewritten drug name")
+	}
+	mutatedBody, err := os.ReadFile(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mutated, bytes.ReplaceAll(mutatedBody, []byte("NewStatin"), []byte("RewrittenStatin")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newID, err := blake3store.HashFile(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ref := range refs {
+		if ref.URI == mutated {
+			refs[i] = ArtifactRef{URI: mutated, Blake3: newID, MediaType: "text/plain"}
+		}
+	}
+	second, err := ParseFAERSQuarters(ctx, cfg, refs)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second parse: %v, %v", second, err)
+	}
+	if second[0].Blake3 == first[0].Blake3 {
+		t.Fatal("changed quarter content reused the stale shard")
+	}
+	if err := os.Truncate(first[0].URI, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFAERSQuarter(first[0].URI); err == nil {
+		t.Fatal("truncated shard decoded without error")
+	}
+}
+
+func caseDrugNames(cases []faers.Case) []string {
+	names := make([]string, 0, len(cases))
+	for _, c := range cases {
+		names = append(names, c.Drugname)
+	}
+	return names
 }

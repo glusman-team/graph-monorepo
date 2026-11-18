@@ -56,9 +56,6 @@ let
     env = {
       # workers build with the nix-provided toolchain only
       GOTOOLCHAIN = "local";
-      GOMAXPROCS = "4";
-      GOFLAGS = "-p=4";
-      ERL_FLAGS = "+S 4:4";
       ELIXIR_ERL_OPTIONS = "+fnu";
       LANG = "C.UTF-8";
       LC_ALL = "C.UTF-8";

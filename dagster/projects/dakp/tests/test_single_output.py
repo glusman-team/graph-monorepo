@@ -117,6 +117,7 @@ def test_force_bypasses_the_operation_index(dag_env, stubbed_pipeline, monkeypat
     ("stage", "producer"),
     [
         ("extract_dailymed", "acquire_dailymed"),
+        ("extract_faers", assets.FAERS_QUARTERS),
         ("shape_approved_treats", "extract_dailymed"),
         (assets.KG_BUILD, "shape_approved_treats"),
         (assets.KG_QC, assets.KG_BUILD),
@@ -180,12 +181,13 @@ def test_go_worker_extras_carry_the_run_config(dag_env, stubbed_pipeline, monkey
     monkeypatch.setenv("DAKP_QUARTER_LIMIT", "2")
     monkeypatch.setenv("DAKP_FORCE", "1")
     assert run_job("dakp_build_acquire_faers").success
+    assert run_job(f"dakp_build_{assets.FAERS_QUARTERS}").success
 
     result = run_job("dakp_build_extract_faers")
     assert result.success
     metadata = materialization(result, "extract_faers")
     assert metadata["worker"] == "stub", "the stub worker never saw the pipes extras contract"
-    assert metadata["stage"] == "faers"
+    assert metadata["stage"] == "faers_merge"
 
     inputs = json.loads((dag_env.workdir / "pipes" / "extract_faers.inputs.json").read_text())
     assert inputs and all({"uri", "blake3", "media_type"} <= set(item) for item in inputs)

@@ -77,10 +77,10 @@ func parseArgs(extras map[string]any) (extractArgs, error) {
 	args := extractArgs{Config: cfg}
 	var ok bool
 	if args.Stage, ok = extras["stage"].(string); !ok || args.Stage == "" {
-		return extractArgs{}, fmt.Errorf("extras.stage is required (dailymed|faers|drugsfda)")
+		return extractArgs{}, fmt.Errorf("extras.stage is required (dailymed|faers|faers_parse|faers_merge|drugsfda)")
 	}
-	if args.Stage != "dailymed" && args.Stage != "faers" && args.Stage != "drugsfda" {
-		return extractArgs{}, fmt.Errorf("extras.stage %q is not one of dailymed|faers|drugsfda", args.Stage)
+	if worker.ExtractFor(args.Stage) == nil {
+		return extractArgs{}, fmt.Errorf("extras.stage %q is not one of dailymed|faers|faers_parse|faers_merge|drugsfda", args.Stage)
 	}
 	if args.InputRefs, ok = extras["input_refs"].(string); !ok || args.InputRefs == "" {
 		return extractArgs{}, fmt.Errorf("extras.input_refs (path to input refs JSON) is required")
@@ -196,7 +196,8 @@ func cacheSkipProbe(ctx context.Context, args extractArgs, inputs []worker.Artif
 	for i, ref := range inputs {
 		ids[i] = ref.Blake3
 	}
-	return store.FindByOperation(worker.TaskOperation(args.Stage), ids) != nil
+	operation := worker.TaskOperation(args.Stage)
+	return operation != "" && store.FindByOperation(operation, ids) != nil
 }
 
 // totalRows sums the refs' row counts where present (0 when unknown).

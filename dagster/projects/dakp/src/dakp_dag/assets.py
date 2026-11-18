@@ -337,8 +337,35 @@ def _make_extract_asset(source: Source, acquire_asset: dg.AssetsDefinition) -> d
 ACQUIRE_ASSETS: dict[str, dg.AssetsDefinition] = {
     source.key: _make_acquire_asset(source) for source in SOURCES
 }
+FAERS_QUARTERS = "parse_faers_quarters"
+
+
+@dg.asset(
+    name=FAERS_QUARTERS,
+    deps=[ACQUIRE_ASSETS["faers"]],
+    description="Parse and cache independent FAERS quarters with the Go worker.",
+)
+def parse_faers_quarters(context: AssetExecutionContext) -> dg.MaterializeResult:
+    config = run_config_for(context)
+    inputs = refsio.load_refs(config, acquire_stage("faers"))
+    return _run_go_extract(context, config, FAERS_QUARTERS, "faers_parse", inputs)
+
+
+@dg.asset(
+    deps=[parse_faers_quarters],
+    description="Merge FAERS quarter shards newest-first, preserving global deduplication and audits.",
+)
+def extract_faers(context: AssetExecutionContext) -> dg.MaterializeResult:
+    config = run_config_for(context)
+    inputs = refsio.load_refs(config, FAERS_QUARTERS)
+    return _run_go_extract(context, config, extract_stage("faers"), "faers_merge", inputs)
+
+
 EXTRACT_ASSETS: dict[str, dg.AssetsDefinition] = {
-    source.key: _make_extract_asset(source, ACQUIRE_ASSETS[source.key]) for source in SOURCES
+    source.key: extract_faers
+    if source.key == "faers"
+    else _make_extract_asset(source, ACQUIRE_ASSETS[source.key])
+    for source in SOURCES
 }
 
 
@@ -696,6 +723,7 @@ def kg_qc(context: AssetExecutionContext) -> dg.MaterializeResult:
 all_assets: list[dg.AssetsDefinition] = [
     *ACQUIRE_ASSETS.values(),
     acquire_ner_models,
+    parse_faers_quarters,
     *EXTRACT_ASSETS.values(),
     shape_approved_treats,
     shape_faers_uses,
@@ -712,6 +740,7 @@ all_assets: list[dg.AssetsDefinition] = [
 stage_outputs: dict[str, list[str]] = {
     **{acquire_stage(key): [f"refs/{acquire_stage(key)}.refs.json"] for key in SOURCE_BY_KEY},
     ACQUIRE_NER_MODELS: [f"refs/{ACQUIRE_NER_MODELS}.refs.json"],
+    FAERS_QUARTERS: [f"refs/{FAERS_QUARTERS}.refs.json"],
     **{extract_stage(key): [f"refs/{extract_stage(key)}.refs.json"] for key in SOURCE_BY_KEY},
     **{stage: [f"refs/{stage}.refs.json"] for stage in SHAPE_STAGES},
     TABLASSERT_CONFIGS: [f"refs/{TABLASSERT_CONFIGS}.refs.json"],
