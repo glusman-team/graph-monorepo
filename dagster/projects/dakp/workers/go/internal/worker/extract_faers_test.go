@@ -338,35 +338,65 @@ func TestFAERSIncrementalQuarterCache(t *testing.T) {
 }
 
 // A quarter whose source bytes changed must re-parse, not reuse the stale shard.
+// Every 24Q2 family is staged so the indication-driven join produces real cases;
+// the mutation rewrites a drug name that flows into those case rows (ragged-line
+// padding would be invisible in the shard, so the value change is what proves it).
 func TestFAERSQuarterCacheInvalidatesOnContentChange(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	body, err := os.ReadFile("../faers/testdata/DRUG24Q2.txt")
-	if err != nil {
-		t.Fatal(err)
+	var refs []ArtifactRef
+	mutated := ""
+	for _, name := range []string{"DEMO24Q2.txt", "DRUG24Q2.txt", "INDI24Q2.txt", "REAC24Q2.txt", "RPSR24Q2.txt"} {
+		body, err := os.ReadFile(filepath.Join("..", "faers", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name == "DRUG24Q2.txt" {
+			body = bytes.ReplaceAll(body, []byte("OldStatin"), []byte("NewStatin"))
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := blake3store.HashFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := ArtifactRef{URI: path, Blake3: id, MediaType: "text/plain"}
+		refs = append(refs, ref)
+		if name == "DRUG24Q2.txt" {
+			mutated = path
+		}
 	}
-	path := filepath.Join(dir, "DRUG24Q2.txt")
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	id, err := blake3store.HashFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := ArtifactRef{URI: path, Blake3: id, MediaType: "text/plain"}
 	cfg := Config{Workdir: t.TempDir(), Threads: 4}
-	first, err := ParseFAERSQuarters(ctx, cfg, []ArtifactRef{ref})
+	first, err := ParseFAERSQuarters(ctx, cfg, refs)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first parse: %v, %v", first, err)
 	}
-	if err := os.WriteFile(path, append(append([]byte(nil), body...), []byte("x$y$\n")...), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	newID, err := blake3store.HashFile(path)
+	shard, err := readFAERSQuarter(first[0].URI)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := ParseFAERSQuarters(ctx, cfg, []ArtifactRef{{URI: path, Blake3: newID, MediaType: "text/plain"}})
+	if !strings.Contains(strings.Join(caseDrugNames(shard.Cases), "|"), "NewStatin") {
+		t.Fatal("mutation premise broken: no case carries the rewritten drug name")
+	}
+	mutatedBody, err := os.ReadFile(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mutated, bytes.ReplaceAll(mutatedBody, []byte("NewStatin"), []byte("RewrittenStatin")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newID, err := blake3store.HashFile(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ref := range refs {
+		if ref.URI == mutated {
+			refs[i] = ArtifactRef{URI: mutated, Blake3: newID, MediaType: "text/plain"}
+		}
+	}
+	second, err := ParseFAERSQuarters(ctx, cfg, refs)
 	if err != nil || len(second) != 1 {
 		t.Fatalf("second parse: %v, %v", second, err)
 	}
@@ -379,4 +409,12 @@ func TestFAERSQuarterCacheInvalidatesOnContentChange(t *testing.T) {
 	if _, err := readFAERSQuarter(first[0].URI); err == nil {
 		t.Fatal("truncated shard decoded without error")
 	}
+}
+
+func caseDrugNames(cases []faers.Case) []string {
+	names := make([]string, 0, len(cases))
+	for _, c := range cases {
+		names = append(names, c.Drugname)
+	}
+	return names
 }
