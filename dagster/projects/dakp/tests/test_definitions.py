@@ -119,6 +119,7 @@ def test_shaping_deps_match_the_dakp_dag():
             "acquire_ner_models",
         },
         "shape_has_active_ingredient": {"extract_dailymed", "extract_drugsfda"},
+        "shape_side_effects": {"extract_dailymed", "acquire_ner_models"},
         assets.TABLASSERT_CONFIGS: set(assets.SHAPE_STAGES),
         assets.KG_BUILD: {*assets.SHAPE_STAGES, assets.TABLASSERT_CONFIGS},
         assets.KG_QC: {assets.KG_BUILD},

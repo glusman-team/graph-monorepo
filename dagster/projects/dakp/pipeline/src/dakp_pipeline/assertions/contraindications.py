@@ -354,6 +354,30 @@ def _mention_local_span(
     )
 
 
+# Explicit past-tense reaction descriptions do not describe a pre-existing condition.
+# Restrict the cue to a clause boundary; "history of reactions including X" is different.
+_REACTION_LIST = re.compile(
+    r"(?:^|[.;:]\s*|\bbut\s+)(?:these\s+)?(?:hypersensitivity\s+)?reactions\s+"
+    r"(?:have\s+included|included)\b(?!\s+in\b)\s*:?\s*",
+    re.IGNORECASE,
+)
+_REACTION_END = re.compile(r"[.;]|\b(?:but|however|whereas)\b", re.IGNORECASE)
+
+
+def _described_reaction(item: ContraWorkItem, mention: Mention) -> bool:
+    """Whether the mention lies inside an explicit, source-local reaction list."""
+    mapped = _mention_local_span(item, mention)
+    if mapped is None:
+        return False
+    sentence, start, end, _ = mapped
+    for cue in _REACTION_LIST.finditer(sentence):
+        boundary = _REACTION_END.search(sentence, cue.end())
+        stop = boundary.start() if boundary is not None else len(sentence)
+        if cue.end() <= start < end <= stop:
+            return True
+    return False
+
+
 def _classify_mention(
     item: ContraWorkItem | tuple[str, str, str],
     mention: Mention,
@@ -370,6 +394,10 @@ def _classify_mention(
     if _EXPLICIT_NEGATION.search(evidence_text):
         return MentionDecision(
             accepted=False, trigger="explicit_negation", evidence_text=evidence_text
+        )
+    if isinstance(item, ContraWorkItem) and _described_reaction(item, mention):
+        return MentionDecision(
+            accepted=False, trigger="described_reaction", evidence_text=evidence_text
         )
     hard = _HARD_CONTRA_TRIGGER.search(evidence_text)
     medication = _MEDICATION_CONTEXT.search(evidence_text)
@@ -642,8 +670,13 @@ def build_contraindication_rows(
     keywords: re.Pattern[str] | None = None,
     cache: MentionCache | None = None,
     ctx: TaskContext | None = None,
+    described_reactions_only: bool = False,
 ) -> list[dict[str, str]]:
     """Mine DailyMed contraindication + indication + warning sections into assertion rows (deterministic).
+
+    ``described_reactions_only`` selects only explicit reaction-list mentions from DailyMed
+    safety sections for the side-effect shaper. Rejections for other reasons never qualify;
+    EMA is excluded because its side-effect evidence policy is not yet implemented.
 
     **Pass 1:** For each singleton-ingredient SPL set with a contraindication section (LOINC
     ``34070-3``), extract disease/phenotype mentions from the full section text.
@@ -688,7 +721,9 @@ def build_contraindication_rows(
         evidence = load_or_build_dailymed_evidence(inputs, ctx)
         approvals = build_fda_approval_index(inputs)
         kw = keywords or DEFAULT_CONTRA_KEYWORDS
-        smpc_items, smpc_subjects, smpc_counters = _smpc_work_items(inputs, kw)
+        smpc_items, smpc_subjects, smpc_counters = _smpc_work_items(
+            [] if described_reactions_only else inputs, kw
+        )
 
     # Pass 1 work items: contraindication sections (all text is relevant), retaining the
     # original sentence spans for local evidence recovery.
@@ -727,7 +762,7 @@ def build_contraindication_rows(
     # Pass 2 work items: indication sections filtered to contraindication-context sentences.
     # The mapping prevents the joined filtered text from destroying source offsets.
     work_items_p2: list[ContraWorkItem] = []
-    for set_id in sorted(evidence.indication_docs):
+    for set_id in sorted([] if described_reactions_only else evidence.indication_docs):
         ingredients = evidence.active_ingredients_by_set.get(set_id, [])
         if not ingredients:
             continue
@@ -958,7 +993,12 @@ def build_contraindication_rows(
                 # Canonicalize the mined mention (lowercase / strip punctuation) so case variants
                 # (asthma / Asthma / ASTHMA) aggregate to one object instead of fragmenting the rows.
                 object_text = normalize_text(mention.text)
-                if not object_text or not decision.accepted:
+                accepted = (
+                    decision.trigger == "described_reaction"
+                    if described_reactions_only
+                    else decision.accepted
+                )
+                if not object_text or not accepted:
                     continue
                 # Species context: SmPC is human by construction; a DailyMed row takes its
                 # species from its evidence sentence, else the label's mined sections. An

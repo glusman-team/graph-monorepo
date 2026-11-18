@@ -386,3 +386,4 @@ tables:
   - tables/faers_applied_to_treat.yaml
   - tables/contraindications.yaml
   - tables/has_active_ingredient.yaml
+  - tables/side_effects.yaml

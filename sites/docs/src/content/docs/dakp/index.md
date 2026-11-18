@@ -31,6 +31,14 @@ Version 1.25.1 adds the ICD-10-CM screen, so its counts are lower than 1.25.0. T
 | [Canada Vigilance](https://www.canada.ca/en/health-canada/services/drugs-health-products/medeffect-canada/adverse-reaction-database/canada-vigilance-online-database-data-extract.html) (`infores:canada-vigilance`) | Monthly observed-use evidence, not Canadian approval evidence.                                                                       |
 | [ICD-10-CM Table of Drugs and Chemicals](https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2027/icd10cm-table-and-index-2027.zip) (`infores:icd10cm`)                                              | FY2027 non-therapeutic subject screen for observed-use filtering. It contributes no assertion text.                                  |
 
+## Label-backed side effects
+
+The `shape_side_effects` stage emits `biolink:has_side_effect` from explicit reaction lists in DailyMed contraindications, boxed warnings, and warnings/precautions sections. For example, the asenapine label's "Reactions have included ... swollen tongue" describes an effect of treatment, not a pre-existing condition prohibiting treatment. These mentions are excluded from contraindication assertions while independently supported contraindications remain eligible.
+
+Coverage is deliberately narrow: explicit "reactions have included" and "reactions included" lists, not every condition mentioned in safety prose or the full adverse-reaction tables. The stage uses singleton-ingredient labels only, carries the source label as publication evidence and the organism as a species qualifier, and does not claim regulatory approval of a side effect. EMA and FAERS do not supply this family; broader evidence sources remain under evaluation.
+
+Run the narrow `dakp_build_shape_side_effects` job after publishing the DailyMed extraction and NER models, or run `dakp_build` for the complete chain. Existing releases are unchanged. Correcting a published Linkouts edge requires rebuilding and publishing a new graph release, then ingesting it into Linkouts.
+
 ## ICD-10-CM poison screen
 
 The ICD-10-CM table marks substances with poisoning and adverse-effect codes. A substance whose Adverse-effect column is empty has no use under proper administration under Official Guideline I.C.19.e, so it must not carry an applied-to-treat claim. Every `biolink:applied_to_treat` edge cites `infores:icd10cm` as a supporting data source.

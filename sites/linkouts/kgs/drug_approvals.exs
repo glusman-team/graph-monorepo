@@ -82,6 +82,7 @@
          # Composition is not a treatment claim. DAKP 1.27.0 introduced product-to-ingredient
          # edges, so they need explicit wording rather than the generic treatment fallback.
          "biolink:has_active_ingredient" => "lists",
+         "biolink:has_side_effect" => "has the side effect",
          # applied_to_treat is an observed usage rather than an approval, so the claim
          # takes the predicate's own wording ("has been applied to treat") instead of the
          # generic "used for" fallback. When the source stored the usage as off-label, the

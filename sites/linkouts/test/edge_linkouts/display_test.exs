@@ -324,6 +324,25 @@ defmodule EdgeLinkouts.DisplayTest do
   end
 
   describe "the edge sentence" do
+    test "a label-backed side effect is not rendered as a treatment or contraindication", %{
+      config: config
+    } do
+      # Issue 55: these fields come from the real tiny-fullmap KGX integration test.
+      edge = %{
+        "subject" => "CHEBI:71253",
+        "subject_name" => "asenapine",
+        "object" => "UMLS:C0236068",
+        "object_name" => "Tongue swelling",
+        "predicate" => "biolink:has_side_effect"
+      }
+
+      text = config |> Display.edge(edge, @v1) |> Segment.to_text()
+      assert text =~ "asenapine has the side effect Tongue swelling"
+      refute text =~ "contraindicated"
+      refute text =~ "approved for"
+      refute text =~ "used for"
+    end
+
     test "a contraindication edge reads as a contraindication", %{
       resolved: resolved,
       config: config
