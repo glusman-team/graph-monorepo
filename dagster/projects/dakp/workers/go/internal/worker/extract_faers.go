@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +54,39 @@ func ExtractFAERS(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]Arti
 	refs, err := mergeFAERSQuarters(ctx, cfg, quarters, upstreamInputIDs(inputs))
 	if err == nil {
 		store.RecordOperation(faersTaskOperation, upstreamInputIDs(inputs), refs)
+	}
+	return refs, err
+}
+
+const faersMergeOperation = "merge_faers_quarters_v1"
+
+// MergeFAERSQuarters consumes cached quarter shards. Acquisition refs are carried
+// alongside the shards to preserve the final manifests' original source IDs.
+func MergeFAERSQuarters(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]ArtifactRef, error) {
+	var quarters, sources []ArtifactRef
+	for _, ref := range inputs {
+		if ref.MediaType == faersQuarterMediaType {
+			quarters = append(quarters, ref)
+		} else {
+			sources = append(sources, ref)
+		}
+	}
+	if len(quarters) == 0 || len(sources) == 0 {
+		return nil, fmt.Errorf("FAERS merge requires quarter shards and acquisition refs")
+	}
+	store := Store{Workdir: cfg.Workdir}
+	ids := upstreamInputIDs(inputs)
+	if !cfg.Force {
+		if cached := store.FindByOperation(faersMergeOperation, ids); cached != nil {
+			return cached, nil
+		}
+	}
+	if cfg.MemoryBudgetGB > 0 {
+		defer debug.SetMemoryLimit(debug.SetMemoryLimit(int64(cfg.MemoryBudgetGB) << 30))
+	}
+	refs, err := mergeFAERSQuarters(ctx, cfg, quarters, upstreamInputIDs(sources))
+	if err == nil {
+		store.RecordOperation(faersMergeOperation, ids, refs)
 	}
 	return refs, err
 }

@@ -11,6 +11,8 @@ func TaskOperation(stage string) string {
 		return dailymedTaskOperation
 	case "faers":
 		return faersTaskOperation
+	case "faers_merge":
+		return faersMergeOperation
 	case "drugsfda":
 		return drugsfdaTaskOperation
 	default:
@@ -29,6 +31,16 @@ func ExtractFor(stage string) ExtractFunc {
 		return ExtractDailyMed
 	case "faers":
 		return ExtractFAERS
+	case "faers_parse":
+		return func(ctx context.Context, cfg Config, inputs []ArtifactRef) ([]ArtifactRef, error) {
+			shards, err := ParseFAERSQuarters(ctx, cfg, inputs)
+			if err != nil {
+				return nil, err
+			}
+			return append(shards, inputs...), nil
+		}
+	case "faers_merge":
+		return MergeFAERSQuarters
 	case "drugsfda":
 		return ExtractDrugsFDA
 	default:

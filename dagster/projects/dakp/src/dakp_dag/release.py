@@ -147,6 +147,7 @@ dakp_release_check = dg.define_asset_job(
 )
 
 _RELEASE_BUILD_STAGES = {
+    core_assets.FAERS_QUARTERS,
     *(core_assets.extract_stage(source.key) for source in SOURCES),
     core_assets.acquire_ner_models.key.to_user_string(),
     *core_assets.SHAPE_STAGES,
