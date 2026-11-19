@@ -37,3 +37,29 @@ Use `NERDataset.load(*paths)` and `NEREvaluator(dataset).run(offline=True)` from
 `dakp_pipeline.ner.eval_dataset` and `dakp_pipeline.ner.evaluator` to reuse the
 same test system from Python. Call `score(predictions)` to score saved predictions
 keyed by case ID, with `surface`, `start`, `end`, and `type` for each span.
+
+## Capture regressions
+
+Use the **DAKP NER regression** GitHub issue template for a human-reported
+regression. Keep `[DAKP NER]:` in the title and supply one `ner-gold` fenced block
+with one annotated case per line. Use public source text only. Opening or editing
+that issue runs the intake workflow after it is on the default branch. Download
+the `ner-gold-issue-<number>` artifact from the latest run. It contains validated
+NDJSON with issue-scoped IDs and the issue URL as provenance. Review every span
+and append the accepted rows to `tests/eval/ner_gold_issues.ndjson` in a PR.
+The workflow cannot modify gold. Issues without reference annotations do not
+become gold automatically.
+
+For an AI agent or model finding, write a candidate NDJSON file with the same
+schema and an `origin` identifying the model or agent and the run or public source.
+From `dagster/projects/dakp/pipeline` run:
+
+```sh
+uv run python tests/eval/ner_intake.py agent --input /tmp/candidates.ndjson
+```
+
+Commit the additions to `tests/eval/ner_silver.ndjson` with the related change.
+Exact replays are no-ops; conflicting IDs are rejected. Silver is never scored
+by default. Use `--gold tests/eval/ner_silver.ndjson` for an explicit diagnostic
+run once the file has candidates. Review silver labels independently before
+using them in a gold regression.

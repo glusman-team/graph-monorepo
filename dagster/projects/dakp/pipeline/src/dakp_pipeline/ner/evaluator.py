@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from math import isfinite
 from time import perf_counter
 from typing import Any
 
@@ -56,7 +57,14 @@ def _predicted_objects(case: NERCase, mentions: Any) -> list[Prediction]:
             "type": entity_type,
         }
         if "score" in mention:
-            normalized["score"] = mention["score"]
+            score = mention["score"]
+            if (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not isfinite(score)
+            ):
+                raise ValueError(f"Prediction for {case.id} requires a finite numeric score")
+            normalized["score"] = score
         objects.append(normalized)
     return objects
 

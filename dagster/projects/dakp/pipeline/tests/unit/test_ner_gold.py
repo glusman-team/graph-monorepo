@@ -316,6 +316,14 @@ def test_production_model_failure_does_not_fall_back(monkeypatch: pytest.MonkeyP
         NEREvaluator(_gold()).run(offline=False)
 
 
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), "high", True])
+def test_prediction_score_must_be_finite(score: object) -> None:
+    """Invalid model confidence cannot create a non-standard JSON report."""
+    prediction = {**_prediction("asthma", _gold().cases[0].text), "score": score}
+    with pytest.raises(ValueError, match="finite numeric score"):
+        NEREvaluator(_gold()).score({"case-asthma": [prediction]})
+
+
 def test_committed_gold_passes_offline_embedded_gazetteer() -> None:
     """The full offline regression must include every gold-backed gazetteer repair.
 
