@@ -18,7 +18,9 @@ import pytest
 
 from dakp_pipeline.ner.dictionary import TYPE_DISEASE, TYPE_PHENOTYPE
 from dakp_pipeline.ner.eval_dataset import NERCase, NERDataset
+from dakp_pipeline.ner.evaluator import NEREvaluator
 from dakp_pipeline.ner.lexical import Mention
+from dakp_pipeline.ner.ner import DiseaseNER
 
 _EVAL_PATH = Path(__file__).resolve().parents[1] / "eval" / "ner_gold_eval.py"
 _SPEC = importlib.util.spec_from_file_location("ner_gold_eval", _EVAL_PATH)
@@ -161,9 +163,7 @@ def test_score_counts_duplicate_predictions_as_false_positives() -> None:
     """Set-based scoring would hide duplicate emissions and overstate precision."""
     gold = _gold()
     prediction = _prediction("asthma", gold.cases[0].text)
-    report = ner_gold_eval.score_gold(
-        gold, {"case-asthma": [prediction, copy.deepcopy(prediction)]}
-    )
+    report = NEREvaluator(gold).score({"case-asthma": [prediction, copy.deepcopy(prediction)]})
     assert report["summary"] == {
         "cases": 1,
         "expected": 1,
@@ -175,6 +175,10 @@ def test_score_counts_duplicate_predictions_as_false_positives() -> None:
         "recall": 1.0,
         "f1": pytest.approx(2 / 3),
         "perfect_cases": 0,
+        "exact_case_rate": 0.0,
+        "negative_cases": 0,
+        "negative_cases_clean": 0,
+        "negative_case_accuracy": None,
     }
     assert report["rows"][0]["extra"] == [prediction]
 
@@ -194,7 +198,7 @@ def test_score_reports_missing_and_extra_with_exact_types() -> None:
         _prediction("asthma", text),
         _prediction("headache", text, TYPE_DISEASE),
     ]
-    report = ner_gold_eval.score_gold(gold, {"case-asthma": predicted})
+    report = NEREvaluator(gold).score({"case-asthma": predicted})
     assert report["summary"]["true_positive"] == 1
     assert report["summary"]["false_positive"] == 1
     assert report["summary"]["false_negative"] == 1
@@ -211,7 +215,7 @@ def test_score_ignores_qualifier_channel() -> None:
         _prediction("asthma", text),
         _prediction("male", text, "BiologicalSex"),
     ]
-    report = ner_gold_eval.score_gold(gold, {"case-asthma": predictions})
+    report = NEREvaluator(gold).score({"case-asthma": predictions})
     assert report["summary"]["false_positive"] == 0
     assert report["summary"]["perfect_cases"] == 1
 
@@ -219,7 +223,7 @@ def test_score_ignores_qualifier_channel() -> None:
 def test_score_empty_gold_mentions_has_defined_zero_metrics() -> None:
     """Negative-control cases must not create NaN metrics or count as failures when empty."""
     case = _case(text="product used for unknown indication", mentions=[])
-    report = ner_gold_eval.score_gold(_gold([case]), {"case-asthma": []})
+    report = NEREvaluator(_gold([case])).score({"case-asthma": []})
     assert report["summary"]["precision"] == 0.0
     assert report["summary"]["recall"] == 0.0
     assert report["summary"]["f1"] == 0.0
@@ -229,7 +233,7 @@ def test_score_empty_gold_mentions_has_defined_zero_metrics() -> None:
 def test_score_requires_exact_prediction_case_ids() -> None:
     """Missing predictions indicate failed extraction and must not be treated as empty output."""
     with pytest.raises(ValueError, match="prediction case ids differ"):
-        ner_gold_eval.score_gold(_gold(), {})
+        NEREvaluator(_gold()).score({})
 
 
 @pytest.mark.parametrize(
@@ -244,7 +248,7 @@ def test_score_requires_exact_prediction_case_ids() -> None:
 def test_invalid_prediction_span_is_loud(prediction: dict[str, Any]) -> None:
     """Invalid model offsets must fail rather than silently becoming false positives."""
     with pytest.raises(ValueError, match="Prediction"):
-        ner_gold_eval.score_gold(_gold(), {"case-asthma": [prediction]})
+        NEREvaluator(_gold()).score({"case-asthma": [prediction]})
 
 
 class _FakeNER:
@@ -280,12 +284,12 @@ def test_extraction_uses_source_profiles_and_filters_qualifiers(
         return lambda *, offline: _FakeNER(profile, offline, calls)
 
     monkeypatch.setattr(
-        ner_gold_eval.DiseaseNER,
+        DiseaseNER,
         "for_contraindications",
         staticmethod(fake_factory("contraindications")),
     )
     monkeypatch.setattr(
-        ner_gold_eval.DiseaseNER,
+        DiseaseNER,
         "for_indications",
         staticmethod(fake_factory("indications")),
     )
@@ -293,11 +297,11 @@ def test_extraction_uses_source_profiles_and_filters_qualifiers(
         _case(),
         _case(id="faers-asthma", source="faers", loinc=None),
     ]
-    predictions = ner_gold_eval.extract_predictions(_gold(cases).cases, offline=True)
+    report = NEREvaluator(_gold(cases)).run(offline=True)
     assert calls == [("contraindications", True), ("indications", True)]
-    assert set(predictions) == {"case-asthma", "faers-asthma"}
+    assert {row["id"] for row in report["rows"]} == {"case-asthma", "faers-asthma"}
     assert all(
-        mention["type"] == TYPE_DISEASE for mentions in predictions.values() for mention in mentions
+        mention["type"] == TYPE_DISEASE for row in report["rows"] for mention in row["predicted"]
     )
 
 
@@ -307,9 +311,9 @@ def test_production_model_failure_does_not_fall_back(monkeypatch: pytest.MonkeyP
     def denied(*, offline: bool):
         raise RuntimeError(f"checkpoint denied (offline={offline})")
 
-    monkeypatch.setattr(ner_gold_eval.DiseaseNER, "for_contraindications", staticmethod(denied))
+    monkeypatch.setattr(DiseaseNER, "for_contraindications", staticmethod(denied))
     with pytest.raises(RuntimeError, match="checkpoint denied"):
-        ner_gold_eval.extract_predictions(_gold().cases, offline=False)
+        NEREvaluator(_gold()).run(offline=False)
 
 
 def test_committed_gold_passes_offline_embedded_gazetteer() -> None:
@@ -319,8 +323,7 @@ def test_committed_gold_passes_offline_embedded_gazetteer() -> None:
     coadministration must never become disease/phenotype objects through the embedded lexicon.
     """
     gold = _default_gold()
-    predictions = ner_gold_eval.extract_predictions(gold.cases, offline=True)
-    report = ner_gold_eval.score_gold(gold, predictions)
+    report = NEREvaluator(gold).run(offline=True)
     assert report["summary"]["false_positive"] == 0
     assert report["summary"]["false_negative"] == 0
     assert report["summary"]["perfect_cases"] == len(gold.cases)
@@ -355,3 +358,69 @@ def test_offline_cli_require_perfect_rejects_extra_mentions(tmp_path: Path) -> N
     gold_path.write_text(json.dumps(case) + "\n", encoding="utf-8")
     result = ner_gold_eval.main(["--gold", str(gold_path), "--offline", "--require-perfect"])
     assert result == 1
+
+
+def test_metrics_breakdown_and_negative_controls() -> None:
+    """Overall quality must not conceal an individual source or class regression."""
+    gold = _gold([_case(), _case(id="negative", source="faers", loinc=None, mentions=[])])
+    span = _prediction("asthma", gold.cases[0].text)
+    report = NEREvaluator(gold).score({"case-asthma": [span], "negative": [span]})
+    assert report["summary"]["exact_case_rate"] == 0.5
+    assert report["summary"]["negative_case_accuracy"] == 0
+    assert report["by_source"]["dailymed"]["f1"] == 1
+    assert report["by_source"]["faers"]["false_positive"] == 1
+    assert report["by_type"][TYPE_DISEASE]["precision"] == 0.5
+    assert report["by_type"][TYPE_PHENOTYPE]["expected"] == 0
+
+
+def test_timed_evaluation_partitions_run() -> None:
+    """Deterministic clock samples pin exactly what the timing gate measures."""
+    ticks = iter((10.0, 12.0, 12.5))
+    report = NEREvaluator(_gold(), clock=lambda: next(ticks)).run(offline=True)
+    assert report["timing"] == {
+        "elapsed_seconds": 2.5,
+        "extraction_seconds": 2.0,
+        "scoring_seconds": 0.5,
+    }
+
+
+@pytest.mark.parametrize(("budget", "exit_code"), [("2", 1), ("2.5", 0), ("3", 0)])
+def test_cli_elapsed_budget(budget: str, exit_code: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only elapsed times strictly over budget fail a perfect extraction."""
+    ticks = iter((10.0, 12.0, 12.5))
+    monkeypatch.setattr(
+        ner_gold_eval,
+        "NEREvaluator",
+        lambda dataset: NEREvaluator(dataset, clock=lambda: next(ticks)),
+    )
+    assert (
+        ner_gold_eval.main(["--offline", "--require-perfect", "--max-elapsed-seconds", budget])
+        == exit_code
+    )
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--min-f1", "nan"),
+        ("--min-f1", "1.1"),
+        ("--max-elapsed-seconds", "inf"),
+        ("--max-elapsed-seconds", "0"),
+    ],
+)
+def test_cli_rejects_invalid_gates(flag: str, value: str) -> None:
+    """Nonsensical thresholds must be rejected before any model runs."""
+    with pytest.raises(SystemExit) as error:
+        ner_gold_eval.main([flag, value])
+    assert error.value.code == 2
+
+
+def test_cli_minimum_f1(tmp_path: Path) -> None:
+    """The F1 threshold reports its verdict even when perfect scoring is not requested."""
+    path = tmp_path / "negative.ndjson"
+    output = tmp_path / "report.json"
+    path.write_text(json.dumps(_case(mentions=[])) + "\n", encoding="utf-8")
+    args = ["--offline", "--gold", str(path), "--output", str(output), "--min-f1"]
+    assert ner_gold_eval.main([*args, "0.5"]) == 1
+    assert json.loads(output.read_text())["gate_failures"] == ["F1 0.000000 below 0.5"]
+    assert ner_gold_eval.main([*args, "0"]) == 0
