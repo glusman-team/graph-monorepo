@@ -25,6 +25,8 @@ from dakp_pipeline.ner.dictionary import (
     normalize_text,
     normalize_with_map,
 )
+from dakp_pipeline.ner.eval_dataset import NERCase, NERDataset
+from dakp_pipeline.ner.evaluator import NEREvaluator
 from dakp_pipeline.ner.lexical import DEFAULT_IGNORE_TERMS, LEGACY_SYNONYMS, LexicalMatcher, Mention
 from dakp_pipeline.ner.ner import (
     CONTRAINDICATION_ACCEPT_THRESHOLD,
@@ -66,6 +68,9 @@ __all__ = [
     "Gazetteer",
     "LexicalMatcher",
     "Mention",
+    "NERCase",
+    "NERDataset",
+    "NEREvaluator",
     "canonical_type",
     "extract_contraindication_diseases",
     "extract_disease_mentions",
