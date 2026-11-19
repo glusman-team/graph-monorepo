@@ -328,7 +328,7 @@ _INFERENCE_CHUNK_WINDOWS = 2048
 _MAX_OOM_HALVINGS = 2
 
 # Curated high-precision disease/phenotype gazetteer — the offline mode's embedded vocabulary
-# (exercised by tests/eval/ner_gold.json). Not exhaustive by design: production mode adds GLiNER
+# (exercised by tests/eval/ner_gold.ndjson). Not exhaustive by design: production mode adds GLiNER
 # recall for out-of-gazetteer mentions. term -> canonical type.
 EMBEDDED_GAZETTEER: dict[str, str] = {
     # disease (named disorders / syndromes)
@@ -366,7 +366,7 @@ EMBEDDED_GAZETTEER: dict[str, str] = {
     "depression": TYPE_DISEASE,
     "migraine": TYPE_DISEASE,
     # High-frequency contraindication diseases observed in hand-checked label/FAERS snippets
-    # (see tests/eval/ner_gold.json): gazetteer growth keeps the maximal-span
+    # (see tests/eval/ner_gold.ndjson): gazetteer growth keeps the maximal-span
     # policy ("congestive heart failure", not just "heart failure") and speeds offline recall.
     "congestive heart failure": TYPE_DISEASE,
     "cirrhosis": TYPE_DISEASE,

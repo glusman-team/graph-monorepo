@@ -130,6 +130,12 @@ operations are explicit later deployment steps, never part of verification.
   gate removes screened poison/water CURIEs on either endpoint and screened subject names,
   then drops orphaned nodes. Tablassert's study assertions run on the filtered pair
   (build-kg runs without `--qc` for that reason).
+- **DAKP NER findings**: record reproducible agent findings in `ner_silver.ndjson`
+  using `uv run python tests/eval/ner_intake.py agent --input /tmp/candidates.ndjson`
+  from `dagster/projects/dakp/pipeline`. Include public source text, proposed object
+  spans, and an `origin` with the agent/model and run reference. Do not put agent
+  labels in gold. Human-reported regressions use the DAKP NER GitHub issue template
+  and are reviewed before adding them to `ner_gold_issues.ndjson`.
 - **New edge predicate**: one `EdgeFamily` in
   `projects/dakp/pipeline/src/dakp_pipeline/families.py` (table, predicate,
   knowledge level, agent type, NER profile, shaper class) plus a thin

@@ -11,6 +11,7 @@
     ],
     "pythonInputs": [
       "{projectRoot}/**/*.py",
+      "{projectRoot}/**/*.ndjson",
       "{projectRoot}/pyproject.toml",
       "{projectRoot}/uv.lock",
       "{workspaceRoot}/dagster/libs/**",
