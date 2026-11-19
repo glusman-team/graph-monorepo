@@ -52,14 +52,15 @@ are not reused for the specialist.
 
 ## NER gold evaluation
 
-`tests/eval/ner_gold.json` contains 36 cases and 44 exact disease/phenotype object
-mentions: the original 34-case corpus plus the losartan coadministration/diabetes
-and fetal-toxicity/pregnancy cases from graph-monorepo issue 57. The evaluator
-validates unique, non-overlapping surfaces, derives zero-based half-open offsets,
-and reports duplicate-aware micro precision, recall, F1, missing mentions, and
-false-positive mentions. DailyMed uses the contraindication profile and FAERS uses
-the indication profile. Qualifier-channel mentions are outside this object-only
-metric.
+`tests/eval/ner_gold.ndjson` holds the original 34 cases. The default evaluator
+also reads `tests/eval/ner_gold_issues.ndjson`, which includes both losartan
+regressions from issue 57. Add one JSON object per line. Each row has `id`,
+`source`, `text`, `mentions`, and optionally `origin`. DailyMed requires `loinc`
+(`34066-1` or `34070-3`); FAERS omits it. Each mention has `surface` and `type`
+(`Disease` or `PhenotypicFeature`). Use `mentions: []` for a negative control.
+Mention boundaries are non-overlapping. Repeated surfaces need a zero-based
+Unicode character `start`; unique surfaces can omit it. Repeat `--gold PATH`
+to combine custom files in place of the two defaults.
 
 Run the torch-free unit and offline gates from this directory:
 
