@@ -3,21 +3,21 @@ $front_matter
 
 [![Hugging Face likes](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2FSkyeAv%2Fdrug-approvals-kp&query=%24.likes&label=likes&logo=huggingface)](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp) [![GitHub stars](https://img.shields.io/github/stars/glusman-team/graph-monorepo?label=stars&logo=github)](https://github.com/glusman-team/graph-monorepo)
 
-DAKP is a knowledge graph of drug–indication relationships built from drug labels,
+DAKP is a knowledge graph of drug-indication relationships built from drug labels,
 approval data, post-marketing adverse-event reports, and the ICD-10-CM Table of
 Drugs and Chemicals. It is distributed as KGX NDJSON plus the emitted Release
 Information Graph (RIG).
 
 ## Release $version
 
-**$nodes nodes · $edges edges · $human_bytes · built $date · validation $validation**
+**$nodes nodes, $edges edges, $human_bytes, built $date, validation $validation**
 
-- Chemical subjects (CHEBI): **$chemicals**
-- Disease objects (MONDO): **$diseases**
+- Edges with CHEBI subjects: **$chemicals**
+- Edges with MONDO objects: **$diseases**
 - Human-qualified contraindication edges: **$species**
-- Edges carrying supporting-study evidence: **$study_backed**
-- Tablassert: **$tablassert_version** · Biolink: **$biolink_version**
-- Previous published version in local release state: **$previous_version**
+- Edges with publications: **$study_backed**
+- Tablassert: **$tablassert_version**, Biolink: **$biolink_version**
+- Previous published version: **$previous_version**
 
 ### What changed in $version
 

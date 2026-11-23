@@ -21,6 +21,8 @@ from dakp_pipeline.release.verify import ReleaseVerification
 
 _TEMPLATE_PATH = Path(__file__).with_name("card_template.md")
 _RELEASE_HEADER = "| Version | Nodes | Edges | File size |"
+_LEGACY_RELEASE_HEADER = "| Version | Tag | Nodes | Edges | Biolink |"
+_HF_RESOLVE = "https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve"
 
 
 class ReleaseFile(BaseModel):
@@ -41,10 +43,10 @@ class KGStats(BaseModel):
     node_categories: dict[str, int]
     edge_predicates: dict[str, int]
     node_namespaces: dict[str, int]
-    species_context_edges: int
+    human_contraindication_edges: int
     chemical_subjects: int
     disease_objects: int
-    study_backed_edges: int
+    publication_edges: int
 
 
 class CardResult(BaseModel):
@@ -76,28 +78,34 @@ def compute_kg_stats(nodes_path: Path, edges_path: Path) -> KGStats:
         for category in raw_categories:
             categories[str(category)] += 1
     predicates: Counter[str] = Counter()
-    edges = species = chemicals = diseases = study_backed = 0
+    edges = human_contraindications = chemicals = diseases = publications = 0
     for edge in _rows(edges_path):
         edges += 1
-        predicates[str(edge.get("predicate") or "unknown")] += 1
+        predicate = str(edge.get("predicate") or "unknown")
+        predicates[predicate] += 1
         chemicals += str(edge.get("subject") or "").startswith("CHEBI:")
         diseases += str(edge.get("object") or "").startswith("MONDO:")
-        qualifiers = edge.get("qualifiers") or []
-        species += any(
-            qualifier.get("qualifier_type_id") == "biolink:species_context_qualifier"
-            for qualifier in qualifiers
-        )
-        study_backed += bool(edge.get("has_supporting_studies"))
+        is_human = edge.get("species_context_qualifier") == "NCBITaxon:9606"
+        if not is_human:
+            qualifiers = edge.get("qualifiers") or []
+            is_human = any(
+                isinstance(qualifier, dict)
+                and qualifier.get("qualifier_type_id") == "biolink:species_context_qualifier"
+                and qualifier.get("qualifier_value") == "NCBITaxon:9606"
+                for qualifier in qualifiers
+            )
+        human_contraindications += predicate == "biolink:contraindicated_in" and is_human
+        publications += bool(edge.get("publications"))
     return KGStats(
         nodes=nodes,
         edges=edges,
         node_categories=dict(sorted(categories.items())),
         edge_predicates=dict(sorted(predicates.items())),
         node_namespaces=dict(sorted(namespaces.items())),
-        species_context_edges=species,
+        human_contraindication_edges=human_contraindications,
         chemical_subjects=chemicals,
         disease_objects=diseases,
-        study_backed_edges=study_backed,
+        publication_edges=publications,
     )
 
 
@@ -133,12 +141,14 @@ def stage_release_files(
     return tuple(files)
 
 
-def _front_matter(previous_card: str) -> str:
+def _front_matter(previous_card: str, version: str) -> str:
+    front_matter = ""
     if previous_card.startswith("---\n"):
         end = previous_card.find("\n---\n", 4)
         if end >= 0:
-            return previous_card[: end + 5]
-    return """---
+            front_matter = previous_card[: end + 5]
+    if not front_matter:
+        return """---
 license: apache-2.0
 card_license: apache-2.0
 pretty_name: Drug Approvals Knowledge Provider (DAKP)
@@ -148,24 +158,79 @@ tags: [knowledge-graph, kgx, biolink, translator, drug-approvals]
 size_categories: 100K<n<1M
 ---
 """
+    if not re.search(r"(?m)^configs:", front_matter):
+        return front_matter
+    front_matter, config_names = re.subn(
+        r"(?m)^([ \t]*-[ \t]+config_name:[ \t]*)\d+\.\d+\.\d+_(edges|nodes)([ \t]*)$",
+        lambda match: f"{match[1]}{version}_{match[2]}{match[3]}",
+        front_matter,
+    )
+    front_matter, data_files = re.subn(
+        r"(?m)^([ \t]*-[ \t]+)\d+\.\d+\.\d+/DRUG_APPROVALS_KP_\d+\.\d+\.\d+\.(edges|nodes)\.ndjson([ \t]*)$",
+        lambda match: (
+            f"{match[1]}{version}/DRUG_APPROVALS_KP_{version}.{match[2]}.ndjson{match[3]}"
+        ),
+        front_matter,
+    )
+    if config_names != 2 or data_files != 2:
+        raise ValueError(
+            "dataset card front matter must contain exactly two versioned configs and data files"
+        )
+    return front_matter
+
+
+def _release_row(version: str, nodes: int, edges: int, size: str) -> str:
+    stem = f"DRUG_APPROVALS_KP_{version}"
+    base = f"{_HF_RESOLVE}/v{version}/{version}"
+    return (
+        f"| v{version} | {nodes} | {edges} | {size} | "
+        f"[nodes]({base}/{stem}.nodes.ndjson), [edges]({base}/{stem}.edges.ndjson), "
+        f"[RIG]({base}/{stem}.RIG.yaml) |"
+    )
 
 
 def previous_release_rows(previous_card: str) -> list[str]:
-    lines = previous_card.splitlines()
     rows: list[str] = []
-    in_table = False
-    for line in lines:
+    table: str | None = None
+    for line in previous_card.splitlines():
         if line.startswith(_RELEASE_HEADER):
-            in_table = True
+            table = "current"
             continue
-        if in_table:
-            if line.startswith("| ---"):
-                continue
-            if line.startswith("| v"):
-                rows.append(line)
-            elif not line.strip() or not line.startswith("|"):
-                break
-    return rows
+        if line.startswith(_LEGACY_RELEASE_HEADER):
+            table = "legacy"
+            continue
+        if table is None:
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 5:
+            continue
+        if table == "current" and re.fullmatch(r"v\d+\.\d+\.\d+", cells[0]):
+            rows.append(
+                _release_row(
+                    cells[0][1:],
+                    int(cells[1].replace(",", "")),
+                    int(cells[2].replace(",", "")),
+                    cells[3],
+                )
+            )
+        elif table == "legacy" and re.fullmatch(r"\d+\.\d+\.\d+", cells[0]):
+            rows.append(
+                _release_row(
+                    cells[0],
+                    int(cells[2].replace(",", "")),
+                    int(cells[3].replace(",", "")),
+                    "see tag",
+                )
+            )
+
+    def version_key(row: str) -> tuple[int, ...]:
+        version = row.split("|")[1].strip().removeprefix("v")
+        return tuple(int(part) for part in version.split("."))
+
+    unique = {row.split("|")[1].strip(): row for row in rows}
+    return sorted(unique.values(), key=version_key, reverse=True)
 
 
 def _latest_previous_stats(rows: list[str]) -> tuple[int, int] | None:
@@ -173,12 +238,14 @@ def _latest_previous_stats(rows: list[str]) -> tuple[int, int] | None:
         return None
     cells = [cell.strip() for cell in rows[0].strip().strip("|").split("|")]
     try:
-        return int(cells[1]), int(cells[2])
+        return int(cells[1].replace(",", "")), int(cells[2].replace(",", ""))
     except (IndexError, ValueError):
         return None
 
 
 def _human_bytes(size: int) -> str:
+    if size < 1 << 20:
+        return f"{size / 1024:.1f} KB"
     mib = size / (1 << 20)
     return f"{mib:.1f} MB" if mib < 1024 else f"{mib / 1024:.2f} GB"
 
@@ -223,7 +290,7 @@ def build_dataset_card(
 ) -> CardResult:
     old_rows = [row for row in previous_release_rows(previous_card) if f"| v{version} " not in row]
     total_bytes = sum(file.bytes for file in files)
-    new_row = f"| v{version} | {stats.nodes} | {stats.edges} | {_human_bytes(total_bytes)} | [nodes]({version}/{files[0].name}), [edges]({version}/{files[1].name}), [RIG]({version}/{files[2].name}) |"
+    new_row = _release_row(version, stats.nodes, stats.edges, _human_bytes(total_bytes))
     release_rows = "\n".join([new_row, *old_rows])
     previous_stats = _latest_previous_stats(old_rows)
     deltas = (
@@ -233,7 +300,7 @@ def build_dataset_card(
     )
     change_bullets = (
         "\n".join(
-            f"- **{change.source}** — {', '.join(change.dates) if change.dates else 'date not reported'}; "
+            f"- **{change.source}** - {', '.join(change.dates) if change.dates else 'date not reported'}; "
             f"{change.current.artifact_count} acquired artifacts."
             for change in delta.changes
         )
@@ -248,7 +315,7 @@ def build_dataset_card(
         for file in files
     )
     markdown = Template(_TEMPLATE_PATH.read_text(encoding="utf-8")).safe_substitute(
-        front_matter=_front_matter(previous_card).rstrip(),
+        front_matter=_front_matter(previous_card, version).rstrip(),
         version=version,
         date=(built_at or datetime.now(UTC)).date().isoformat(),
         delta_message=delta.message,
@@ -256,10 +323,10 @@ def build_dataset_card(
         graph_deltas=deltas,
         nodes=stats.nodes,
         edges=stats.edges,
-        species=stats.species_context_edges,
+        species=stats.human_contraindication_edges,
         chemicals=stats.chemical_subjects,
         diseases=stats.disease_objects,
-        study_backed=stats.study_backed_edges,
+        study_backed=stats.publication_edges,
         category_rows=_counter_rows(stats.node_categories),
         predicate_rows=_counter_rows(stats.edge_predicates),
         namespace_rows=_counter_rows(stats.node_namespaces),
@@ -272,7 +339,11 @@ def build_dataset_card(
         validator_output=verification.validate_kgx_stdout or "tablassert validate-kgx exited 0",
         tablassert_version=tablassert_version(),
         biolink_version=_biolink_version(rig_path),
-        previous_version=delta.previous_version or "none recorded",
+        previous_version=(
+            delta.previous_version
+            or (old_rows[0].split("|")[1].strip().removeprefix("v") if old_rows else None)
+            or "none recorded"
+        ),
         nodes_file=files[0].name,
         edges_file=files[1].name,
         rig_file=files[2].name,
