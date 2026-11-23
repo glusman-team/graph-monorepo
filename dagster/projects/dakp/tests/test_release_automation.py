@@ -291,7 +291,7 @@ def test_verify_and_card_assets_stage_real_outputs(
         "DRUG_APPROVALS_KP_1.27.1.RIG.yaml",
     }
     card = (version_dir.parent / "README.md").read_text(encoding="utf-8")
-    assert "2 nodes · 1 edges" in card
+    assert "2 nodes, 1 edges" in card
     assert "New data for 1 source" in card
 
 

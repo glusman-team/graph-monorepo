@@ -6,27 +6,27 @@ pretty_name: Drug Approvals Knowledge Provider (DAKP)
 
 [![Hugging Face likes](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2FSkyeAv%2Fdrug-approvals-kp&query=%24.likes&label=likes&logo=huggingface)](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp) [![GitHub stars](https://img.shields.io/github/stars/glusman-team/graph-monorepo?label=stars&logo=github)](https://github.com/glusman-team/graph-monorepo)
 
-DAKP is a knowledge graph of drug–indication relationships built from drug labels,
+DAKP is a knowledge graph of drug-indication relationships built from drug labels,
 approval data, post-marketing adverse-event reports, and the ICD-10-CM Table of
 Drugs and Chemicals. It is distributed as KGX NDJSON plus the emitted Release
 Information Graph (RIG).
 
 ## Release 1.27.1
 
-**3 nodes · 2 edges · 0.0 MB · built 2026-11-07 · validation PASS**
+**3 nodes, 2 edges, 0.6 KB, built 2026-11-07, validation PASS**
 
-- Chemical subjects (CHEBI): **2**
-- Disease objects (MONDO): **2**
+- Edges with CHEBI subjects: **2**
+- Edges with MONDO objects: **2**
 - Human-qualified contraindication edges: **1**
-- Edges carrying supporting-study evidence: **1**
-- Tablassert: **22.2.0-test** · Biolink: **4.4.6**
-- Previous published version in local release state: **1.27.0**
+- Edges with publications: **1**
+- Tablassert: **22.2.0-test**, Biolink: **4.4.6**
+- Previous published version: **1.27.0**
 
 ### What changed in 1.27.1
 
 New data for 1 source on 2026-11-04: DailyMed (2026-11-04).
 
-- **DailyMed** — 2026-11-04; 2 acquired artifacts.
+- **DailyMed** - 2026-11-04; 2 acquired artifacts.
 
 **Graph delta:** +1 nodes / +1 edges vs v1.27.0.
 
@@ -38,9 +38,9 @@ fingerprints does not build, increment the version, or upload anything.
 
 | File | Bytes | Human size | MD5 |
 |---|---:|---:|---|
-| `DRUG_APPROVALS_KP_1.27.1.nodes.ndjson` | 240 | 0.0 MB | `e361ae6ad583435e67d8ffcfa2a56ecf` |
-| `DRUG_APPROVALS_KP_1.27.1.edges.ndjson` | 355 | 0.0 MB | `75313c70ad18e91b1cac3f3196196ec4` |
-| `DRUG_APPROVALS_KP_1.27.1.RIG.yaml` | 68 | 0.0 MB | `f4c9eac6c9f1c03c2f358573efe34a3a` |
+| `DRUG_APPROVALS_KP_1.27.1.nodes.ndjson` | 240 | 0.2 KB | `e361ae6ad583435e67d8ffcfa2a56ecf` |
+| `DRUG_APPROVALS_KP_1.27.1.edges.ndjson` | 310 | 0.3 KB | `68fa975c81b3e934dc0425995edfd565` |
+| `DRUG_APPROVALS_KP_1.27.1.RIG.yaml` | 68 | 0.1 KB | `f4c9eac6c9f1c03c2f358573efe34a3a` |
 
 Load exactly this release without depending on `main`:
 
@@ -74,8 +74,8 @@ a previous card or a hand-maintained count.
 
 | Predicate | Edges |
 |---|---:|
-| biolink:approved_for_treatment | 1 |
-| biolink:contraindicated_for | 1 |
+| biolink:contraindicated_in | 1 |
+| biolink:treats | 1 |
 
 ### Nodes by identifier namespace
 
@@ -140,8 +140,8 @@ Latest first. Every listed version remains loadable through its dataset tag.
 
 | Version | Nodes | Edges | File size | Files |
 |---|---:|---:|---:|---|
-| v1.27.1 | 3 | 2 | 0.0 MB | [nodes](1.27.1/DRUG_APPROVALS_KP_1.27.1.nodes.ndjson), [edges](1.27.1/DRUG_APPROVALS_KP_1.27.1.edges.ndjson), [RIG](1.27.1/DRUG_APPROVALS_KP_1.27.1.RIG.yaml) |
-| v1.27.0 | 2 | 1 | 1.0 MB | [nodes](old) |
+| v1.27.1 | 3 | 2 | 0.6 KB | [nodes](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/v1.27.1/1.27.1/DRUG_APPROVALS_KP_1.27.1.nodes.ndjson), [edges](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/v1.27.1/1.27.1/DRUG_APPROVALS_KP_1.27.1.edges.ndjson), [RIG](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/v1.27.1/1.27.1/DRUG_APPROVALS_KP_1.27.1.RIG.yaml) |
+| v1.27.0 | 2 | 1 | 1.0 MB | [nodes](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/v1.27.0/1.27.0/DRUG_APPROVALS_KP_1.27.0.nodes.ndjson), [edges](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/v1.27.0/1.27.0/DRUG_APPROVALS_KP_1.27.0.edges.ndjson), [RIG](https://huggingface.co/datasets/SkyeAv/drug-approvals-kp/resolve/v1.27.0/1.27.0/DRUG_APPROVALS_KP_1.27.0.RIG.yaml) |
 
 ## KGX record shape
 
